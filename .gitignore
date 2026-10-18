@@ -1,0 +1,16 @@
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+data/
+config/settings.txt
+*.iso
+*.xbe
+*.afs
+*.aix
+*.zip
+*.7z
+*.xvu
+*.xpu
+*.spv
+*.xbx
