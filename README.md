@@ -18,6 +18,8 @@ The process heap is mimalloc when the build is configured with `-DSF_USE_MIMALLO
 
 Each frame runs the 12-slot task table, draws the shell, and presents once. `cpReadyTask` arms a slot. The next frame runs it. Xbox Live stays the placeholder screen.
 
+When the archive is present, file 0 (`Rank1.ppg`) is decoded and its first texture is drawn on the title screen. `compress` 2 is zlib inflate. The 16-bit texels are byte-swapped, then A1R5G5B5 expands into the canvas. Vulkan and OpenGL present that canvas with the shell. The disc fragment modules are DOF1 and DOF2, and those combiners write black, so this picture does not sample them.
+
 Game logic will be ported from [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb). This repository is the runtime.
 
 ## Controls
@@ -42,7 +44,7 @@ SPIR-V uses one descriptor set. Vertex binding 0 is 192 vec4 constants, when the
 
 `SF33RDXB.AFS` stays packed, and its members are also written under `data/afs/files/` using the names stored in the archive. `data/afs/index` lists them as `index name bytes`, which is the order `ADXF_OpenAfs` uses. The Xbox archive holds 1531 files. Members are copied as stored, so image pixels stay compressed.
 
-A `.ppg` is a chunk list. `pTEX` and `pPAL` start with a 16-byte header: a big-endian tag, a big-endian size, then raw bytes. The next chunk begins at that size rounded up to 4. `pEND` is the four bytes that end the list and has no size. A `pTEX` width and height count 16-pixel cells. `pixel & 3` selects 4-bit, 8-bit, 16-bit, or 32-bit texels. `formARGB` is `0x1555` (A1R5G5B5), `0x0565` (R5G6B5), `0x4444`, or `0x8888`. Zero means the texels are indexed. `compress & 3` is a raw copy, zlib, or LZ77. `transNums` is how many 3-byte sprite rectangles sit between the header and the pixels. A `.ppx` is the same list, and each `pCMP` chunk is one compressed block plus its expanded size.
+A `.ppg` is a chunk list. `pTEX` and `pPAL` start with a 16-byte header: a big-endian tag, a big-endian size, then raw bytes. The next chunk begins at that size rounded up to 4. `pEND` is the four bytes that end the list and has no size. A `pTEX` width and height count 16-pixel cells. `pixel & 3` selects 4-bit, 8-bit, 16-bit, or 32-bit texels. `formARGB` is `0x1555` (A1R5G5B5), `0x0565` (R5G6B5), `0x4444`, or `0x8888`. Zero means the texels are indexed. `compress & 3` is a raw copy, a zlib wrapper, or zlib inflate. On this disc every `pTEX` uses inflate, and the payload begins with a zlib header. The Xbox function named as LZ77 in the decomp is that inflate. This port does not run the PlayStation 2 LZ77 bitstream. `transNums` is how many 3-byte sprite rectangles sit between the header and the pixels. A `.ppx` is the same list, and each `pCMP` chunk is one compressed block plus its expanded size.
 
 ```
 sf33rdsxb

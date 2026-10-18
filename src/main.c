@@ -1,6 +1,9 @@
 #include "common.h"
+#include "game/fs.h"
 #include "game/memman.h"
+#include "game/ppg.h"
 #include "game/task.h"
+#include "mem/heap.h"
 #include "host/paths.h"
 #include "host/settings.h"
 #include "iso/extract.h"
@@ -39,6 +42,9 @@ typedef struct App {
     SDL_Mutex *lock;
     int gl_fallback;
     int quit;
+    uint8_t *picture;
+    int picture_w;
+    int picture_h;
 } App;
 
 static void set_status(App *app, const char *text)
@@ -139,6 +145,50 @@ static void progress(const char *path, void *user)
     SDL_PumpEvents();
 }
 
+static void clear_picture(App *app)
+{
+    sf_free(app->picture);
+    app->picture = NULL;
+    app->picture_w = 0;
+    app->picture_h = 0;
+    app->ui.picture = NULL;
+    app->ui.picture_w = 0;
+    app->ui.picture_h = 0;
+}
+
+static void load_rank(App *app)
+{
+    SfFsFile file;
+    SfPpgTex tex;
+    char err[256];
+    memset(&file, 0, sizeof file);
+    memset(&tex, 0, sizeof tex);
+    clear_picture(app);
+    err[0] = 0;
+    if (fsOpen(app->install, 0, &file, err, sizeof err) != 0) {
+        return;
+    }
+    if (strcmp(file.name, "Rank1.ppg") != 0) {
+        fsClose(&file);
+        return;
+    }
+    if (sf_ppg_tex(file.data, file.size, 0, &tex, err, sizeof err) != 0 || !tex.rgba) {
+        fprintf(stderr, "%s\n", err[0] ? err : "Rank1.ppg did not decode");
+        sf_ppg_tex_free(&tex);
+        fsClose(&file);
+        return;
+    }
+    app->picture = tex.rgba;
+    app->picture_w = tex.width;
+    app->picture_h = tex.height;
+    tex.rgba = NULL;
+    sf_ppg_tex_free(&tex);
+    fsClose(&file);
+    app->ui.picture = app->picture;
+    app->ui.picture_w = app->picture_w;
+    app->ui.picture_h = app->picture_h;
+}
+
 static void run_import(App *app, const char *source)
 {
     SfExtractResult result;
@@ -149,6 +199,7 @@ static void run_import(App *app, const char *source)
         set_status(app, "");
         snprintf(app->note, sizeof app->note, "%s", result.note);
         app->ui.note = app->note;
+        load_rank(app);
         SDL_SetWindowTitle(app->window, k_title);
         return;
     }
@@ -286,6 +337,9 @@ int main(int argc, char **argv)
     app.ui.gl_fallback = app.gl_fallback;
     app.ui.status = app.status;
     app.ui.note = app.note;
+    if (app.ui.screen == SF_UI_TITLE) {
+        load_rank(&app);
+    }
     if (app.ui.screen == SF_UI_TITLE && app.tool[0]) {
         SfExtractResult retry;
         if (sf_retry_shaders(app.install, app.tool, &retry) == 0 && retry.note[0]) {
@@ -373,6 +427,7 @@ int main(int argc, char **argv)
         }
     }
     close_window(&app);
+    clear_picture(&app);
     sf_canvas_close(&app.canvas);
     if (app.lock) {
         SDL_DestroyMutex(app.lock);

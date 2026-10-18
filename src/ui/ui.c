@@ -143,6 +143,30 @@ static void text(SfCanvas *canvas, int x, int y, const char *s, uint8_t r, uint8
     }
 }
 
+static void blit(SfCanvas *canvas, const uint8_t *rgba, int w, int h, int dx, int dy, int scale)
+{
+    int y;
+    int x;
+    if (!rgba || w <= 0 || h <= 0 || scale < 1) {
+        return;
+    }
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            const uint8_t *p = rgba + ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            int sy;
+            int sx;
+            if (p[3] == 0) {
+                continue;
+            }
+            for (sy = 0; sy < scale; sy++) {
+                for (sx = 0; sx < scale; sx++) {
+                    put(canvas, dx + x * scale + sx, dy + y * scale + sy, p[0], p[1], p[2]);
+                }
+            }
+        }
+    }
+}
+
 static const char *kind_name(SfRendererKind kind, int fallback)
 {
     if (fallback && kind == SF_RENDER_OPENGL) {
@@ -164,6 +188,11 @@ void sf_ui_draw(SfCanvas *canvas, const SfUi *ui)
         text(canvas, 32, 188, "OR DROP THE XBOX DATA HERE", 180, 190, 210);
         text(canvas, 32, 228, "XBOX DISC ONLY.", 180, 190, 210);
     } else if (ui->screen == SF_UI_TITLE) {
+        if (ui->picture && ui->picture_w > 0 && ui->picture_h > 0) {
+            int scale = 2;
+            int x = canvas->width - ui->picture_w * scale - 32;
+            blit(canvas, ui->picture, ui->picture_w, ui->picture_h, x < 32 ? 32 : x, 96, scale);
+        }
         text(canvas, 32, 110, "DATA READY", 180, 220, 180);
         text(canvas, 32, 150, kind_name(ui->active, ui->gl_fallback), 220, 220, 220);
         text(canvas, 32, 200, "START: DISPLAY", 180, 190, 210);

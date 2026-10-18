@@ -4,6 +4,8 @@
 #include "host/settings.h"
 #include "render/renderer.h"
 
+#include <stdint.h>
+
 typedef enum SfUiScreen {
     SF_UI_SETUP = 0,
     SF_UI_TITLE,
@@ -20,6 +22,9 @@ typedef struct SfUi {
     SfRendererKind active;
     const char *status;
     const char *note;
+    const uint8_t *picture;
+    int picture_w;
+    int picture_h;
 } SfUi;
 
 int sf_canvas_open(SfCanvas *canvas, int width, int height);
