@@ -1,4 +1,6 @@
 build/
+__pycache__/
+*.pyc
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
