@@ -188,6 +188,9 @@ void sf_ui_draw(SfCanvas *canvas, const SfUi *ui)
         text(canvas, 32, 188, "OR DROP THE XBOX DATA HERE", 180, 190, 210);
         text(canvas, 32, 228, "XBOX DISC ONLY.", 180, 190, 210);
     } else if (ui->screen == SF_UI_TITLE) {
+        if (ui->opening && ui->opening_w > 0 && ui->opening_h > 0) {
+            blit(canvas, ui->opening, ui->opening_w, ui->opening_h, 32, 272, 1);
+        }
         if (ui->picture && ui->picture_w > 0 && ui->picture_h > 0) {
             int scale = 2;
             int x;

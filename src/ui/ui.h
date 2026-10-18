@@ -25,6 +25,9 @@ typedef struct SfUi {
     const uint8_t *picture;
     int picture_w;
     int picture_h;
+    const uint8_t *opening;
+    int opening_w;
+    int opening_h;
 } SfUi;
 
 int sf_canvas_open(SfCanvas *canvas, int width, int height);

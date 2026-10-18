@@ -46,6 +46,9 @@ typedef struct App {
     uint8_t *picture;
     int picture_w;
     int picture_h;
+    uint8_t *opening;
+    int opening_w;
+    int opening_h;
 } App;
 
 static void set_status(App *app, const char *text)
@@ -155,9 +158,16 @@ static void clear_picture(App *app)
     app->ui.picture = NULL;
     app->ui.picture_w = 0;
     app->ui.picture_h = 0;
+    sf_free(app->opening);
+    app->opening = NULL;
+    app->opening_w = 0;
+    app->opening_h = 0;
+    app->ui.opening = NULL;
+    app->ui.opening_w = 0;
+    app->ui.opening_h = 0;
 }
 
-static void load_title(App *app)
+static void load_logo(App *app)
 {
     SfFsFile file;
     SfPpgTex tex;
@@ -166,7 +176,6 @@ static void load_title(App *app)
     const char *want = fnum == 0x54 ? "Title_R.ppg" : "TitleTM.ppg";
     memset(&file, 0, sizeof file);
     memset(&tex, 0, sizeof tex);
-    clear_picture(app);
     err[0] = 0;
     if (fsOpen(app->install, fnum, &file, err, sizeof err) != 0) {
         return;
@@ -190,6 +199,83 @@ static void load_title(App *app)
     app->ui.picture = app->picture;
     app->ui.picture_w = app->picture_w;
     app->ui.picture_h = app->picture_h;
+}
+
+/* OPBG_Init at 0x6A400 consumes Opening.ppg once RAMCNT type 0x1D holds it.
+   color_file[154] names that member. put_chr2 passes palette 300, and the
+   type-2 load of title.bin fills ColorRAM from row 300, so the rectangle
+   byte is the row inside title.bin. Texture 0 has one rectangle. */
+static int color_row(const uint8_t *file, uint32_t size, int row, uint16_t out[64])
+{
+    uint32_t at;
+    int i;
+    if (!file || !out || row < 0 || size < 128u || (size % 128u) != 0) {
+        return -1;
+    }
+    if ((uint32_t)row >= size / 128u) {
+        return -1;
+    }
+    at = (uint32_t)row * 128u;
+    for (i = 0; i < 64; i++) {
+        out[i] = (uint16_t)(file[at + (uint32_t)i * 2u] | ((uint16_t)file[at + (uint32_t)i * 2u + 1u] << 8));
+    }
+    return 0;
+}
+
+static void load_opening(App *app)
+{
+    SfFsFile image;
+    SfFsFile colors;
+    SfPpgTex tex;
+    uint16_t row[64];
+    char err[256];
+    memset(&image, 0, sizeof image);
+    memset(&colors, 0, sizeof colors);
+    memset(&tex, 0, sizeof tex);
+    err[0] = 0;
+    if (fsOpen(app->install, 81, &image, err, sizeof err) != 0) {
+        return;
+    }
+    if (strcmp(image.name, "Opening.ppg") != 0) {
+        fsClose(&image);
+        return;
+    }
+    if (sf_ppg_tex(image.data, image.size, 0, &tex, err, sizeof err) != 0) {
+        fprintf(stderr, "%s\n", err[0] ? err : "the opening tile did not decode");
+        sf_ppg_tex_free(&tex);
+        fsClose(&image);
+        return;
+    }
+    if (fsOpen(app->install, 82, &colors, err, sizeof err) != 0 || strcmp(colors.name, "title.bin") != 0) {
+        sf_ppg_tex_free(&tex);
+        fsClose(&image);
+        fsClose(&colors);
+        return;
+    }
+    if (color_row(colors.data, colors.size, tex.pal, row) != 0 || sf_ppg_expand_ci(&tex, row, 64, err, sizeof err) != 0 || !tex.rgba) {
+        fprintf(stderr, "%s\n", err[0] ? err : "the opening palette did not expand");
+        sf_ppg_tex_free(&tex);
+        fsClose(&image);
+        fsClose(&colors);
+        return;
+    }
+    app->opening = tex.rgba;
+    app->opening_w = tex.width;
+    app->opening_h = tex.height;
+    tex.rgba = NULL;
+    sf_ppg_tex_free(&tex);
+    fsClose(&image);
+    fsClose(&colors);
+    app->ui.opening = app->opening;
+    app->ui.opening_w = app->opening_w;
+    app->ui.opening_h = app->opening_h;
+}
+
+static void load_title(App *app)
+{
+    clear_picture(app);
+    load_logo(app);
+    load_opening(app);
 }
 
 static void run_import(App *app, const char *source)

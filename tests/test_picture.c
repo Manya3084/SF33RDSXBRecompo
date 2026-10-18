@@ -146,6 +146,96 @@ static uint8_t *make_ppg(size_t *out_size, int pixel, int compress, const uint16
     return file;
 }
 
+/* 16x16 8-bit, one rectangle (palette 15, one cell), zlib, then pEND. */
+static uint8_t *make_indexed(size_t *out_size)
+{
+    uint8_t raw[16 * 16];
+    uint8_t *packed;
+    uLongf packed_len;
+    uint8_t *file;
+    uint32_t payload;
+    uint32_t chunk;
+    uint32_t step;
+    int i;
+    for (i = 0; i < 16 * 16; i++) {
+        raw[i] = 1;
+    }
+    raw[0] = 28;
+    raw[1] = 0;
+    packed_len = compressBound(sizeof raw);
+    packed = sf_alloc(packed_len);
+    if (!packed) {
+        return NULL;
+    }
+    if (compress2(packed, &packed_len, raw, sizeof raw, Z_DEFAULT_COMPRESSION) != Z_OK) {
+        sf_free(packed);
+        return NULL;
+    }
+    payload = (uint32_t)packed_len;
+    chunk = 19u + payload;
+    step = (chunk + 3u) & ~3u;
+    file = sf_alloc(step + 4u);
+    if (!file) {
+        sf_free(packed);
+        return NULL;
+    }
+    memset(file, 0, step + 4u);
+    memcpy(file, "pTEX", 4);
+    file[4] = (uint8_t)(chunk >> 24);
+    file[5] = (uint8_t)(chunk >> 16);
+    file[6] = (uint8_t)(chunk >> 8);
+    file[7] = (uint8_t)chunk;
+    file[8] = 1;
+    file[9] = 1;
+    file[10] = 2;
+    file[11] = 0x81;
+    file[15] = 1;
+    file[16] = 15;
+    memcpy(file + 19, packed, payload);
+    memcpy(file + step, "pEND", 4);
+    sf_free(packed);
+    *out_size = step + 4u;
+    return file;
+}
+
+static void test_indexed(void)
+{
+    uint8_t *file;
+    size_t size = 0;
+    SfPpgTex tex;
+    uint16_t pal[64];
+    char err[128];
+    memset(&tex, 0, sizeof tex);
+    memset(pal, 0, sizeof pal);
+    pal[1] = 0x8000;
+    pal[28] = 0xEF7B;
+    file = make_indexed(&size);
+    expect(file != NULL, "synthetic indexed pTEX builds");
+    if (!file) {
+        return;
+    }
+    err[0] = 0;
+    expect(sf_ppg_tex(file, (uint32_t)size, 0, &tex, err, sizeof err) == 0, "indexed texture decodes");
+    if (tex.texels) {
+        expect(tex.width == 16 && tex.height == 16 && tex.form == 0 && tex.raw_size == 256, "indexed size is one cell");
+        expect((tex.compress & 3) == 2 && tex.pixel == 0x81 && tex.rects == 1 && tex.pal == 15, "indexed header keeps palette 15");
+        expect(tex.rgba == NULL && tex.texels[0] == 28 && tex.texels[1] == 0, "8-bit indices are not expanded yet");
+        expect(sf_ppg_expand_ci(&tex, pal, 64, err, sizeof err) == 0 && tex.rgba != NULL, "the palette row expands");
+        if (tex.rgba) {
+            expect(tex.rgba[0] == 222 && tex.rgba[1] == 222 && tex.rgba[2] == 222 && tex.rgba[3] == 255, "index 28 is 0xEF7B");
+            expect(tex.rgba[4] == 0 && tex.rgba[7] == 0, "index 0 stays transparent");
+            expect(tex.rgba[11] == 255, "index 1 is opaque black");
+        }
+        tex.texels[2] = 64;
+        expect(sf_ppg_expand_ci(&tex, pal, 64, err, sizeof err) != 0, "an index past the row fails");
+        if (tex.rgba) {
+            expect(tex.rgba[0] == 222, "a failed expand leaves the previous picture");
+        }
+    }
+    sf_ppg_tex_free(&tex);
+    sf_free(file);
+}
+
 static void test_synthetic(void)
 {
     uint16_t logical[16 * 16];
@@ -366,12 +456,70 @@ static void test_title(void)
     expect_logo(0x54, "Title_R.ppg", 38524);
 }
 
+static void test_opening(void)
+{
+    SfFsFile image;
+    SfFsFile colors;
+    SfPpgTex tex;
+    uint16_t row[64];
+    char err[128];
+    const uint8_t *words;
+    int i;
+    FILE *fp = fopen("data/afs/index", "r");
+    if (!fp) {
+        printf("skip opening tile (no archive index)\n");
+        return;
+    }
+    fclose(fp);
+    memset(&image, 0, sizeof image);
+    memset(&colors, 0, sizeof colors);
+    memset(&tex, 0, sizeof tex);
+    err[0] = 0;
+    expect(fsOpen(".", 81, &image, err, sizeof err) == 0, "Opening.ppg opens");
+    expect(image.data && strcmp(image.name, "Opening.ppg") == 0 && image.size == 449032, "Opening.ppg name and size");
+    if (!image.data) {
+        fsClose(&image);
+        return;
+    }
+    expect(sf_ppg_tex(image.data, image.size, 0, &tex, err, sizeof err) == 0, "opening texture 0 decodes");
+    if (!tex.texels) {
+        sf_ppg_tex_free(&tex);
+        fsClose(&image);
+        return;
+    }
+    expect(tex.width == 256 && tex.height == 256 && tex.form == 0 && tex.raw_size == 256u * 256u, "opening texture 0 is 256x256 indexed");
+    expect((tex.compress & 3) == 2 && tex.pixel == 0x81 && tex.rects == 1 && tex.pal == 15, "opening texture 0 is inflate palette 15");
+    expect(tex.rgba == NULL && tex.texels[0] == 28, "opening pixel 0 is index 28");
+    expect(fsOpen(".", 82, &colors, err, sizeof err) == 0, "title.bin opens");
+    expect(colors.data && strcmp(colors.name, "title.bin") == 0 && colors.size == 11264, "title.bin name and size");
+    if (!colors.data || colors.size < 16u * 128u) {
+        sf_ppg_tex_free(&tex);
+        fsClose(&image);
+        fsClose(&colors);
+        return;
+    }
+    words = colors.data + 15 * 128;
+    for (i = 0; i < 64; i++) {
+        row[i] = (uint16_t)(words[i * 2] | (words[i * 2 + 1] << 8));
+    }
+    expect(row[28] == 0xEF7B, "title.bin row 15 word 28 is 0xEF7B");
+    expect(sf_ppg_expand_ci(&tex, row, 64, err, sizeof err) == 0 && tex.rgba != NULL, "opening texture 0 takes row 15");
+    if (tex.rgba) {
+        expect(tex.rgba[0] == 222 && tex.rgba[1] == 222 && tex.rgba[2] == 222 && tex.rgba[3] == 255, "opening pixel 0 is light gray");
+    }
+    sf_ppg_tex_free(&tex);
+    fsClose(&image);
+    fsClose(&colors);
+}
+
 int main(void)
 {
     test_synthetic();
+    test_indexed();
     test_fs_fixture();
     test_rank1();
     test_title();
+    test_opening();
     if (g_fail) {
         fprintf(stderr, "%d failed\n", g_fail);
         return 1;

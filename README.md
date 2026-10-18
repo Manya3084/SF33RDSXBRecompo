@@ -20,6 +20,8 @@ Each frame runs the 12-slot task table, draws the shell, and presents once. `cpR
 
 When the archive is present, the title screen shows the logo from `TITLE_Init`. `Country` 1 and 2 load `Title_R.ppg` (file 84). Every other value, including the retail boot value 0, loads `TitleTM.ppg` (file 83). Each file is one 512×256 texture. `compress` 2 is zlib inflate. The 16-bit texels are byte-swapped, then A1R5G5B5 expands into the canvas. Vulkan and OpenGL present that canvas with the shell. The disc fragment modules are DOF1 and DOF2, and those combiners write black, so this picture does not sample them.
 
+The same screen shows the first opening tile. `OPBG_Init` reads `Opening.ppg` (file 81) after it has been stored under RAMCNT type `0x1D`. Texture 0 is 256×256 and 8-bit. Its one rectangle covers the tile and selects palette 15. `put_chr2` adds 300 to that byte, and `title.bin` (file 82) is the color load that fills `ColorRAM` from row 300, so the colors are 64 little-endian A1R5G5B5 words in row 15. Pixel 0 is index 28, word `0xEF7B`. The logo and the shell stay. The other 89 tiles, the opening demo, and sound are not running.
+
 Game logic will be ported from [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb). This repository is the runtime.
 
 ## Controls

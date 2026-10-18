@@ -127,15 +127,20 @@ static uint8_t expand5(uint32_t channel)
     return (uint8_t)((channel << 3) | (channel >> 2));
 }
 
+static void write_1555(uint16_t v, uint8_t *rgba)
+{
+    rgba[0] = expand5(v >> 10);
+    rgba[1] = expand5(v >> 5);
+    rgba[2] = expand5(v);
+    rgba[3] = (v & 0x8000u) ? 255 : 0;
+}
+
 static void expand_1555(const uint8_t *texels, int count, uint8_t *rgba)
 {
     int i;
     for (i = 0; i < count; i++) {
-        uint32_t v = (uint32_t)texels[i * 2] | ((uint32_t)texels[i * 2 + 1] << 8);
-        rgba[i * 4] = expand5(v >> 10);
-        rgba[i * 4 + 1] = expand5(v >> 5);
-        rgba[i * 4 + 2] = expand5(v);
-        rgba[i * 4 + 3] = (v & 0x8000u) ? 255 : 0;
+        uint16_t v = (uint16_t)(texels[i * 2] | (texels[i * 2 + 1] << 8));
+        write_1555(v, rgba + i * 4);
     }
 }
 
@@ -256,6 +261,8 @@ int sf_ppg_tex(const uint8_t *file, uint32_t size, int index, SfPpgTex *out, cha
     out->compress = hdr[10];
     out->pixel = hdr[11];
     out->form = form;
+    out->rects = (uint16_t)trans;
+    out->pal = trans > 0 ? hdr[16] : 0;
     out->raw_size = raw_size;
     out->texels = texels;
     if (form == 0x1555 && depth == 2 && raw_size == (uint32_t)width * (uint32_t)height * 2u) {
@@ -268,6 +275,43 @@ int sf_ppg_tex(const uint8_t *file, uint32_t size, int index, SfPpgTex *out, cha
         }
         expand_1555(out->texels, (int)pixels, out->rgba);
     }
+    return 0;
+}
+
+int sf_ppg_expand_ci(SfPpgTex *tex, const uint16_t *pal, int colors, char *err, size_t err_n)
+{
+    size_t pixels;
+    size_t i;
+    uint8_t *rgba;
+    if (!tex || !tex->texels || !pal || colors <= 0 || colors > 256) {
+        sf_set_err(err, err_n, "missing indexed texture arguments");
+        return -1;
+    }
+    if ((tex->pixel & 3) != 1 || tex->form != 0) {
+        sf_set_err(err, err_n, "texture is not 8-bit indexed");
+        return -1;
+    }
+    pixels = (size_t)tex->width * (size_t)tex->height;
+    if (tex->width <= 0 || tex->height <= 0 || tex->raw_size != pixels) {
+        sf_set_err(err, err_n, "indexed texture size is wrong");
+        return -1;
+    }
+    for (i = 0; i < pixels; i++) {
+        if (tex->texels[i] >= colors) {
+            sf_set_err(err, err_n, "palette index is past the row");
+            return -1;
+        }
+    }
+    rgba = sf_alloc(pixels * 4u);
+    if (!rgba) {
+        sf_set_err(err, err_n, "out of memory");
+        return -1;
+    }
+    for (i = 0; i < pixels; i++) {
+        write_1555(pal[tex->texels[i]], rgba + i * 4u);
+    }
+    sf_free(tex->rgba);
+    tex->rgba = rgba;
     return 0;
 }
 
