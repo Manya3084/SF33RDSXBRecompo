@@ -41,6 +41,7 @@ add_executable(sf33rdsxb
     src/game/memman.c
     src/game/fs.c
     src/game/ppg.c
+    src/game/title.c
     src/host/paths.c
     src/host/settings.c
     src/platform/input.c
@@ -74,7 +75,7 @@ enable_testing()
 add_executable(test_frame tests/test_frame.c src/game/task.c src/game/memman.c src/mem/heap.c)
 target_include_directories(test_frame PRIVATE src)
 
-add_executable(test_picture tests/test_picture.c src/game/fs.c src/game/ppg.c src/mem/heap.c)
+add_executable(test_picture tests/test_picture.c src/game/fs.c src/game/ppg.c src/game/title.c src/mem/heap.c)
 target_include_directories(test_picture PRIVATE src)
 target_link_libraries(test_picture PRIVATE ZLIB::ZLIB)
 

@@ -190,7 +190,11 @@ void sf_ui_draw(SfCanvas *canvas, const SfUi *ui)
     } else if (ui->screen == SF_UI_TITLE) {
         if (ui->picture && ui->picture_w > 0 && ui->picture_h > 0) {
             int scale = 2;
-            int x = canvas->width - ui->picture_w * scale - 32;
+            int x;
+            if (ui->picture_w * scale > canvas->width - 64 || ui->picture_h * scale > canvas->height - 128) {
+                scale = 1;
+            }
+            x = canvas->width - ui->picture_w * scale - 32;
             blit(canvas, ui->picture, ui->picture_w, ui->picture_h, x < 32 ? 32 : x, 96, scale);
         }
         text(canvas, 32, 110, "DATA READY", 180, 220, 180);

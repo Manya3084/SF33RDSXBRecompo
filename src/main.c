@@ -3,6 +3,7 @@
 #include "game/memman.h"
 #include "game/ppg.h"
 #include "game/task.h"
+#include "game/title.h"
 #include "mem/heap.h"
 #include "host/paths.h"
 #include "host/settings.h"
@@ -156,24 +157,26 @@ static void clear_picture(App *app)
     app->ui.picture_h = 0;
 }
 
-static void load_rank(App *app)
+static void load_title(App *app)
 {
     SfFsFile file;
     SfPpgTex tex;
     char err[256];
+    uint32_t fnum = sf_title_fnum(Country);
+    const char *want = fnum == 0x54 ? "Title_R.ppg" : "TitleTM.ppg";
     memset(&file, 0, sizeof file);
     memset(&tex, 0, sizeof tex);
     clear_picture(app);
     err[0] = 0;
-    if (fsOpen(app->install, 0, &file, err, sizeof err) != 0) {
+    if (fsOpen(app->install, fnum, &file, err, sizeof err) != 0) {
         return;
     }
-    if (strcmp(file.name, "Rank1.ppg") != 0) {
+    if (strcmp(file.name, want) != 0) {
         fsClose(&file);
         return;
     }
     if (sf_ppg_tex(file.data, file.size, 0, &tex, err, sizeof err) != 0 || !tex.rgba) {
-        fprintf(stderr, "%s\n", err[0] ? err : "Rank1.ppg did not decode");
+        fprintf(stderr, "%s\n", err[0] ? err : "the title logo did not decode");
         sf_ppg_tex_free(&tex);
         fsClose(&file);
         return;
@@ -199,7 +202,7 @@ static void run_import(App *app, const char *source)
         set_status(app, "");
         snprintf(app->note, sizeof app->note, "%s", result.note);
         app->ui.note = app->note;
-        load_rank(app);
+        load_title(app);
         SDL_SetWindowTitle(app->window, k_title);
         return;
     }
@@ -338,7 +341,7 @@ int main(int argc, char **argv)
     app.ui.status = app.status;
     app.ui.note = app.note;
     if (app.ui.screen == SF_UI_TITLE) {
-        load_rank(&app);
+        load_title(&app);
     }
     if (app.ui.screen == SF_UI_TITLE && app.tool[0]) {
         SfExtractResult retry;

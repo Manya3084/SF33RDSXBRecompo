@@ -18,7 +18,7 @@ The process heap is mimalloc when the build is configured with `-DSF_USE_MIMALLO
 
 Each frame runs the 12-slot task table, draws the shell, and presents once. `cpReadyTask` arms a slot. The next frame runs it. Xbox Live stays the placeholder screen.
 
-When the archive is present, file 0 (`Rank1.ppg`) is decoded and its first texture is drawn on the title screen. `compress` 2 is zlib inflate. The 16-bit texels are byte-swapped, then A1R5G5B5 expands into the canvas. Vulkan and OpenGL present that canvas with the shell. The disc fragment modules are DOF1 and DOF2, and those combiners write black, so this picture does not sample them.
+When the archive is present, the title screen shows the logo from `TITLE_Init`. `Country` 1 and 2 load `Title_R.ppg` (file 84). Every other value, including the retail boot value 0, loads `TitleTM.ppg` (file 83). Each file is one 512×256 texture. `compress` 2 is zlib inflate. The 16-bit texels are byte-swapped, then A1R5G5B5 expands into the canvas. Vulkan and OpenGL present that canvas with the shell. The disc fragment modules are DOF1 and DOF2, and those combiners write black, so this picture does not sample them.
 
 Game logic will be ported from [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb). This repository is the runtime.
 

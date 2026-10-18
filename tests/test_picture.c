@@ -1,5 +1,6 @@
 #include "game/fs.h"
 #include "game/ppg.h"
+#include "game/title.h"
 #include "mem/heap.h"
 
 #include <stdint.h>
@@ -318,11 +319,59 @@ static void test_rank1(void)
     fsClose(&file);
 }
 
+static void expect_logo(uint32_t fnum, const char *name, uint32_t bytes)
+{
+    SfFsFile file;
+    SfPpgTex tex;
+    char err[128];
+    char msg[80];
+    memset(&file, 0, sizeof file);
+    memset(&tex, 0, sizeof tex);
+    err[0] = 0;
+    snprintf(msg, sizeof msg, "%s opens", name);
+    expect(fsOpen(".", fnum, &file, err, sizeof err) == 0, msg);
+    snprintf(msg, sizeof msg, "%s name and size", name);
+    expect(file.data && strcmp(file.name, name) == 0 && file.size == bytes, msg);
+    if (!file.data) {
+        fsClose(&file);
+        return;
+    }
+    snprintf(msg, sizeof msg, "%s decodes", name);
+    expect(sf_ppg_tex(file.data, file.size, 0, &tex, err, sizeof err) == 0, msg);
+    if (tex.texels && tex.rgba) {
+        snprintf(msg, sizeof msg, "%s is 512x256 A1R5G5B5", name);
+        expect(tex.width == 512 && tex.height == 256 && tex.form == 0x1555 && tex.raw_size == 512u * 256u * 2u, msg);
+        snprintf(msg, sizeof msg, "%s is inflate pixel 0x82", name);
+        expect((tex.compress & 3) == 2 && tex.pixel == 0x82, msg);
+        expect(texel_at(&tex, 0) == 0x8000 && texel_at(&tex, 9902) == 0x8400, "title texel 9902 is 0x8400");
+        expect(tex.rgba[9902 * 4] == 8 && tex.rgba[9902 * 4 + 1] == 0 && tex.rgba[9902 * 4 + 3] == 255, "title pixel 9902 is dark red");
+    }
+    sf_ppg_tex_free(&tex);
+    fsClose(&file);
+}
+
+static void test_title(void)
+{
+    FILE *fp;
+    expect(sf_title_fnum(0) == 0x53 && sf_title_fnum(3) == 0x53 && sf_title_fnum(8) == 0x53, "other countries load TitleTM");
+    expect(sf_title_fnum(1) == 0x54 && sf_title_fnum(2) == 0x54, "countries 1 and 2 load Title_R");
+    expect(Country == 0 && sf_title_fnum(Country) == 0x53, "boot Country is 0");
+    fp = fopen("data/afs/index", "r");
+    if (!fp) {
+        printf("skip title logos (no archive index)\n");
+        return;
+    }
+    fclose(fp);
+    expect_logo(0x53, "TitleTM.ppg", 38496);
+    expect_logo(0x54, "Title_R.ppg", 38524);
+}
+
 int main(void)
 {
     test_synthetic();
     test_fs_fixture();
     test_rank1();
+    test_title();
     if (g_fail) {
         fprintf(stderr, "%d failed\n", g_fail);
         return 1;
