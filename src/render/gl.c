@@ -1,6 +1,7 @@
 #include "render/renderer_internal.h"
 
 #include "common.h"
+#include "render/nv2a.h"
 
 #include <stdlib.h>
 
@@ -56,6 +57,7 @@ int sf_gl_present(SfRenderer *renderer, const SfCanvas *canvas, char *err, size_
         return -1;
     }
     SDL_GL_MakeCurrent(renderer->window, renderer->gl);
+    sf_gl_clip_canvas();
     SDL_GetWindowSizeInPixels(renderer->window, &w, &h);
     if (w <= 0 || h <= 0) {
         return -1;

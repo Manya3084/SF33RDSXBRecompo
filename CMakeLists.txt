@@ -42,6 +42,7 @@ add_executable(sf33rdsxb
     src/render/renderer.c
     src/render/vulkan.c
     src/render/gl.c
+    src/render/nv2a.c
     src/ui/ui.c
 )
 target_include_directories(sf33rdsxb PRIVATE src)
@@ -58,5 +59,11 @@ target_include_directories(test_import PRIVATE src)
 target_link_libraries(test_import PRIVATE sf_import)
 target_compile_definitions(test_import PRIVATE SF_SHADER_TOOL="${CMAKE_SOURCE_DIR}/tools/spirv.py")
 
+add_executable(test_shaders tests/test_shaders.c src/render/nv2a.c)
+target_include_directories(test_shaders PRIVATE src)
+target_link_libraries(test_shaders PRIVATE SDL3::SDL3 Vulkan::Vulkan OpenGL::GL)
+target_compile_definitions(test_shaders PRIVATE SF_SHADER_TOOL="${CMAKE_SOURCE_DIR}/tools/spirv.py")
+
 enable_testing()
 add_test(NAME import COMMAND test_import)
+add_test(NAME shaders COMMAND test_shaders)

@@ -8,11 +8,11 @@ The game data is the Xbox version. On first launch, if `data/afs/SF33RDXB.AFS` i
 - a zip or 7z archive of that Xbox disc (the image itself, or the extracted Xbox tree)
 - the extracted Xbox folder (`sf33rd.xbe` and `XB_HostPC/SF33RDXB.AFS`)
 
-Anything else is refused, including a PlayStation 2 disc packed in a zip or 7z. The reader looks for the Xbox volume id `MICROSOFT*XBOX*MEDIA` and for `XB_HostPC/SF33RDXB.AFS`. It copies the 3rd Strike archive, the opening AIX, fonts, and NV2A shaders. SF2 movies and the XBE are not copied. `.xvu` and `.xpu` shaders are converted to SPIR-V with the vendored tool during that import.
+Anything else is refused, including a PlayStation 2 disc packed in a zip or 7z. The reader looks for the Xbox volume id `MICROSOFT*XBOX*MEDIA` and for `XB_HostPC/SF33RDXB.AFS`. It copies the 3rd Strike archive, the opening AIX, fonts, and NV2A shaders. SF2 movies and the XBE are not copied. During that import, `.xvu` and `.xpu` shaders are converted to one SPIR-V module each. The same words load on Vulkan and on desktop OpenGL.
 
 ## Host
 
-SDL3 opens the window. Vulkan is the primary renderer. If it fails, desktop OpenGL 3.3 (not GLES) is used for that session and the saved choice stays Vulkan so the next launch tries it again. OpenAL opens the audio device. The display menu changes resolution and renderer. Xbox Live is a placeholder screen.
+SDL3 opens the window. Vulkan is the primary renderer. If it fails, desktop OpenGL 4.6 (compatibility profile, not GLES) is used for that session and the saved choice stays Vulkan so the next launch tries it again. OpenGL 4.6 loads the converted modules with `glShaderBinary`. The UI canvas stays on the fixed-function path. Converted programs use Vulkan clip space (upper-left origin, zero-to-one depth); the canvas restores the ordinary OpenGL clip before it draws. OpenAL opens the audio device. The display menu changes resolution and renderer. Xbox Live is a placeholder screen.
 
 The process heap is mimalloc when the build is configured with `-DSF_USE_MIMALLOC=ON` and mimalloc is installed. Otherwise `sf_alloc` uses the C library. The fight code will keep its own work pools. There is no Xbox heap, XDK, xboxkrnl, D3D8, or XOnline dependency.
 
@@ -33,6 +33,8 @@ data/shaders/nv2a/
 data/shaders/spirv/
 config/settings.txt
 ```
+
+SPIR-V uses one descriptor set. Vertex binding 0 is 192 vec4 constants, when the program reads them, and binding 1 is the viewport. Fragment binding 2 is 16 vec4 pixel constants plus fog. Fragment bindings 3 through 6 are the four texture stages. The entry point is `main`.
 
 ```
 sf33rdsxb

@@ -11,12 +11,18 @@ MUL, RCP, and LOG are ordinary floating-point operations. The reciprocal
 used by RCC is clamped after a floating-point divide, which is what keeps a
 zero or an infinity inside the two powers of two.
 
-Descriptor layout, present only when the module reads it:
+One descriptor set, so Vulkan uses a single pipeline layout and desktop
+OpenGL (GL_ARB_gl_spirv / OpenGL 4.6) can link the two stages. OpenGL
+ignores the set number and matches uniform blocks by binding, so the
+blocks must not share a binding. Present only when the module reads it:
 
-- vertex set 0 binding 0: 192 vec4 constants
-- vertex set 0 binding 1: vec4 viewport, xy in pixels
-- fragment set 0 binding 0: 16 vec4 pixel constants, then one vec4 fog color
-- fragment set 1 binding 0..3: sampler2D
+- set 0 binding 0: vertex, 192 vec4 constants
+- set 0 binding 1: vertex, vec4 viewport, xy in pixels
+- set 0 binding 2: fragment, 16 vec4 pixel constants, then one vec4 fog color
+- set 0 binding 3..6: fragment, sampler2D for texture stages 0..3
+
+OpenGL draws these modules with an upper-left origin and zero-to-one depth,
+the same clip space Vulkan uses for this gl_Position.
 
 Vertex outputs and combiner inputs share locations. 0 and 1 are the front
 colors, 2 and 3 are the back colors, 4..7 are texture coordinates, 8 is fog,
@@ -743,7 +749,7 @@ class _Combiner:
         self.span = b.fconst(65536.0)
         b.v3_4 = b.repeat(b.t_v3, self.f4, 3)
         array = b.array(b.t_v4, 16, 16)
-        self.ubo = b.ubo((array, b.t_v4), (256, None), 0)
+        self.ubo = b.ubo((array, b.t_v4), (256, None), 2)
         image = b.mod.result("types", OP_TYPE_IMAGE, None, (b.t_f32, DIM_2D, 0, 0, 0, 1, 0))
         self.sampled = b.mod.result("types", OP_TYPE_SAMPLED, None, (image,))
         sampled = self.sampled
@@ -760,7 +766,7 @@ class _Combiner:
         interface.append(fog_in)
         for binding in range(4):
             sampler = b.global_var(sampled, CLASS_UNIFORM_CONSTANT)
-            b.bind(sampler, 1, binding)
+            b.bind(sampler, 0, 3 + binding)
             self.samplers.append(sampler)
         frag = b.global_var(b.t_v4, CLASS_OUTPUT)
         b.decorate(frag, DECO_LOCATION, 0)
@@ -1067,19 +1073,24 @@ def combiner_spirv(blob: bytes) -> bytes | None:
 
 
 def validate_spirv(blob: bytes) -> str | None:
-    """None when spirv-val accepts the module. The validator's text when it does not."""
+    """None when spirv-val accepts the module for Vulkan 1.0 and OpenGL 4.5.
+
+    The validator's text when either environment rejects it.
+    """
     exe = shutil.which("spirv-val")
     if exe is None:
         raise FileNotFoundError("spirv-val")
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "shader.spv"
         path.write_bytes(blob)
-        proc = subprocess.run(
-            [exe, "--target-env", "vulkan1.0", str(path)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    if proc.returncode == 0:
-        return None
-    return (proc.stderr or proc.stdout or "spirv-val failed").strip()
+        for env in ("vulkan1.0", "opengl4.5"):
+            proc = subprocess.run(
+                [exe, "--target-env", env, str(path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                text = (proc.stderr or proc.stdout or "spirv-val failed").strip()
+                return f"{env}: {text}"
+    return None

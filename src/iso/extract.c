@@ -302,7 +302,8 @@ static int write_manifest(const char *install, const SfExtractResult *result)
     if (!fp) {
         return -1;
     }
-    fprintf(fp, "sf33rd-data 1\nafs yes\nshaders %d\nspirv %d\nspirv_failed %d\n", result->shaders, result->spirv, result->spirv_failed);
+    fprintf(fp, "sf33rd-data 1\nafs yes\nshaders %d\nspirv %d\nspirv_failed %d\nshader_api vulkan opengl\n",
+            result->shaders, result->spirv, result->spirv_failed);
     if (fclose(fp) != 0) {
         return -1;
     }
@@ -325,6 +326,8 @@ static int finish_shaders(const char *install, const char *tool, SfExtractResult
         add_note(result, "Shader tool was not found. SPIR-V was not written.");
     } else if (result->spirv_failed > 0) {
         add_note(result, "NV2A shaders were copied. SPIR-V conversion failed for some of them.");
+    } else if (result->spirv > 0) {
+        add_note(result, "NV2A shaders were converted to SPIR-V for Vulkan and OpenGL.");
     }
     if (write_manifest(install, result) != 0) {
         add_note(result, "The data manifest was not written.");
