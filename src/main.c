@@ -1,4 +1,6 @@
 #include "common.h"
+#include "game/memman.h"
+#include "game/task.h"
 #include "host/paths.h"
 #include "host/settings.h"
 #include "iso/extract.h"
@@ -274,6 +276,8 @@ int main(int argc, char **argv)
         SDL_Quit();
         return 1;
     }
+    mmSystemInitialize();
+    xb_ClearTasks();
     app.lock = SDL_CreateMutex();
     app.ui.screen = sf_data_ready(app.install) ? SF_UI_TITLE : SF_UI_SETUP;
     app.ui.menu_res = preset_index(&app.settings);
@@ -355,6 +359,7 @@ int main(int argc, char **argv)
         }
         app.ui.gl_fallback = app.gl_fallback;
         app.ui.active = app.gl_fallback ? SF_RENDER_OPENGL : sf_render_kind(app.renderer);
+        xb_TurboFrameStep();
         sf_ui_draw(&app.canvas, &app.ui);
         if (sf_render_present(app.renderer, &app.canvas, err, sizeof err) != 0 && !app.gl_fallback) {
             close_window(&app);

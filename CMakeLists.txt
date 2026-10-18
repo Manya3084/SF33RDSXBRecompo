@@ -36,6 +36,8 @@ endif()
 add_executable(sf33rdsxb
     src/main.c
     src/mem/heap.c
+    src/game/task.c
+    src/game/memman.c
     src/host/paths.c
     src/host/settings.c
     src/platform/input.c
@@ -66,5 +68,9 @@ target_link_libraries(test_shaders PRIVATE SDL3::SDL3 Vulkan::Vulkan OpenGL::GL)
 target_compile_definitions(test_shaders PRIVATE SF_SHADER_TOOL="${CMAKE_SOURCE_DIR}/tools/spirv.py")
 
 enable_testing()
+add_executable(test_frame tests/test_frame.c src/game/task.c src/game/memman.c src/mem/heap.c)
+target_include_directories(test_frame PRIVATE src)
+
 add_test(NAME import COMMAND test_import)
 add_test(NAME shaders COMMAND test_shaders)
+add_test(NAME frame COMMAND test_frame)

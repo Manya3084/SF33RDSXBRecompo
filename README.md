@@ -14,7 +14,9 @@ Anything else is refused, including a PlayStation 2 disc packed in a zip or 7z. 
 
 SDL3 opens the window. Vulkan is the primary renderer. If it fails, desktop OpenGL 4.6 (compatibility profile, not GLES) is used for that session and the saved choice stays Vulkan so the next launch tries it again. OpenGL 4.6 loads the converted modules with `glShaderBinary`. The UI canvas stays on the fixed-function path. Converted programs use Vulkan clip space (upper-left origin, zero-to-one depth); the canvas restores the ordinary OpenGL clip before it draws. OpenAL opens the audio device. The display menu changes resolution and renderer. Xbox Live is a placeholder screen.
 
-The process heap is mimalloc when the build is configured with `-DSF_USE_MIMALLOC=ON` and mimalloc is installed. Otherwise `sf_alloc` uses the C library. The fight code will keep its own work pools. There is no Xbox heap, XDK, xboxkrnl, D3D8, or XOnline dependency.
+The process heap is mimalloc when the build is configured with `-DSF_USE_MIMALLOC=ON` and mimalloc is installed. Otherwise `sf_alloc` uses the C library. The fight code keeps its own cell heap: `mmHeapCreate` takes the block from `sf_alloc`, and a cell header stays 12 bytes inside the retail 16-byte unit. There is no Xbox heap, XDK, xboxkrnl, D3D8, or XOnline dependency.
+
+Each frame runs the 12-slot task table, draws the shell, and presents once. `cpReadyTask` arms a slot. The next frame runs it. Xbox Live stays the placeholder screen.
 
 Game logic will be ported from [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb). This repository is the runtime.
 
