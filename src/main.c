@@ -1,4 +1,5 @@
 #include "common.h"
+#include "game/adx.h"
 #include "game/fs.h"
 #include "game/memman.h"
 #include "game/ppg.h"
@@ -271,11 +272,41 @@ static void load_opening(App *app)
     app->ui.opening_h = app->opening_h;
 }
 
+/* o01_A_NYC.adx is archive file 87. A missing cue leaves the title up. */
+static void load_bgm(App *app)
+{
+    SfFsFile file;
+    SfAdx adx;
+    char err[256];
+    memset(&file, 0, sizeof file);
+    memset(&adx, 0, sizeof adx);
+    err[0] = 0;
+    if (fsOpen(app->install, 87, &file, err, sizeof err) != 0) {
+        return;
+    }
+    if (strcmp(file.name, "o01_A_NYC.adx") != 0) {
+        fsClose(&file);
+        return;
+    }
+    if (sf_adx_decode(file.data, file.size, &adx, err, sizeof err) != 0) {
+        fprintf(stderr, "%s\n", err[0] ? err : "the title cue did not decode");
+        sf_adx_free(&adx);
+        fsClose(&file);
+        return;
+    }
+    if (sf_audio_play(adx.pcm, adx.total, adx.rate, adx.channels, adx.loop, adx.loop_start, adx.loop_end) != 0) {
+        fprintf(stderr, "the title cue did not play\n");
+    }
+    sf_adx_free(&adx);
+    fsClose(&file);
+}
+
 static void load_title(App *app)
 {
     clear_picture(app);
     load_logo(app);
     load_opening(app);
+    load_bgm(app);
 }
 
 static void run_import(App *app, const char *source)
@@ -503,6 +534,7 @@ int main(int argc, char **argv)
         app.ui.gl_fallback = app.gl_fallback;
         app.ui.active = app.gl_fallback ? SF_RENDER_OPENGL : sf_render_kind(app.renderer);
         xb_TurboFrameStep();
+        sf_audio_pump();
         sf_ui_draw(&app.canvas, &app.ui);
         if (sf_render_present(app.renderer, &app.canvas, err, sizeof err) != 0 && !app.gl_fallback) {
             close_window(&app);

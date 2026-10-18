@@ -42,6 +42,7 @@ add_executable(sf33rdsxb
     src/game/fs.c
     src/game/ppg.c
     src/game/title.c
+    src/game/adx.c
     src/host/paths.c
     src/host/settings.c
     src/platform/input.c
@@ -53,7 +54,7 @@ add_executable(sf33rdsxb
     src/ui/ui.c
 )
 target_include_directories(sf33rdsxb PRIVATE src)
-target_link_libraries(sf33rdsxb PRIVATE sf_import SDL3::SDL3 OpenAL::OpenAL Vulkan::Vulkan OpenGL::GL ZLIB::ZLIB)
+target_link_libraries(sf33rdsxb PRIVATE sf_import SDL3::SDL3 OpenAL::OpenAL Vulkan::Vulkan OpenGL::GL ZLIB::ZLIB m)
 if(SF_USE_MIMALLOC)
     pkg_check_modules(MIMALLOC REQUIRED mimalloc)
     target_compile_definitions(sf33rdsxb PRIVATE SF_USE_MIMALLOC)
@@ -79,7 +80,12 @@ add_executable(test_picture tests/test_picture.c src/game/fs.c src/game/ppg.c sr
 target_include_directories(test_picture PRIVATE src)
 target_link_libraries(test_picture PRIVATE ZLIB::ZLIB)
 
+add_executable(test_adx tests/test_adx.c src/game/adx.c src/game/fs.c src/mem/heap.c)
+target_include_directories(test_adx PRIVATE src)
+target_link_libraries(test_adx PRIVATE m)
+
 add_test(NAME import COMMAND test_import)
 add_test(NAME shaders COMMAND test_shaders)
 add_test(NAME frame COMMAND test_frame)
 add_test(NAME picture COMMAND test_picture)
+add_test(NAME adx COMMAND test_adx)
