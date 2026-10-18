@@ -12,6 +12,25 @@ static ALuint g_intro;
 static ALuint g_loop;
 static int g_streaming;
 static int g_keep;
+static ALuint g_fx_src[4];
+static ALuint g_fx_buf[4];
+
+static void drop_effects(void)
+{
+    int i;
+    for (i = 0; i < 4; i++) {
+        if (g_fx_src[i]) {
+            alSourceStop(g_fx_src[i]);
+            alSourcei(g_fx_src[i], AL_BUFFER, 0);
+            alDeleteSources(1, &g_fx_src[i]);
+            g_fx_src[i] = 0;
+        }
+        if (g_fx_buf[i]) {
+            alDeleteBuffers(1, &g_fx_buf[i]);
+            g_fx_buf[i] = 0;
+        }
+    }
+}
 
 static void drop_source(void)
 {
@@ -62,6 +81,7 @@ void sf_audio_close(void)
     if (g_ctx) {
         alcMakeContextCurrent(g_ctx);
         drop_source();
+        drop_effects();
         alcMakeContextCurrent(NULL);
         alcDestroyContext(g_ctx);
         g_ctx = NULL;
@@ -192,4 +212,40 @@ void sf_audio_pump(void)
     if (state != AL_PLAYING) {
         alSourcePlay(g_source);
     }
+}
+
+int sf_audio_effect(int slot, const int16_t *pcm, int32_t samples, int rate, int channels)
+{
+    if (slot < 0 || slot >= 4 || !g_ctx || !pcm || !bytes_ok(samples, channels) || rate <= 0) {
+        return -1;
+    }
+    if (!alcMakeContextCurrent(g_ctx)) {
+        return -1;
+    }
+    alGetError();
+    if (!g_fx_src[slot]) {
+        alGenSources(1, &g_fx_src[slot]);
+        alGenBuffers(1, &g_fx_buf[slot]);
+        if (alGetError() != AL_NO_ERROR || g_fx_src[slot] == 0 || g_fx_buf[slot] == 0) {
+            if (g_fx_src[slot]) {
+                alDeleteSources(1, &g_fx_src[slot]);
+                g_fx_src[slot] = 0;
+            }
+            if (g_fx_buf[slot]) {
+                alDeleteBuffers(1, &g_fx_buf[slot]);
+                g_fx_buf[slot] = 0;
+            }
+            return -1;
+        }
+        alSourcei(g_fx_src[slot], AL_LOOPING, AL_FALSE);
+        alSourcef(g_fx_src[slot], AL_GAIN, 1.0f);
+    }
+    alSourceStop(g_fx_src[slot]);
+    alSourcei(g_fx_src[slot], AL_BUFFER, 0);
+    if (upload(g_fx_buf[slot], pcm, samples, channels, rate) != 0) {
+        return -1;
+    }
+    alSourcei(g_fx_src[slot], AL_BUFFER, (ALint)g_fx_buf[slot]);
+    alSourcePlay(g_fx_src[slot]);
+    return alGetError() == AL_NO_ERROR ? 0 : -1;
 }

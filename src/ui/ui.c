@@ -49,6 +49,7 @@ static const uint8_t k_glyph[][8] = {
     {0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x00, 0x00},
     {0x18, 0x20, 0x40, 0x40, 0x40, 0x20, 0x18, 0x00},
     {0x18, 0x04, 0x02, 0x02, 0x02, 0x04, 0x18, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7E},
 };
 
 static int glyph_index(char c)
@@ -70,6 +71,7 @@ static int glyph_index(char c)
     case '/': return 40;
     case '(': return 41;
     case ')': return 42;
+    case '_': return 43;
     default: return 36;
     }
 }
@@ -201,10 +203,15 @@ void sf_ui_draw(SfCanvas *canvas, const SfUi *ui)
             blit(canvas, ui->picture, ui->picture_w, ui->picture_h, x < 32 ? 32 : x, 96, scale);
         }
         text(canvas, 32, 110, "DATA READY", 180, 220, 180);
+        if (ui->track && ui->track[0]) {
+            text(canvas, 32, 130, ui->track, 240, 210, 140);
+        }
         text(canvas, 32, 150, kind_name(ui->active, ui->gl_fallback), 220, 220, 220);
-        text(canvas, 32, 200, "START: DISPLAY", 180, 190, 210);
-        text(canvas, 32, 224, "BACK: XBOX LIVE", 180, 190, 210);
-        text(canvas, 32, 248, "ESC: QUIT", 180, 190, 210);
+        text(canvas, 32, 170, "ARROWS: TRACK", 180, 190, 210);
+        text(canvas, 32, 190, "ASDF: EFFECTS", 180, 190, 210);
+        text(canvas, 32, 210, "START: DISPLAY", 180, 190, 210);
+        text(canvas, 32, 230, "BACK: XBOX LIVE", 180, 190, 210);
+        text(canvas, 32, 250, "ESC: QUIT", 180, 190, 210);
     } else if (ui->screen == SF_UI_DISPLAY) {
         text(canvas, 32, 100, "DISPLAY", 220, 220, 220);
         text(canvas, 32, 140, ui->menu_row == 0 ? "> RESOLUTION" : "  RESOLUTION", 220, 220, 220);

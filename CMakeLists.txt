@@ -43,6 +43,8 @@ add_executable(sf33rdsxb
     src/game/ppg.c
     src/game/title.c
     src/game/adx.c
+    src/game/xwb.c
+    src/game/tracks.c
     src/host/paths.c
     src/host/settings.c
     src/platform/input.c
@@ -80,7 +82,7 @@ add_executable(test_picture tests/test_picture.c src/game/fs.c src/game/ppg.c sr
 target_include_directories(test_picture PRIVATE src)
 target_link_libraries(test_picture PRIVATE ZLIB::ZLIB)
 
-add_executable(test_adx tests/test_adx.c src/game/adx.c src/game/fs.c src/mem/heap.c)
+add_executable(test_adx tests/test_adx.c src/game/adx.c src/game/fs.c src/game/xwb.c src/game/tracks.c src/mem/heap.c)
 target_include_directories(test_adx PRIVATE src)
 target_link_libraries(test_adx PRIVATE m)
 

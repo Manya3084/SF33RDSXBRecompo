@@ -1,6 +1,8 @@
 #include "common.h"
 #include "game/adx.h"
 #include "game/fs.h"
+#include "game/tracks.h"
+#include "game/xwb.h"
 #include "game/memman.h"
 #include "game/ppg.h"
 #include "game/task.h"
@@ -50,6 +52,11 @@ typedef struct App {
     uint8_t *opening;
     int opening_w;
     int opening_h;
+    SfTrack *tracks;
+    int track_count;
+    int track_index;
+    char track_label[48];
+    SfWave fx[4];
 } App;
 
 static void set_status(App *app, const char *text)
@@ -272,33 +279,117 @@ static void load_opening(App *app)
     app->ui.opening_h = app->opening_h;
 }
 
-/* o01_A_NYC.adx is archive file 87. A missing cue leaves the title up. */
-static void load_bgm(App *app)
+static void clear_tracks(App *app)
+{
+    int i;
+    sf_tracks_free(app->tracks);
+    app->tracks = NULL;
+    app->track_count = 0;
+    app->track_index = 0;
+    app->track_label[0] = 0;
+    app->ui.track = NULL;
+    for (i = 0; i < 4; i++) {
+        sf_wave_free(&app->fx[i]);
+    }
+}
+
+static int track_named(const App *app, const char *name)
+{
+    int i;
+    for (i = 0; i < app->track_count; i++) {
+        if (strcmp(app->tracks[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+static void play_track(App *app, int index)
 {
     SfFsFile file;
     SfAdx adx;
     char err[256];
+    if (!app->tracks || app->track_count <= 0) {
+        return;
+    }
+    if (index < 0) {
+        index = app->track_count - 1;
+    }
+    if (index >= app->track_count) {
+        index = 0;
+    }
     memset(&file, 0, sizeof file);
     memset(&adx, 0, sizeof adx);
     err[0] = 0;
-    if (fsOpen(app->install, 87, &file, err, sizeof err) != 0) {
+    if (fsOpen(app->install, app->tracks[index].fnum, &file, err, sizeof err) != 0) {
+        fprintf(stderr, "%s\n", err[0] ? err : "the track did not open");
         return;
     }
-    if (strcmp(file.name, "o01_A_NYC.adx") != 0) {
-        fsClose(&file);
-        return;
-    }
-    if (sf_adx_decode(file.data, file.size, &adx, err, sizeof err) != 0) {
-        fprintf(stderr, "%s\n", err[0] ? err : "the title cue did not decode");
+    if (strcmp(file.name, app->tracks[index].name) != 0 || sf_adx_decode(file.data, file.size, &adx, err, sizeof err) != 0) {
+        fprintf(stderr, "%s\n", err[0] ? err : "the track did not decode");
         sf_adx_free(&adx);
         fsClose(&file);
         return;
     }
     if (sf_audio_play(adx.pcm, adx.total, adx.rate, adx.channels, adx.loop, adx.loop_start, adx.loop_end) != 0) {
-        fprintf(stderr, "the title cue did not play\n");
+        fprintf(stderr, "the track did not play\n");
+        sf_adx_free(&adx);
+        fsClose(&file);
+        return;
     }
+    app->track_index = index;
+    snprintf(app->track_label, sizeof app->track_label, "%s", app->tracks[index].name);
+    app->ui.track = app->track_label;
     sf_adx_free(&adx);
     fsClose(&file);
+}
+
+static void load_effects(App *app)
+{
+    SfFsFile file;
+    char err[256];
+    int i;
+    memset(&file, 0, sizeof file);
+    err[0] = 0;
+    if (fsOpen(app->install, 8, &file, err, sizeof err) != 0 || strcmp(file.name, "SE1.xwb") != 0) {
+        fsClose(&file);
+        return;
+    }
+    for (i = 0; i < 4; i++) {
+        if (sf_xwb_entry(file.data, file.size, i, &app->fx[i], err, sizeof err) != 0) {
+            fprintf(stderr, "%s\n", err[0] ? err : "an effect did not decode");
+            sf_wave_free(&app->fx[i]);
+        }
+    }
+    fsClose(&file);
+}
+
+static void play_effect(App *app, int slot)
+{
+    SfWave *wave;
+    if (slot < 0 || slot >= 4) {
+        return;
+    }
+    wave = &app->fx[slot];
+    if (!wave->pcm) {
+        return;
+    }
+    if (sf_audio_effect(slot, wave->pcm, wave->samples, wave->rate, wave->channels) != 0) {
+        fprintf(stderr, "an effect did not play\n");
+    }
+}
+
+static void load_bgm(App *app)
+{
+    char err[256];
+    err[0] = 0;
+    clear_tracks(app);
+    if (sf_tracks_load(app->install, &app->tracks, &app->track_count, err, sizeof err) != 0) {
+        fprintf(stderr, "%s\n", err[0] ? err : "the track list did not load");
+        return;
+    }
+    load_effects(app);
+    play_track(app, track_named(app, "o01_A_NYC.adx"));
 }
 
 static void load_title(App *app)
@@ -478,6 +569,9 @@ int main(int argc, char **argv)
                 } else {
                     app.quit = 1;
                 }
+            } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && app.ui.screen == SF_UI_TITLE && (event.key.key == SDLK_A || event.key.key == SDLK_S || event.key.key == SDLK_D || event.key.key == SDLK_F)) {
+                int slot = event.key.key == SDLK_A ? 0 : event.key.key == SDLK_S ? 1 : event.key.key == SDLK_D ? 2 : 3;
+                play_effect(&app, slot);
             } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F && app.ui.screen == SF_UI_SETUP && !app.dialog_open) {
                 app.dialog_open = 1;
                 SDL_ShowOpenFolderDialog(on_file, &app, app.window, NULL, false);
@@ -512,6 +606,10 @@ int main(int argc, char **argv)
                 app.ui.menu_renderer = app.settings.renderer == SF_RENDER_OPENGL ? 1 : 0;
             } else if (sf_pressed(SF_BACK)) {
                 app.ui.screen = SF_UI_LIVE;
+            } else if (sf_pressed(SF_LEFT) || sf_pressed(SF_DOWN)) {
+                play_track(&app, app.track_index - 1);
+            } else if (sf_pressed(SF_RIGHT) || sf_pressed(SF_UP)) {
+                play_track(&app, app.track_index + 1);
             }
         } else if (app.ui.screen == SF_UI_DISPLAY) {
             if (sf_pressed(SF_UP) || sf_pressed(SF_DOWN)) {
@@ -555,6 +653,7 @@ int main(int argc, char **argv)
     }
     sf_input_quit();
     sf_audio_close();
+    clear_tracks(&app);
     SDL_Quit();
     return 0;
 }

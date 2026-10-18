@@ -22,13 +22,13 @@ When the archive is present, the title screen shows the logo from `TITLE_Init`. 
 
 The same screen shows the first opening tile. `OPBG_Init` reads `Opening.ppg` (file 81) after it has been stored under RAMCNT type `0x1D`. Texture 0 is 256×256 and 8-bit. Its one rectangle covers the tile and selects palette 15. `put_chr2` adds 300 to that byte, and `title.bin` (file 82) is the color load that fills `ColorRAM` from row 300, so the colors are 64 little-endian A1R5G5B5 words in row 15. Pixel 0 is index 28, word `0xEF7B`. The logo and the shell stay. The other 89 tiles and the opening demo are not running.
 
-The title screen plays `o01_A_NYC.adx` (file 87) when the archive is present. It is stereo, 48000 Hz, version 4, 4-bit, with 18-byte blocks and a high-pass of 500. The flags byte is 0, so the scale is the low 13 bits of the frame word plus one. A frame word with bit 15 set ends the stream. The samples go to OpenAL. The loop runs from sample 191744 through sample 2875501. The opening AIX, the BGM packs, and the sound triggers are not running.
+The title screen plays `o01_A_NYC.adx` (file 87) when the archive is present. It is stereo, 48000 Hz, version 4, 4-bit, with 18-byte blocks and a high-pass of 500. The flags byte is 0, so the scale is the low 13 bits of the frame word plus one. A frame word with bit 15 set ends the stream. The samples go to OpenAL. The loop runs from sample 191744 through sample 2875501. The arrow keys change to the next full mix in the archive. Stem files stay out of that list. A, S, D, and F play the first four PCM waves in `SE1.xwb` (file 8) without stopping the music. The opening AIX, the BGM packs, and the sound triggers are not running.
 
 Game logic will be ported from [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb). This repository is the runtime.
 
 ## Controls
 
-Xbox layout on a gamepad. Keyboard stand-in: arrows are the d-pad, Z is A, X is B, A is X, S is Y, Enter is Start, Backspace is Back, Q is LB, E is RB. On the data screen, Enter picks a file and F picks a folder. Start opens the display menu. Back opens the Xbox Live placeholder. Escape quits, or closes the menu that is open.
+Xbox layout on a gamepad. Keyboard stand-in: arrows are the d-pad, Z is A, X is B, A is X, S is Y, Enter is Start, Backspace is Back, Q is LB, E is RB. On the data screen, Enter picks a file and F picks a folder. On the title screen, the arrow keys change the music and A, S, D, and F play effects. Start opens the display menu. Back opens the Xbox Live placeholder. Escape quits, or closes the menu that is open.
 
 ## Layout
 

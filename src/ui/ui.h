@@ -22,6 +22,7 @@ typedef struct SfUi {
     SfRendererKind active;
     const char *status;
     const char *note;
+    const char *track;
     const uint8_t *picture;
     int picture_w;
     int picture_h;

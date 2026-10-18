@@ -1,5 +1,7 @@
 #include "game/adx.h"
 #include "game/fs.h"
+#include "game/tracks.h"
+#include "game/xwb.h"
 #include "mem/heap.h"
 
 #include <stdio.h>
@@ -29,6 +31,14 @@ static void put_be32(uint8_t *p, unsigned v)
     p[1] = (uint8_t)(v >> 16);
     p[2] = (uint8_t)(v >> 8);
     p[3] = (uint8_t)v;
+}
+
+static void put_le32(uint8_t *p, unsigned v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
 }
 
 /* Version 3 header. Audio starts at byte 0x14. One 18-byte block follows. */
@@ -172,6 +182,127 @@ static void test_nyc(void)
     fsClose(&file);
 }
 
+/* Two PCM waves. Entry 0 is one unsigned 8-bit sample. Entry 1 is one
+   little-endian 16-bit sample. */
+static void fill_bank(uint8_t *b, size_t n)
+{
+    memset(b, 0, n);
+    put_le32(b, 0x444E4257u);
+    put_le32(b + 4, 3);
+    put_le32(b + 8, 0x50);
+    put_le32(b + 12, 0x28);
+    put_le32(b + 16, 0x78);
+    put_le32(b + 20, 48);
+    put_le32(b + 32, 0xA8);
+    put_le32(b + 36, 3);
+    put_le32(b + 0x54, 2);
+    put_le32(b + 0x50 + 0x18, 24);
+    put_le32(b + 0x78 + 4, 0x000AC444u);
+    put_le32(b + 0x78 + 12, 1);
+    put_le32(b + 0x78 + 24 + 4, 0x800AC444u);
+    put_le32(b + 0x78 + 24 + 8, 1);
+    put_le32(b + 0x78 + 24 + 12, 2);
+    b[0xA8] = 0xFF;
+    b[0xA9] = 0x34;
+    b[0xAA] = 0x12;
+}
+
+static void test_names(void)
+{
+    expect(sf_track_is_full("o01_A_NYC.adx") == 1, "o01_A_NYC.adx is a full mix");
+    expect(sf_track_is_full("01_A_NYC.adx") == 1, "01_A_NYC.adx is a full mix");
+    expect(sf_track_is_full("o01_A_NYC_00.adx") == 0, "o01_A_NYC_00.adx is a stem");
+    expect(sf_track_is_full("o01_A_NYC_0G.adx") == 1, "a non-hex suffix stays in the list");
+    expect(sf_track_is_full("Rank1.ppg") == 0, "a picture is not a mix");
+    expect(sf_track_is_full(NULL) == 0, "a missing name is not a mix");
+}
+
+static void test_bank(void)
+{
+    uint8_t file[0xAB];
+    SfWave wave;
+    char err[64];
+    int count = 0;
+    fill_bank(file, sizeof file);
+    err[0] = 0;
+    expect(sf_xwb_count(file, sizeof file, &count, err, sizeof err) == 0 && count == 2, "the bank has two waves");
+    memset(&wave, 0, sizeof wave);
+    expect(sf_xwb_entry(file, sizeof file, 0, &wave, err, sizeof err) == 0, "the 8-bit wave decodes");
+    expect(wave.channels == 1 && wave.rate == 22050 && wave.samples == 1 && wave.pcm && wave.pcm[0] == 32512, "byte 255 expands to 32512");
+    sf_wave_free(&wave);
+    expect(sf_xwb_entry(file, sizeof file, 1, &wave, err, sizeof err) == 0, "the 16-bit wave decodes");
+    expect(wave.channels == 1 && wave.rate == 22050 && wave.samples == 1 && wave.pcm && wave.pcm[0] == 0x1234, "the 16-bit sample is 0x1234");
+    sf_wave_free(&wave);
+    file[4] = 1;
+    expect(sf_xwb_count(file, sizeof file, &count, err, sizeof err) != 0 && strstr(err, "xwb version") != NULL, "version 1 is refused");
+    fill_bank(file, sizeof file);
+    file[0x78 + 4] = 0x45;
+    memset(&wave, 0, sizeof wave);
+    err[0] = 0;
+    expect(sf_xwb_entry(file, sizeof file, 0, &wave, err, sizeof err) != 0, "a non-PCM tag is refused");
+    expect(strstr(err, "xwb codec") != NULL && wave.pcm == NULL, "the refusal names the codec");
+    sf_wave_free(&wave);
+}
+
+static void test_list(void)
+{
+    SfTrack *list = NULL;
+    int count = 0;
+    char err[128];
+    int i;
+    FILE *fp = fopen("data/afs/index", "r");
+    if (!fp) {
+        printf("skip track list (no archive index)\n");
+        return;
+    }
+    fclose(fp);
+    err[0] = 0;
+    expect(sf_tracks_load(".", &list, &count, err, sizeof err) == 0, "the track list loads");
+    expect(count == 116, "the archive has 116 full mixes");
+    if (count >= 2 && list) {
+        expect(list[0].fnum == 87 && strcmp(list[0].name, "o01_A_NYC.adx") == 0, "the list starts at o01_A_NYC.adx");
+        expect(list[1].fnum == 103 && strcmp(list[1].name, "o02_B_NYC.adx") == 0, "the next mix is o02_B_NYC.adx");
+    }
+    for (i = 0; i < count; i++) {
+        if (strcmp(list[i].name, "o01_A_NYC_00.adx") == 0) {
+            break;
+        }
+    }
+    expect(i == count, "o01_A_NYC_00.adx stays out of the list");
+    sf_tracks_free(list);
+}
+
+static void test_se1(void)
+{
+    SfFsFile file;
+    SfWave wave;
+    char err[128];
+    int count = 0;
+    FILE *fp = fopen("data/afs/index", "r");
+    if (!fp) {
+        printf("skip SE1 (no archive index)\n");
+        return;
+    }
+    fclose(fp);
+    memset(&file, 0, sizeof file);
+    memset(&wave, 0, sizeof wave);
+    err[0] = 0;
+    expect(fsOpen(".", 8, &file, err, sizeof err) == 0, "SE1.xwb opens");
+    expect(file.data && strcmp(file.name, "SE1.xwb") == 0 && file.size == 767740, "SE1.xwb name and size");
+    if (!file.data) {
+        fsClose(&file);
+        return;
+    }
+    expect(sf_xwb_count(file.data, file.size, &count, err, sizeof err) == 0 && count == 20, "SE1 has 20 waves");
+    expect(sf_xwb_entry(file.data, file.size, 0, &wave, err, sizeof err) == 0, "SE1 entry 0 decodes");
+    expect(wave.channels == 1 && wave.rate == 22050 && wave.samples == 30899 && wave.pcm != NULL, "SE1 entry 0 is mono 22050 with 30899 samples");
+    if (wave.pcm && wave.samples > 16) {
+        expect(wave.pcm[16] == 512, "SE1 entry 0 sample 16 is 512");
+    }
+    sf_wave_free(&wave);
+    fsClose(&file);
+}
+
 int main(void)
 {
     test_coef();
@@ -180,6 +311,10 @@ int main(void)
     test_end();
     test_key();
     test_nyc();
+    test_names();
+    test_bank();
+    test_list();
+    test_se1();
     if (g_fail) {
         fprintf(stderr, "%d failed\n", g_fail);
         return 1;

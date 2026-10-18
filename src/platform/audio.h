@@ -13,4 +13,7 @@ void sf_audio_close(void);
 int sf_audio_play(const int16_t *pcm, int32_t samples, int rate, int channels, int loop, int32_t loop_start, int32_t loop_end);
 void sf_audio_pump(void);
 
+/* One-shot on its own source. slot is 0..3. The music source keeps playing. */
+int sf_audio_effect(int slot, const int16_t *pcm, int32_t samples, int rate, int channels);
+
 #endif
