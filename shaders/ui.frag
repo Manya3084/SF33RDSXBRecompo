@@ -5,7 +5,6 @@ layout(location = 0) out vec4 out_color;
 layout(set = 0, binding = 0) uniform sampler2D canvas;
 
 void main() {
-    // Clip Y is up and Vulkan's v is down, so the canvas top stays the screen top.
-    vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);
-    out_color = texture(canvas, uv);
+    // A positive viewport puts clip y of -1 at the top, which is where v_uv.y is 0.
+    out_color = texture(canvas, v_uv);
 }
