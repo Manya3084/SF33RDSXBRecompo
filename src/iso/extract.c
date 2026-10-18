@@ -1,6 +1,7 @@
 #include "iso/extract.h"
 
 #include "common.h"
+#include "iso/afs.h"
 #include "iso/archive.h"
 #include "iso/xdvdfs.h"
 
@@ -302,8 +303,8 @@ static int write_manifest(const char *install, const SfExtractResult *result)
     if (!fp) {
         return -1;
     }
-    fprintf(fp, "sf33rd-data 1\nafs yes\nshaders %d\nspirv %d\nspirv_failed %d\nshader_api vulkan opengl\n",
-            result->shaders, result->spirv, result->spirv_failed);
+    fprintf(fp, "sf33rd-data 1\nafs yes\nafs_files %d\nshaders %d\nspirv %d\nspirv_failed %d\nshader_api vulkan opengl\n",
+            result->afs_files, result->shaders, result->spirv, result->spirv_failed);
     if (fclose(fp) != 0) {
         return -1;
     }
@@ -457,6 +458,30 @@ static int copy_tree(const char *src_dir, const char *rel, const char *dest_root
     return 0;
 }
 
+static int finish_import(const char *install, const char *tool, SfExtractProgress progress, void *user, SfExtractResult *result)
+{
+    char afs[4096];
+    char dir[4096];
+    char index[4096];
+    int written = 0;
+    int rc;
+    if (sf_join(afs, sizeof afs, install, "data/afs/SF33RDXB.AFS") != 0 || sf_join(dir, sizeof dir, install, "data/afs/files") != 0 || sf_join(index, sizeof index, install, "data/afs/index") != 0) {
+        sf_set_err(result->error, sizeof result->error, "AFS path is too long");
+        return -1;
+    }
+    rc = sf_afs_unpack(afs, dir, index, progress, user, &written, result->error, sizeof result->error);
+    if (rc < 0) {
+        return -1;
+    }
+    if (rc > 0) {
+        add_note(result, "SF33RDXB.AFS was copied. It is not an AFS archive, so its files were not unpacked.");
+    } else {
+        result->files += written;
+        result->afs_files = written;
+    }
+    return finish_shaders(install, tool, result);
+}
+
 static int import_files_from_dir(const char *root, const char *install, const char *tool, SfExtractProgress progress, void *user, SfExtractResult *result)
 {
     char src[4096];
@@ -497,7 +522,7 @@ static int import_files_from_dir(const char *root, const char *install, const ch
             return -1;
         }
     }
-    return finish_shaders(install, tool, result);
+    return finish_import(install, tool, progress, user, result);
 }
 
 struct WalkCopy {
@@ -616,7 +641,7 @@ static int import_iso(const char *source, const char *install, const char *tool,
         return -1;
     }
     sf_xdvdfs_close(img);
-    return finish_shaders(install, tool, result);
+    return finish_import(install, tool, progress, user, result);
 }
 
 static int find_disc_root(const char *dir, char *out, size_t n, int depth, int *ps2)
@@ -885,7 +910,7 @@ static int import_archive(const char *source, const char *install, const char *t
         sf_set_err(result->error, sizeof result->error, "The archive did not contain the Xbox 3rd Strike files.");
         return -1;
     }
-    return finish_shaders(install, tool, result);
+    return finish_import(install, tool, progress, user, result);
 }
 
 static int import_any(const char *source, const char *install, const char *tool, SfExtractProgress progress, void *user, SfExtractResult *result, int depth)

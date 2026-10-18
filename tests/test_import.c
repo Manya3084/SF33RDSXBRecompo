@@ -1,3 +1,4 @@
+#include "iso/afs.h"
 #include "iso/extract.h"
 #include "iso/xdvdfs.h"
 
@@ -386,6 +387,47 @@ int main(void)
             } else {
                 expect(0, "spawn 7z");
             }
+        }
+    }
+    {
+        char tmpl[] = "/tmp/sf33rd-afs-XXXXXX";
+        char *dir = mkdtemp(tmpl);
+        char afs_path[256];
+        char files[256];
+        char index[256];
+        char got[8];
+        unsigned char image[168];
+        int written = 0;
+        char err[128];
+        FILE *fp;
+        expect(dir != NULL, "afs temp");
+        if (dir) {
+            memset(image, 0, sizeof image);
+            memcpy(image, "AFS", 3);
+            wu32(image + 4, 2);
+            wu32(image + 8, 64);
+            wu32(image + 12, 4);
+            wu32(image + 16, 68);
+            wu32(image + 20, 4);
+            wu32(image + 24, 72);
+            wu32(image + 28, 96);
+            memcpy(image + 64, "ONE!", 4);
+            memcpy(image + 68, "TWO!", 4);
+            memcpy(image + 72, "One.bin", 7);
+            memcpy(image + 120, "Two.bin", 7);
+            snprintf(afs_path, sizeof afs_path, "%s/pack.afs", dir);
+            snprintf(files, sizeof files, "%s/files", dir);
+            snprintf(index, sizeof index, "%s/index", dir);
+            fp = fopen(afs_path, "wb");
+            expect(fp && fwrite(image, 1, sizeof image, fp) == sizeof image, "write tiny afs");
+            if (fp) {
+                fclose(fp);
+            }
+            expect(sf_afs_unpack(afs_path, files, index, NULL, NULL, &written, err, sizeof err) == 0 && written == 2, "unpack afs");
+            snprintf(afs_path, sizeof afs_path, "%s/files/One.bin", dir);
+            expect(read_file(afs_path, got, 4) == 0 && memcmp(got, "ONE!", 4) == 0, "first afs file");
+            snprintf(afs_path, sizeof afs_path, "%s/files/Two.bin", dir);
+            expect(read_file(afs_path, got, 4) == 0 && memcmp(got, "TWO!", 4) == 0, "second afs file");
         }
     }
     free(iso);

@@ -8,6 +8,7 @@ typedef struct SfExtractResult {
     int shaders;
     int spirv;
     int spirv_failed;
+    int afs_files;
     char error[512];
     char note[512];
 } SfExtractResult;

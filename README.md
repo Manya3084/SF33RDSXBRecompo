@@ -27,6 +27,8 @@ Xbox layout on a gamepad. Keyboard stand-in: arrows are the d-pad, Z is A, X is 
 ```
 data/manifest
 data/afs/SF33RDXB.AFS
+data/afs/index
+data/afs/files/
 data/audio/ST3_3_OP.aix
 data/fonts/
 data/shaders/nv2a/
@@ -35,6 +37,10 @@ config/settings.txt
 ```
 
 SPIR-V uses one descriptor set. Vertex binding 0 is 192 vec4 constants, when the program reads them, and binding 1 is the viewport. Fragment binding 2 is 16 vec4 pixel constants plus fog. Fragment bindings 3 through 6 are the four texture stages. The entry point is `main`.
+
+`SF33RDXB.AFS` stays packed, and its members are also written under `data/afs/files/` using the names stored in the archive. `data/afs/index` lists them as `index name bytes`, which is the order `ADXF_OpenAfs` uses. The Xbox archive holds 1531 files. Members are copied as stored, so image pixels stay compressed.
+
+A `.ppg` is a chunk list. `pTEX` and `pPAL` start with a 16-byte header: a big-endian tag, a big-endian size, then raw bytes. The next chunk begins at that size rounded up to 4. `pEND` is the four bytes that end the list and has no size. A `pTEX` width and height count 16-pixel cells. `pixel & 3` selects 4-bit, 8-bit, 16-bit, or 32-bit texels. `formARGB` is `0x1555` (A1R5G5B5), `0x0565` (R5G6B5), `0x4444`, or `0x8888`. Zero means the texels are indexed. `compress & 3` is a raw copy, zlib, or LZ77. `transNums` is how many 3-byte sprite rectangles sit between the header and the pixels. A `.ppx` is the same list, and each `pCMP` chunk is one compressed block plus its expanded size.
 
 ```
 sf33rdsxb

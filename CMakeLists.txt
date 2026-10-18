@@ -24,6 +24,7 @@ option(SF_USE_MIMALLOC "Use mimalloc for sf_alloc" OFF)
 add_library(sf_import STATIC
     src/iso/xdvdfs.c
     src/iso/archive.c
+    src/iso/afs.c
     src/iso/extract.c
 )
 target_include_directories(sf_import PUBLIC src)
