@@ -47,6 +47,7 @@ void Scrn_Renew(void);
 void Irl_Family(void);
 void Irl_Scrn(void);
 void BGM_Server(void);
+void xb_SetScreenShotColor(s32 color);
 s32 flSetRenderState(s32 state, u32 value);
 
 s32 flPADInitialize(void);
@@ -74,6 +75,8 @@ void sf_game_init(void)
     njUserInit();
     palCreateGhost();
     ppgMakeConvTableTexDC();
+    /* retail's start-up: the button pictures are drawn untinted */
+    xb_SetScreenShotColor(0xFFFFFF);
     sf_menu_ext_init();
 }
 
@@ -138,6 +141,7 @@ void sf_game_frame(void)
     njdp2d_draw(7);
     seqsAfterProcess();
     CP3toPS2Draw();
+    sf_button_images_draw();
     njdp2d_draw(0x18);
     render_end();
     sf_video_present();

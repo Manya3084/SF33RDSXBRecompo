@@ -93,6 +93,92 @@ void xb_ToneDownCopy(u8 a, u8 prio)
     njDrawPolygon2D(&pc, 4, PrioBase[prio], 0x60, 2);
 }
 
+/* ---- the button pictures ---- */
+
+/* The Xbox button pictures (BUTTON CONFIG's rows, the training menu's
+ * button list) are cells of the game's screen texture 5. The game hands
+ * each to retail's queue (dispButtonImage, xb_DrawScreenShot) and retail
+ * draws the queue after the frame's other 2D (xb_DrawButtonImages, in
+ * the frame function after CP3toPS2Draw); sf_button_images_draw is that. */
+
+extern u32 D_007A9AA8; /* the pictures' colour (xb_SetScreenShotColor) */
+extern const u8 scrnAddTex1UV[9][4];
+extern Texture ppgScrTex;
+extern Palette ppgScrPalShot;
+s32 ppgGetUsingTextureHandle(Texture *tch, s32 ix);
+s32 ppgGetUsingPaletteHandle(Palette *pal, s32 ix);
+void setFilterMode(s32 mode);
+void ps2SeqsRenderQuadInit_A(void);
+void ps2SeqsRenderQuad_A2(Sprite *prm, u32 col);
+void ps2SeqsRenderQuadEnd(void);
+s32 flSetRenderState(s32 state, u32 value);
+
+#define BUTTON_IMAGES 16
+
+static struct {
+    Sprite spr;
+    u32 col;
+} s_btn[BUTTON_IMAGES];
+static int s_btn_n;
+
+void xb_QueueButtonImage(void *quad, s32 col, u8 a, u16 b)
+{
+    (void)a;
+    (void)b;
+    if (s_btn_n < BUTTON_IMAGES) {
+        memcpy(&s_btn[s_btn_n].spr, quad, sizeof(Sprite));
+        s_btn[s_btn_n].col = (u32)col;
+        s_btn_n++;
+    }
+}
+
+void xb_ClearButtonImages(void)
+{
+    s_btn_n = 0;
+}
+
+/* Picture uv (scrnAddTex1UV) over w by h at (x, y) on the 640x448
+ * screen, a its transparency; a priority past 0x7F is in front of all. */
+void xb_DrawScreenShot(s32 x, s32 y, s32 prio, s32 w, s32 h, u8 a, s32 uv)
+{
+    Sprite spr;
+    u32 col;
+    f32 z;
+    if (No_Trans || uv < 0 || uv > 8) {
+        return;
+    }
+    col = (D_007A9AA8 & 0x00FFFFFFu) | ((u32)(u8)(0xFF - a) << 24);
+    memset(&spr, 0, sizeof spr);
+    spr.texCode = ((u32)ppgGetUsingPaletteHandle(&ppgScrPalShot, 0) << 16) | (u32)ppgGetUsingTextureHandle(&ppgScrTex, 5);
+    spr.v[0].x = (f32)x;
+    spr.v[0].y = (f32)y;
+    spr.v[3].x = (f32)(x + w);
+    spr.v[3].y = (f32)(y + h);
+    z = prio <= 0x7F ? PrioBase[prio] : -1.0f;
+    spr.v[0].z = spr.v[3].z = z;
+    spr.t[0].s = scrnAddTex1UV[uv][0] / 128.0f;
+    spr.t[3].s = (scrnAddTex1UV[uv][0] + scrnAddTex1UV[uv][2]) / 128.0f;
+    spr.t[0].t = scrnAddTex1UV[uv][1] / 128.0f;
+    spr.t[3].t = (scrnAddTex1UV[uv][1] + scrnAddTex1UV[uv][3]) / 128.0f;
+    xb_QueueButtonImage(&spr, (s32)col, 1, 0);
+}
+
+void sf_button_images_draw(void)
+{
+    int i;
+    if (s_btn_n == 0) {
+        return;
+    }
+    setFilterMode(1);
+    ps2SeqsRenderQuadInit_A();
+    for (i = 0; i < s_btn_n; i++) {
+        flSetRenderState(4, s_btn[i].spr.texCode);
+        ps2SeqsRenderQuad_A2(&s_btn[i].spr, s_btn[i].col);
+    }
+    ps2SeqsRenderQuadEnd();
+    s_btn_n = 0;
+}
+
 /* ---- retail's debug-font print, in the menu font ---- */
 
 /* Retail prints a few messages (the pause screen's "Please reconnect the
@@ -155,41 +241,56 @@ static void key_name(int key, char *out, size_t n)
     snprintf(out, n, "%s", name && *name ? name : "NONE");
 }
 
-/* "A (Z)": the Xbox button and the keyboard key that presses it. */
-static void button_with_key(const char *button, int row, char *out, size_t n)
+/* "YES: [A] (Z)   NO: [B] (X)", centred at y: retail's Yes/No line with
+ * the A and B button pictures (scrnAddTex1UV 4 and 5), and the keyboard
+ * keys that press them. */
+static void draw_yes_no(int y)
 {
-    char k[24];
-    key_name(sf_keys_get(row), k, sizeof k);
-    snprintf(out, n, "%s (%s)", button, k);
+    char ka[24];
+    char kb[24];
+    char a[40];
+    char b[40];
+    int n;
+    int x;
+    key_name(sf_keys_get(6), ka, sizeof ka);
+    key_name(sf_keys_get(7), kb, sizeof kb);
+    snprintf(a, sizeof a, "(%s)   NO:", ka);
+    snprintf(b, sizeof b, "(%s)", kb);
+    /* "YES: " + picture (2 letters wide) + a + " " + picture + b */
+    n = 5 + 2 + (int)strlen(a) + 1 + 2 + (int)strlen(b);
+    x = 192 - n * 4;
+    put_text(x, y, "YES: ", 1.0f, COL_TEXT, 1);
+    x += 5 * 8;
+    xb_DrawScreenShot(x * 640 / 384, y * 2 - 4, 4, 22, 22, 0, 4);
+    x += 2 * 8;
+    put_text(x, y, a, 1.0f, COL_TEXT, 1);
+    x += ((int)strlen(a) + 1) * 8;
+    xb_DrawScreenShot(x * 640 / 384, y * 2 - 4, 4, 22, 22, 0, 5);
+    x += 2 * 8;
+    put_text(x, y, b, 1.0f, COL_TEXT, 1);
 }
 
 /* Retail prints these with its debug font and the A and B button
- * pictures; here they are the menu font. Type 0 is the mode menu's last
+ * pictures; here they are the menu font, with the same pictures. Type 0 is the mode menu's last
  * entry (EXIT GAME here), 1 the return to the title, 2 a disc error. */
 void xb_DrawSystemMessage(s32 type, s32 x, s32 y, s32 cw, s32 ch, s32 lh)
 {
-    char yes[48];
-    char no[48];
-    char line[128];
     (void)x;
     (void)y;
     (void)cw;
     (void)ch;
     (void)lh;
-    button_with_key("A", 6, yes, sizeof yes);
-    button_with_key("B", 7, no, sizeof no);
-    snprintf(line, sizeof line, "YES: %s   NO: %s", yes, no);
     switch (type) {
     case 0:
         put_centred(88, "EXIT THE GAME.", 1.0f, COL_TEXT, 1);
         put_centred(102, "IS THIS OK ?", 1.0f, COL_TEXT, 1);
-        put_centred(124, line, 1.0f, COL_TEXT, 1);
+        draw_yes_no(124);
         break;
     case 1:
         put_centred(80, "RETURNING TO TITLE SCREEN.", 1.0f, COL_TEXT, 1);
         put_centred(94, "ALL UNSAVED DATA WILL BE LOST.", 1.0f, COL_TEXT, 1);
         put_centred(108, "IS THIS OK ?", 1.0f, COL_TEXT, 1);
-        put_centred(130, line, 1.0f, COL_TEXT, 1);
+        draw_yes_no(130);
         break;
     default:
         put_centred(90, "THE GAME DATA COULD NOT BE READ.", 1.0f, COL_TEXT, 1);

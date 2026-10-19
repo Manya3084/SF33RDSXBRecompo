@@ -81,5 +81,7 @@ int sf_replay_load(int slot);
 int sf_replay_page(int start, int save);
 void sf_menu_ext_init(void);
 void sf_menu_ext_frame(void);
+/* The frame's queued Xbox button pictures, drawn after its other 2D. */
+void sf_button_images_draw(void);
 
 #endif
