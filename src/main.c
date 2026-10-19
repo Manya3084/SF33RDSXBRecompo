@@ -58,6 +58,8 @@ typedef struct App {
     uint8_t *sketch;
     uint8_t *slogan;
     uint8_t *next;
+    uint8_t *line;
+    uint8_t *words;
     uint8_t *ground_l;
     uint8_t *ground_r;
     uint8_t *pieces;
@@ -186,12 +188,16 @@ static void clear_picture(App *app)
     sf_free(app->sketch);
     sf_free(app->slogan);
     sf_free(app->next);
+    sf_free(app->line);
+    sf_free(app->words);
     sf_free(app->ground_l);
     sf_free(app->ground_r);
     sf_free(app->pieces);
     app->sketch = NULL;
     app->slogan = NULL;
     app->next = NULL;
+    app->line = NULL;
+    app->words = NULL;
     app->ground_l = NULL;
     app->ground_r = NULL;
     app->pieces = NULL;
@@ -507,6 +513,38 @@ static void load_pieces(App *app)
     app->ui.pieces = app->pieces;
 }
 
+static void load_line(App *app)
+{
+    SfFsFile bg;
+    SfFsFile title;
+    char err[256];
+    uint8_t *art;
+    uint8_t *words;
+    err[0] = 0;
+    memset(&bg, 0, sizeof bg);
+    memset(&title, 0, sizeof title);
+    art = sf_alloc((size_t)SF_PIECE_W * (size_t)SF_PIECE_H * 4u);
+    words = sf_alloc((size_t)SF_PIECE_W * (size_t)SF_PIECE_H * 4u);
+    if (!art || !words) {
+        sf_free(art);
+        sf_free(words);
+        fprintf(stderr, "scene 102 did not allocate\n");
+        return;
+    }
+    if (fsOpen(app->install, 79, &bg, err, sizeof err) != 0 || fsOpen(app->install, 82, &title, err, sizeof err) != 0 || sf_pieces_line(bg.data, bg.size, title.data, title.size, art, words, err, sizeof err) != 0) {
+        fprintf(stderr, "%s\n", err[0] ? err : "scene 102 did not decode");
+        sf_free(art);
+        sf_free(words);
+        fsClose(&bg);
+        fsClose(&title);
+        return;
+    }
+    fsClose(&bg);
+    fsClose(&title);
+    app->line = art;
+    app->words = words;
+}
+
 static void load_ground(App *app)
 {
     char err[256];
@@ -522,6 +560,10 @@ static void place_pieces(App *app)
 {
     int ground;
     if (!app->beat.held || !app->pieces) {
+        return;
+    }
+    if (app->beat.show_line && app->line && app->words) {
+        sf_pieces_line_compose(app->line, app->words, app->beat.line_x - 448, (int)((uint32_t)app->beat.layer_y[2] >> 16), app->pieces);
         return;
     }
     ground = (app->beat.screen & 1u) && app->ground_l && app->ground_r;
@@ -552,6 +594,7 @@ static void load_title(App *app)
     load_logo(app);
     load_opening(app);
     load_pieces(app);
+    load_line(app);
     load_ground(app);
     load_bgm(app);
     sf_opening_init(&app->beat);

@@ -429,6 +429,48 @@ int sf_pieces_next(const uint8_t *bg, uint32_t bg_size, const uint8_t *title, ui
     return 0;
 }
 
+/* effect_F6 type 2 is char index 3, pattern 2. cgd is 2, so the pattern is
+   the next 8 bytes. Its CG is 35905, local 1. The color extra is 12.
+   effect_48 type 1 is the same letter bank as the slogan. local is 72 + ip.
+   The letters use layer 2 at x 0x200, so h is 320. */
+static const struct piece k_line_words[13] = {
+    {352, 224, 84}, {376, 224, 81}, {400, 224, 94}, {432, 224, 77}, {352, 200, 92}, {384, 200, 80}, {416, 200, 77},
+    {464, 200, 84}, {496, 200, 77}, {528, 200, 79}, {560, 200, 77}, {592, 200, 86}, {624, 200, 76},
+};
+
+int sf_pieces_line(const uint8_t *bg, uint32_t bg_size, const uint8_t *title, uint32_t title_size, uint8_t *art, uint8_t *words, char *err, size_t err_n)
+{
+    uint16_t row8[64];
+    uint16_t row12[64];
+    int i;
+    if (!bg || !title || !art || !words) {
+        sf_set_err(err, err_n, "scene 102 needs bg20.bin and title.bin");
+        return -1;
+    }
+    if (bg_size < (uint32_t)SF_TEX_TABLE + 4u || pal_row(title, title_size, 8, row8) != 0 || pal_row(title, title_size, 12, row12) != 0) {
+        sf_set_err(err, err_n, "bg20.bin or title.bin is short");
+        return -1;
+    }
+    memset(art, 0, piece_bytes());
+    memset(words, 0, piece_bytes());
+    draw_cel(art, bg, bg_size, 1, 448, -32, 320, 16, 80, row12);
+    for (i = 0; i < 13; i++) {
+        draw_cel(words, bg, bg_size, k_line_words[i].local, k_line_words[i].x, k_line_words[i].y, 320, 16, 64, row8);
+    }
+    return 0;
+}
+
+/* Letters are priority 60. The type 2 sketch is priority 70, so it is drawn after them. */
+void sf_pieces_line_compose(const uint8_t *art, const uint8_t *words, int shift_x, int shift_y, uint8_t *rgba)
+{
+    if (!rgba) {
+        return;
+    }
+    memset(rgba, 0, piece_bytes());
+    blit_layer(words, 0, shift_y, rgba);
+    blit_layer(art, shift_x, 0, rgba);
+}
+
 /* op_bg2_0000 stores layer 2 as 16.16. The hold disp is 511 (h 319).
    Each later step drops the disp by 1, which moves the slogan right by 1. */
 int sf_slogan_shift(int32_t layer_x)

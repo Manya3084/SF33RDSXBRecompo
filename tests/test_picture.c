@@ -634,6 +634,34 @@ static void test_pieces(void)
             sf_free(right);
             sf_free(ground);
         }
+        {
+            uint8_t *art = sf_alloc(n);
+            uint8_t *words = sf_alloc(n);
+            uint8_t *scene = sf_alloc(n);
+            const uint8_t *px;
+            expect(art && words && scene && sf_pieces_line(bg.data, bg.size, colors.data, colors.size, art, words, err, sizeof err) == 0, "scene 102 bakes");
+            if (art && words && scene) {
+                px = art;
+                expect(px[0] == 247 && px[1] == 231 && px[2] == 231 && px[3] == 255, "type 2 pixel 0,0 is the paper");
+                px = words + ((size_t)5 * (size_t)SF_PIECE_W + 17u) * 4u;
+                expect(px[0] == 255 && px[1] == 0 && px[2] == 0 && px[3] == 255, "the scene 102 letter at 17,5 is red");
+                sf_pieces_line_compose(art, words, 1, 0, scene);
+                px = scene + 4u;
+                expect(px[0] == 247 && px[1] == 231 && px[2] == 231 && px[3] == 255, "the first type 2 step puts the paper at 1,0");
+                px = scene;
+                expect(px[3] == 0, "the first type 2 step clears pixel 0,0");
+                px = scene + ((size_t)5 * (size_t)SF_PIECE_W + 17u) * 4u;
+                expect(px[0] == 247 && px[1] == 231 && px[2] == 231 && px[3] == 255, "the sketch covers the letter on the first step");
+                sf_pieces_line_compose(art, words, 90, 59, scene);
+                px = scene + ((size_t)64 * (size_t)SF_PIECE_W + 17u) * 4u;
+                expect(px[0] == 255 && px[1] == 0 && px[2] == 0 && px[3] == 255, "the parked sketch uncovers the letter at 17,64");
+                px = scene + 90u * 4u;
+                expect(px[0] == 247 && px[1] == 231 && px[2] == 231 && px[3] == 255, "the parked sketch puts the paper at 90,0");
+            }
+            sf_free(art);
+            sf_free(words);
+            sf_free(scene);
+        }
         sf_free(sketch);
         sf_free(slogan);
         sf_free(moved);

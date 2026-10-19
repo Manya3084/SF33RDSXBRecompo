@@ -167,6 +167,16 @@ static void test_opening(void)
         sf_opening_step(&op);
     }
     expect(op.timer == 123 && op.f6_y[1] == -136 && op.f6_stop[1] == 1 && op.status == 16 && op.r_no_1 == 1 && op.layer_x[2] == 0x02000000 && op.layer_y[0] == 3, "the second sketch stops at -136 and scene 102 stays unposted");
+    sf_opening_step(&op);
+    expect(op.timer == 124 && op.status == 102 && op.r_no_1 == 2 && op.r_no_2 == 1 && op.index == 2 && op.show_line == 1 && op.show_next == 0 && op.screen == 0 && op.line_x == 449 && op.layer_x[2] == 0x02000000 && op.layer_y[2] == 0 && op.layer_y[0] == 0, "time 124 posts 102, drops the ground, and steps the next sketch to 449");
+    sf_opening_step(&op);
+    expect(op.timer == 125 && op.line_x == 451 && op.layer_y[2] == 0x00010000 && op.show_line == 1 && op.index == 2, "the next frame steps the sketch to 451 and walks layer 2 down");
+    while (op.timer < 183) {
+        sf_opening_step(&op);
+    }
+    expect(op.timer == 183 && op.line_x == 538 && op.line_stop == 1 && op.status == 8 && op.index == 2 && op.r_no_1 == 2, "the sketch stops at 538 on timer 183");
+    sf_opening_step(&op);
+    expect(op.timer == 184 && op.status == 8 && op.index == 2 && op.line_x == 538 && op.r_no_1 == 2, "status 9 stays unposted");
 }
 
 int main(void)

@@ -5,12 +5,19 @@
 /* 0xAF4C2 is Bg_Off. 0xAF4AA is Bg_On. 101 and 0x65 are the same status.
    Background 0 walks layer 2 until status 11. op_work_clear then lets
    background 1 arm layer 2 back to 0x200 and stop. effect_F6 steps in
-   Basic_Sub, before opening_move. 0xEF088 is add_y_sub. Go_BGM stays out.
-   The trigger that would enter scene 102 stays unposted. */
+   Basic_Sub, before opening_move. 0xEF088 is add_y_sub. 0xEF072 is add_x_sub.
+   Go_BGM stays out. Time 184 would post status 9 and op_102 would enter
+   index 3. That pair stays unposted. */
 
-/* Posted through status 16. The next pair is time 124, status 102. */
-static const int16_t k_time[16] = {4, 11, 19, 26, 34, 41, 49, 56, 64, 71, 79, 86, 94, 101, 109, 116};
-static const int16_t k_trg[16] = {101, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+/* Posted through the status 8 that follows 102. The next pair is time 184, status 9. */
+static const int16_t k_time[24] = {
+    4, 11, 19, 26, 34, 41, 49, 56, 64, 71, 79, 86, 94, 101, 109, 116,
+    124, 131, 139, 146, 154, 161, 169, 176
+};
+static const int16_t k_trg[24] = {
+    101, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    102, 2, 3, 4, 5, 6, 7, 8
+};
 
 /* op_quake_y_tbl0. op_bg0_0001 adds entry 1 on the arm frame, then walks. */
 static const int16_t k_quake[16] = {4, -8, 2, 1, -6, -3, 9, -3, 8, -2, 6, 3, -4, -9, 3, -1};
@@ -71,6 +78,10 @@ static void move_bg2(SfOpening *op, int r_index)
     if (r_index == 0 && op->layer_r[2] == 1) {
         op->layer_x[2] -= 0x10000;
     }
+    /* op_bg2_0002 case 1. The arm frame does not fall through into this add. */
+    if (r_index == 2 && op->layer_r[2] == 1) {
+        op->layer_y[2] += 0x10000;
+    }
 }
 
 static void move_background(SfOpening *op, int r_index)
@@ -89,7 +100,7 @@ static void work_clear(SfOpening *op)
 
 static void sound_trigger(SfOpening *op)
 {
-    if (op->scene < 0 || op->scene >= 16) {
+    if (op->scene < 0 || op->scene >= 24) {
         return;
     }
     if (op->timer >= k_time[op->scene]) {
@@ -120,9 +131,32 @@ static void step_f6(SfOpening *op, int which, int32_t speed, int16_t limit, int 
     op->f6_y[which] = pos;
 }
 
+/* Direction 0x10. 98304 is 1.5 pixels in 16.16. The high word is the position. */
+static void step_line(SfOpening *op)
+{
+    int16_t pos;
+    if (!op->line_live || op->line_stop) {
+        return;
+    }
+    op->line_cal += 98304;
+    pos = (int16_t)((uint32_t)op->line_cal >> 16);
+    if (pos >= 538) {
+        op->line_cal = 538 * 65536;
+        pos = 538;
+        op->line_stop = 1;
+    }
+    op->line_x = pos;
+}
+
 /* Basic_Sub runs before Title, so a live effect steps on the index from last frame. */
 static void effects_before(SfOpening *op)
 {
+    if (op->index >= 2 && op->line_live) {
+        step_line(op);
+        op->show_next = 0;
+        op->show_line = 1;
+        return;
+    }
     if (!op->f6_live) {
         return;
     }
@@ -162,6 +196,28 @@ static void op_101(SfOpening *op)
     move_background(op, 1);
 }
 
+/* op_102_move case 0. Index is already 2, so type 2 steps on this frame.
+   Types 3 and 4 stay put until index 3 and 4. Status 9 would leave this case. */
+static void op_102(SfOpening *op)
+{
+    if (op->r_no_2 == 0) {
+        op->r_no_2 = 1;
+        op->index = 2;
+        op->obj_disp = 0;
+        op->show_next = 0;
+        op->show_line = 1;
+        op->line_cal = 448 * 65536;
+        op->line_x = 448;
+        op->line_stop = 0;
+        op->line_live = 1;
+        step_line(op);
+        work_clear(op);
+        move_background(op, 2);
+        return;
+    }
+    move_background(op, 2);
+}
+
 static void op_100(SfOpening *op)
 {
     op->r_no_1 = (int8_t)(op->r_no_1 + 1);
@@ -173,10 +229,17 @@ static void opening_move(SfOpening *op)
     op->timer = (int16_t)(op->timer + 1);
     effects_before(op);
     sound_trigger(op);
+    if (op->r_no_1 == 1 && op->status != op->sound_status && op->status == 102) {
+        op->r_no_1 = 2;
+        op->r_no_2 = 0;
+        work_clear(op);
+    }
     if (op->r_no_1 == 0) {
         op_100(op);
-    } else {
+    } else if (op->r_no_1 == 1) {
         op_101(op);
+    } else {
+        op_102(op);
     }
     op->sound_status = op->status;
     if (op->status == 101 || (op->status != 0 && op->r_no_2 >= 1)) {
