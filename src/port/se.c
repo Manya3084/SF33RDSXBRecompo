@@ -18,8 +18,12 @@
  * or tracks of events. The events these banks use are Play (a wave, maybe
  * looping), AmpEG (an envelope), SetVolume (a fade), StopEG (stop with
  * the envelope's release), SetMixBins (speaker levels, folded to stereo)
- * and PitchLFO. PitchLFO is not applied: every one carries the same
- * hardware LFO setting, and its units are not defined by the XDK headers.
+ * and PitchLFO, a vibrato (_XACT_TRACK_EVENT_PITCHLFO: wDelay, bDelta,
+ * bPitchMod, which the XDK's DSLFODESC page gives units: the delay in
+ * 32-sample blocks, a rate of 375 * delta / 16384 Hz, a depth of
+ * bPitchMod / 128 octave). Every one in these banks is the same, 3.7 Hz
+ * and a quarter octave, on about half of each character's sounds; the
+ * wave is taken as a triangle. SF_SE_LFO=0 leaves it out.
  *
  * Voices end by the frame clock, not by the audio device, so a run plays
  * the same requests the same way with or without sound. */
@@ -167,6 +171,10 @@ typedef struct Track {
     int eg;
     int attack, hold, decay;
     float sustain;
+    /* PitchLFO: Hz, octaves, and frames before it starts */
+    float lfo_rate;
+    float lfo_depth;
+    int lfo_delay;
     /* SetVolume's fade */
     int fade_at, fade_len;
     float fade_to;
@@ -451,7 +459,14 @@ static void track_events(const SoundBank *b, uint32_t off, int count, Track *tr,
             tr->r = tr->bin[1] + 0.70710678f * (tr->bin[2] + tr->bin[5]);
             break;
         }
-        default: /* PitchLFO, MixBinPan, markers: not applied */
+        case 8: /* PitchLFO */
+            if (size >= 4 && p[10] != 0 && !(getenv("SF_SE_LFO") && atoi(getenv("SF_SE_LFO")) == 0)) {
+                tr->lfo_delay = (int)((float)rd16(p + 8) * 32.0f / 48000.0f * SE_FPS + 0.5f);
+                tr->lfo_rate = 375.0f * (float)p[10] / 16384.0f;
+                tr->lfo_depth = (float)(s8)p[11] / 128.0f;
+            }
+            break;
+        default: /* MixBinPan, markers: not applied */
             break;
         }
         off += 8u + (uint32_t)size;
@@ -578,6 +593,14 @@ static void track_al(Voice *v, Track *tr, int now)
     a = atan2f(r, l) * 2.0f - 1.5707964f;
     alSource3f(tr->src, AL_POSITION, sinf(a), 0.0f, -cosf(a));
     alSourcef(tr->src, AL_GAIN, level * sqrtf(l * l + r * r));
+    if (tr->lfo_rate > 0.0f && now >= tr->start + tr->lfo_delay) {
+        /* a triangle from 0, up first, by the frame clock */
+        float ph = (float)(now - tr->start - tr->lfo_delay) / SE_FPS * tr->lfo_rate;
+        float tri;
+        ph -= floorf(ph);
+        tri = ph < 0.25f ? 4.0f * ph : ph < 0.75f ? 2.0f - 4.0f * ph : 4.0f * ph - 4.0f;
+        alSourcef(tr->src, AL_PITCH, tr->pitch * exp2f(tr->lfo_depth * tri));
+    }
     if (now == tr->start) {
         alSourcei(tr->src, AL_BUFFER, (ALint)tr->wb->buffers[tr->wave]);
         alSourcei(tr->src, AL_LOOPING, tr->loop ? AL_TRUE : AL_FALSE);
