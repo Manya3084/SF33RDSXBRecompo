@@ -255,6 +255,34 @@ static void fill_bank(uint8_t *b, size_t n)
     b[0xAA] = 0x12;
 }
 
+static void test_bank_adpcm(void)
+{
+    uint8_t file[0xA8 + 36];
+    SfWave wave;
+    char err[64];
+    char name[17];
+    fill_bank(file, sizeof file);
+    put_le32(file + 36, 36);
+    memcpy(file + 0x50 + 8, "SE1", 4);
+    put_le32(file + 0x78 + 4, 0x000AC445u);
+    put_le32(file + 0x78 + 8, 0);
+    put_le32(file + 0x78 + 12, 36);
+    put_le32(file + 0x78 + 16, 0);
+    put_le32(file + 0x78 + 20, 36);
+    memset(file + 0xA8, 0, 36);
+    file[0xA8] = 0x00;
+    file[0xA9] = 0x01;
+    file[0xAC] = 0x07;
+    memset(&wave, 0, sizeof wave);
+    err[0] = 0;
+    expect(sf_xwb_entry(file, sizeof file, 0, &wave, err, sizeof err) == 0, "an Xbox ADPCM wave decodes");
+    expect(wave.channels == 1 && wave.rate == 22050 && wave.samples == 64, "a 36-byte block is 64 samples");
+    expect(wave.pcm && wave.pcm[0] == 267 && wave.pcm[1] == 269, "nibble 7 then 0 step from the block's predictor 256");
+    expect(wave.loop_start == 0 && wave.loop_len == 64, "the loop region counts whole blocks");
+    sf_wave_free(&wave);
+    expect(sf_xwb_name(file, sizeof file, name) == 0 && strcmp(name, "SE1") == 0, "the bank's name reads");
+}
+
 static void put_aix_packet(uint8_t *p, unsigned len, const uint8_t *payload)
 {
     put_be32(p, 0x41495850u);
@@ -368,10 +396,10 @@ static void test_bank(void)
     file[4] = 1;
     expect(sf_xwb_count(file, sizeof file, &count, err, sizeof err) != 0 && strstr(err, "xwb version") != NULL, "version 1 is refused");
     fill_bank(file, sizeof file);
-    file[0x78 + 4] = 0x45;
+    file[0x78 + 4] = 0x46;
     memset(&wave, 0, sizeof wave);
     err[0] = 0;
-    expect(sf_xwb_entry(file, sizeof file, 0, &wave, err, sizeof err) != 0, "a non-PCM tag is refused");
+    expect(sf_xwb_entry(file, sizeof file, 0, &wave, err, sizeof err) != 0, "a WMA entry is refused");
     expect(strstr(err, "xwb codec") != NULL && wave.pcm == NULL, "the refusal names the codec");
     sf_wave_free(&wave);
 }
@@ -449,6 +477,7 @@ int main(void)
     test_opening_aix();
     test_names();
     test_bank();
+    test_bank_adpcm();
     test_list();
     test_se1();
     if (g_fail) {

@@ -54,6 +54,7 @@ add_library(sf_import STATIC
     src/iso/archive.c
     src/iso/afs.c
     src/iso/extract.c
+    src/iso/xbe.c
 )
 target_include_directories(sf_import PUBLIC src)
 if(LIBARCHIVE_FOUND)

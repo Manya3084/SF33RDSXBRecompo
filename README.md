@@ -2,7 +2,7 @@
 
 Native x86-64 port of Street Fighter III: 3rd Strike, built from the Xbox version.
 
-The game logic is the C of [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb), compiled for x86-64. Everything the Xbox provided under it is written natively here: SDL3 for the window, input and timing, a Vulkan renderer for the game's draws, OpenAL for sound, and plain files for the disc archive and the saves. No Xbox code is built. There is no Xbox heap, XDK, xboxkrnl, D3D8, CRI middleware or XOnline dependency, and no table is read from the XBE. [docs/porting.md](docs/porting.md) describes how the pieces fit.
+The game logic is the C of [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb), compiled for x86-64. Everything the Xbox provided under it is written natively here: SDL3 for the window, input and timing, a Vulkan renderer for the game's draws, OpenAL for sound, and plain files for the disc archive and the saves. No Xbox code is built. There is no Xbox heap, XDK, xboxkrnl, D3D8, CRI middleware, XACT or XOnline dependency. The XBE is read once, at import, for the sound effects' cue tables; nothing from the disc is in this repository. [docs/porting.md](docs/porting.md) describes how the pieces fit.
 
 ## Status
 
@@ -11,13 +11,14 @@ Working:
 - the boot logos, the opening and attract demos, the title screen and menus
 - Arcade, character select, and fights, including the attract-loop fights
 - music: the ADX and AIX tracks, decoded natively and streamed through OpenAL
+- sound effects and voices: the game's XACT cue banks played on OpenAL (PCM and Xbox ADPCM waves, loops, envelopes, fades, panning)
 - saves (system settings and button directions) in `data/save/`
 - the keyboard and SDL3 gamepads, with retail's join-by-Start
 - any window size, at a whole multiple of 640×480 kept at 4:3, paced to 60 frames a second
 
 Not done yet:
 
-- sound effects (the XACT banks)
+- the cue banks' pitch LFO (a slight vibrato on some voices)
 - a menu for rebinding the keyboard
 - the OpenGL fallback for the game screen (Vulkan is required for now)
 - replay saving and online play (the game runs offline)
@@ -36,9 +37,15 @@ sf33rdsxb --extract SOURCE --data DIR
 - a zip or 7z archive of that disc (the image itself, or the extracted Xbox tree);
 - the extracted Xbox folder (`sf33rd.xbe` and `XB_HostPC/SF33RDXB.AFS`).
 
-Anything else is refused, including a PlayStation 2 disc packed in a zip or 7z. The reader looks for the Xbox volume id `MICROSOFT*XBOX*MEDIA` and for `XB_HostPC/SF33RDXB.AFS`. It copies the 3rd Strike archive, the opening AIX, the fonts and the NV2A shaders. It does not copy the SF2 movies or the XBE.
+Anything else is refused, including a PlayStation 2 disc packed in a zip or 7z. The reader looks for the Xbox volume id `MICROSOFT*XBOX*MEDIA` and for `XB_HostPC/SF33RDXB.AFS`. It copies the 3rd Strike archive, the opening AIX, the fonts and the NV2A shaders, and reads the 21 sound banks (the sound effects' cue tables) out of `sf33rd.xbe`. It does not keep the XBE or copy the SF2 movies.
 
-Never commit `data/afs/`. It is the game itself.
+Data imported before the sound banks were can get them on their own:
+
+```
+sf33rdsxb --sound-banks /path/to/sf33rd.xbe --data DIR
+```
+
+Never commit anything under `data/`. It is the game itself.
 
 ## Running
 
@@ -72,6 +79,7 @@ data/afs/SF33RDXB.AFS     the disc archive, read in place
 data/afs/index            its members: index name bytes
 data/afs/files/           the members, unpacked under their stored names
 data/audio/ST3_3_OP.aix   the opening theme
+data/audio/sdbk/          the sound effects' cue tables, 00.sdbk to 20.sdbk
 data/fonts/
 data/save/                system.sav, directions.sav
 data/last_session.input   the last session's inputs, for replaying a bug

@@ -3,6 +3,7 @@
 #include "common.h"
 #include "iso/afs.h"
 #include "iso/archive.h"
+#include "iso/xbe.h"
 #include "iso/xdvdfs.h"
 
 #include <ctype.h>
@@ -458,6 +459,35 @@ static int copy_tree(const char *src_dir, const char *rel, const char *dest_root
     return 0;
 }
 
+/* The XBE is copied to data/.import-tmp only for its sound banks (the
+ * cue tables the sound effects play from), which go to data/audio/sdbk.
+ * The XBE itself is not kept. */
+#define XBE_TMP "data/.import-tmp/sf33rd.xbe"
+
+static void import_sound_banks(const char *install, SfExtractResult *result)
+{
+    char xbe[4096];
+    char out[4096];
+    char err[256];
+    struct stat st;
+    if (sf_join(xbe, sizeof xbe, install, XBE_TMP) != 0 || sf_join(out, sizeof out, install, "data/audio/sdbk") != 0) {
+        return;
+    }
+    if (stat(xbe, &st) != 0) {
+        add_note(result, "sf33rd.xbe was not on the disc, so there are no sound effects.");
+        return;
+    }
+    err[0] = 0;
+    if (sf_mkdir_p(out, err, sizeof err) != 0 || sf_xbe_sound_banks(xbe, out, err, sizeof err) != 0) {
+        char note[400];
+        snprintf(note, sizeof note, "The sound effects were not imported: %s", err);
+        add_note(result, note);
+    } else {
+        result->files += SF_SOUND_BANKS;
+    }
+    unlink(xbe);
+}
+
 static int finish_import(const char *install, const char *tool, SfExtractProgress progress, void *user, SfExtractResult *result)
 {
     char afs[4096];
@@ -469,6 +499,7 @@ static int finish_import(const char *install, const char *tool, SfExtractProgres
         sf_set_err(result->error, sizeof result->error, "AFS path is too long");
         return -1;
     }
+    import_sound_banks(install, result);
     rc = sf_afs_unpack(afs, dir, index, progress, user, &written, result->error, sizeof result->error);
     if (rc < 0) {
         return -1;
@@ -506,6 +537,11 @@ static int import_files_from_dir(const char *root, const char *install, const ch
         result->files++;
         if (progress) {
             progress("XB_HostPC/ST3_3_OP.aix", user);
+        }
+    }
+    if (ci_resolve(root, "sf33rd.xbe", src, sizeof src) == 0) {
+        if (sf_join(dest, sizeof dest, install, XBE_TMP) != 0 || mkdir_parent(dest, result->error, sizeof result->error) != 0 || copy_stream(src, dest, result->error, sizeof result->error) != 0) {
+            return -1;
         }
     }
     if (ci_resolve(root, "media/Fonts", tree, sizeof tree) == 0) {
@@ -621,6 +657,13 @@ static int import_iso(const char *source, const char *install, const char *tool,
             progress("XB_HostPC/ST3_3_OP.aix", user);
         }
     }
+    if (sf_xdvdfs_find(img, "sf33rd.xbe", &ent, result->error, sizeof result->error) == 0) {
+        if (sf_join(dest, sizeof dest, install, XBE_TMP) != 0 || mkdir_parent(dest, result->error, sizeof result->error) != 0 || sf_xdvdfs_save(img, &ent, dest, result->error, sizeof result->error) != 0) {
+            sf_xdvdfs_close(img);
+            return -1;
+        }
+    }
+    result->error[0] = 0;
     memset(&walk, 0, sizeof walk);
     walk.img = img;
     walk.install = install;
@@ -817,6 +860,9 @@ static int map_xbox(const char *name, int is_dir, char *dest, size_t dest_n, voi
     }
     if (eq_ci(rel, "XB_HostPC/ST3_3_OP.aix")) {
         return sf_join(dest, dest_n, plan->install, "data/audio/ST3_3_OP.aix") == 0 ? 1 : -1;
+    }
+    if (eq_ci(rel, "sf33rd.xbe")) {
+        return sf_join(dest, dest_n, plan->install, XBE_TMP) == 0 ? 1 : -1;
     }
     if (strncasecmp(rel, "media/Fonts/", 12) == 0) {
         char rest[4096];

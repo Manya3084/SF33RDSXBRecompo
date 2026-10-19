@@ -14,6 +14,8 @@
 #include "host/paths.h"
 #include "host/settings.h"
 #include "iso/extract.h"
+#include "iso/xbe.h"
+#include "iso/archive.h"
 #include "platform/audio.h"
 #include "platform/input.h"
 #include "render/renderer.h"
@@ -672,6 +674,7 @@ static int extract_cli(int argc, char **argv)
 {
     const char *source = NULL;
     const char *dir = NULL;
+    const char *xbe = NULL;
     char tool[4096];
     char cwd[4096];
     SfExtractResult result;
@@ -679,15 +682,34 @@ static int extract_cli(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--extract") == 0 && i + 1 < argc) {
             source = argv[++i];
+        } else if (strcmp(argv[i], "--sound-banks") == 0 && i + 1 < argc) {
+            xbe = argv[++i];
         } else if (strcmp(argv[i], "--data") == 0 && i + 1 < argc) {
             dir = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
-            fprintf(stderr, "usage: sf33rdsxb [--extract SOURCE --data DIR]\n");
+            fprintf(stderr, "usage: sf33rdsxb [--extract SOURCE --data DIR]\n"
+                            "       sf33rdsxb --sound-banks sf33rd.xbe --data DIR\n");
             return 0;
         }
     }
-    if (!source && !dir) {
+    if (!source && !dir && !xbe) {
         return -1;
+    }
+    if (xbe) {
+        /* only the sound banks, for data imported before they were */
+        char out[4096];
+        char err[256];
+        err[0] = 0;
+        if (!dir || sf_join(out, sizeof out, dir, "data/audio/sdbk") != 0) {
+            fprintf(stderr, "usage: sf33rdsxb --sound-banks sf33rd.xbe --data DIR\n");
+            return 1;
+        }
+        if (sf_mkdir_p(out, err, sizeof err) != 0 || sf_xbe_sound_banks(xbe, out, err, sizeof err) != 0) {
+            fprintf(stderr, "%s\n", err);
+            return 1;
+        }
+        printf("sound banks %d\n", SF_SOUND_BANKS);
+        return 0;
     }
     if (!source || !dir) {
         fprintf(stderr, "usage: sf33rdsxb --extract SOURCE --data DIR\n");

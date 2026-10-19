@@ -9,7 +9,7 @@ No Xbox code is built. Out of the build:
 - `src/sf33rd/Source/XBOX/`: the platform layer (`fl*` texture and palette handles, render states, pads, print, frame end), the Xbox-only game code (the `xb_effect_*_draw` functions, the save menu, the quad renderers, the exit and screenshot screens), and the Xbox Live code.
 - `src/cri/`: CRI's Xbox middleware. `src/game/adx.c` and `aix.c` decode natively.
 - `Compress/Lz77` and the decomp's zlib copy. The disc uses zlib inflate; the system zlib is linked.
-- The XBE. No table is read from it.
+- The XBE. Only its XACT sound banks are read, at import (`src/iso/xbe.c`).
 
 What the game logic calls in those files is written here, in `src/port/`, on SDL3, the Vulkan and OpenGL renderer in `src/render/`, and OpenAL. The Xbox C is the reference for what each call does. It is not compiled.
 
@@ -43,6 +43,7 @@ These are fixed in the decomp itself, and each fix must leave the i386 code and 
 - `input.c`: the keyboard (port 0) and SDL3 gamepads (ports 1 to 3) through retail's pad conversion and `keyConvert`.
 - `save.c`: the saves, as files in `data/save`.
 - `sound.c`: CRI's ADXT and AIXP players on OpenAL streaming sources, fed by `src/game/adx.c` and `aix.c`.
+- `se.c`: the sound effects. The game's sound engine (CapSndEng's `cseTsbRequest`) queues requests for retail's XACT layer. `se.c` is that layer: the request queue, 48 voices, group and priority stops, and the pan tables. It plays XACT cues from the sound banks in `data/audio/sdbk`, whose layout is the XDK's `_XACT_SOUNDBANK_*` types, over the wave banks the game loads into memory (`src/game/xwb.c` decodes PCM and Xbox ADPCM). Voices end by the frame count, so effects do not change a replay. `SF_SE_DEBUG=1` logs every effect that starts.
 - `frame.c`, `video.c`: one frame in retail's order; the window, the headless renderer, the 60 fps pacing and the captures.
 - `live.c`: the Xbox Live calls the offline game still makes, answered as offline.
 - `zlib.c`, `math.c`, `banks.c`: the game's zlib calls, its D3DX matrix helpers, the sound bank buffers.

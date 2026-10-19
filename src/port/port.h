@@ -28,6 +28,8 @@ int sf_afs_read(int32_t fid, uint8_t **data, uint32_t *size);
 
 /* Sound: refills the voices; once per frame. */
 void sf_sound_pump(void);
+/* The sound effects: retail's per-frame XACT work (src/port/se.c). */
+void sf_se_frame(void);
 
 /* The game: start-up, then one call per frame (src/port/frame.c). */
 void sf_game_init(void);
