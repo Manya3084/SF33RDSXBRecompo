@@ -17,8 +17,8 @@
  * xactengd.lib): a cue names a sound; a sound is either one wave (flag 8)
  * or tracks of events. The events these banks use are Play (a wave, maybe
  * looping), AmpEG (an envelope), SetVolume (a fade), StopEG (stop with
- * the envelope's release), SetMixBins (speaker levels; the front pair is
- * used) and PitchLFO. PitchLFO is not applied: every one carries the same
+ * the envelope's release), SetMixBins (speaker levels, folded to stereo)
+ * and PitchLFO. PitchLFO is not applied: every one carries the same
  * hardware LFO setting, and its units are not defined by the XDK headers.
  *
  * Voices end by the frame clock, not by the audio device, so a run plays
@@ -155,7 +155,8 @@ typedef struct Track {
     int wave;
     int loop;
     float gain;     /* the sound's and the track's levels, linear */
-    float l, r;     /* SetMixBins' front pair, linear */
+    float bin[6];   /* SetMixBins' speaker levels, linear: front L/R, centre, LFE, rear L/R */
+    float l, r;     /* those folded to stereo */
     float pitch;
     int start;      /* the frame its Play runs */
     int end;        /* the frame it has played out, or -1 while it loops */
@@ -352,6 +353,7 @@ static void track_reset(Track *tr)
     memset(tr, 0, sizeof *tr);
     tr->src = src;
     tr->gain = 1.0f;
+    tr->bin[0] = tr->bin[1] = 1.0f;
     tr->l = tr->r = 1.0f;
     tr->pitch = 1.0f;
     tr->end = -1;
@@ -432,18 +434,21 @@ static void track_events(const SoundBank *b, uint32_t off, int count, Track *tr,
                 tr->sustain = (float)p[18] / 255.0f;
             }
             break;
-        case 16: /* SetMixBins: the front left and right bins */
+        case 16: /* SetMixBins: the speaker levels */
         {
             int k;
             for (k = 0; k + 4 <= size && k < 32; k += 4) {
                 u16 bin = rd16(p + 8 + k);
-                s16 vol = (s16)rd16(p + 10 + k);
-                if (bin == 0) {
-                    tr->l = db100(vol);
-                } else if (bin == 1) {
-                    tr->r = db100(vol);
+                if (bin < 6) {
+                    tr->bin[bin] = db100((s16)rd16(p + 10 + k));
                 }
             }
+            /* Some sounds sit low and lean on the rear speakers (the
+             * announcer's second call: -9 dB, front -2 dB, rear 0 dB).
+             * Folded to stereo the ITU way: centre and rear at -3 dB,
+             * LFE left out. */
+            tr->l = tr->bin[0] + 0.70710678f * (tr->bin[2] + tr->bin[4]);
+            tr->r = tr->bin[1] + 0.70710678f * (tr->bin[2] + tr->bin[5]);
             break;
         }
         default: /* PitchLFO, MixBinPan, markers: not applied */
