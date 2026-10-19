@@ -27,6 +27,11 @@ int sf_render_present(SfRenderer *renderer, const SfCanvas *canvas, char *err, s
 /* The game's screen (render/draw.h). Vulkan only for now. */
 int sf_render_present_list(SfRenderer *renderer, const SfDrawList *list, char *err, size_t err_n);
 
+/* The shape the game's screen is shown in, width over height (4/3 is
+ * the original, 16/9 widens it), centred in the window; 0 fills the
+ * window. Starts at 4/3. */
+void sf_render_set_aspect(SfRenderer *renderer, float aspect);
+
 /* The game's output, RGBA at the render scale. The first call asks for
  * it with the next frame and returns 1; the call after that frame points
  * rgba at it and returns 0. -1 when there is none. */

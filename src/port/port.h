@@ -22,6 +22,17 @@ void sf_low_free(void *p);
 void sf_video_init(int w, int h);
 void sf_video_set_offset(int x, int y);
 void sf_video_present(void);
+/* The game's window (NULL when headless), and the shape its screen is
+ * shown in (width over height; 0 fills the window). */
+struct SDL_Window *sf_video_window(void);
+void sf_video_set_aspect(float aspect);
+
+/* The window's mode, size and aspect, kept in config/display.txt; SCREEN
+ * ADJUST's rows 5 to 7 (src/port/display.c). */
+void sf_display_init(void);
+const char *sf_display_text(int row);
+int sf_display_step(int row, int dir);
+void sf_display_default(void);
 
 /* A whole member of the imported archive, malloc'd. */
 int sf_afs_read(int32_t fid, uint8_t **data, uint32_t *size);

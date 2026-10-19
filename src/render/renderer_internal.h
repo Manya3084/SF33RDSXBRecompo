@@ -11,6 +11,7 @@ typedef struct SfScene SfScene;
 struct SfRenderer {
     SfRendererKind kind;
     SDL_Window *window;
+    float aspect; /* the game screen's shape in the window; 0 fills it */
     VkInstance instance;
     VkPhysicalDevice physical;
     VkDevice device;

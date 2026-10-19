@@ -7,3 +7,12 @@
 lowaddr src/sf33rd/Source/Game/end_data.c
 # bgrw_data_tbl holds the background rewrite tables' addresses.
 lowaddr src/sf33rd/Source/Game/bg_data.c
+
+# The port's own changes, which stay here (not for the decomp): SCREEN
+# ADJUST's WINDOW MODE, RESOLUTION and ASPECT RATIO rows. menu.c runs ten
+# rows, EFF61.c has their labels, EFF63.c asks src/port/display.c for their
+# values, and Sel_Data.c places the ten rows closer together.
+patch src/sf33rd/Source/Game/menu.c
+patch src/sf33rd/Source/Game/EFF61.c
+patch src/sf33rd/Source/Game/EFF63.c
+patch src/sf33rd/Source/Game/Sel_Data.c

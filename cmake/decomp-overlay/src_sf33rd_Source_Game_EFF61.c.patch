@@ -1,0 +1,36 @@
+--- a/EFF61.c
++++ b/EFF61.c
+@@ -55,7 +55,8 @@
+ extern uintptr_t frw[EFFECT_MAX][448];
+ s16 get_my_trans_mode(s16 curr);
+ 
+-const s8* Menu_Letter_Data[2][67] = {
++/* Port: entries 67 to 69 are SCREEN ADJUST's window rows. */
++const s8* Menu_Letter_Data[2][70] = {
+     {
+         "ARCADE",
+         "VERSUS",
+@@ -123,7 +124,10 @@
+         "BGM SELECT",
+         "DEFAULT SETTING",
+         "BGM TEST",
+-        "EXIT"
++        "EXIT",
++        "WINDOW MODE^^",
++        "RESOLUTION^^^",
++        "ASPECT RATIO^"
+     },
+     {
+         "ARCADE",
+@@ -192,7 +196,10 @@
+         "BGM SELECT",
+         "DEFAULT SETTING",
+         "BGM TEST",
+-        "EXIT"
++        "EXIT",
++        "WINDOW MODE^^",
++        "RESOLUTION^^^",
++        "ASPECT RATIO^"
+     }
+ };
+ 

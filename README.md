@@ -13,13 +13,13 @@ Working:
 - music: the ADX and AIX tracks, decoded natively and streamed through OpenAL
 - sound effects and voices: the game's XACT cue banks played on OpenAL (PCM and Xbox ADPCM waves, loops, envelopes, fades, panning)
 - saves (system settings and button directions) in `data/save/`
-- the keyboard and SDL3 gamepads, with retail's join-by-Start
-- any window size, at a whole multiple of 640×480 kept at 4:3, paced to 60 frames a second
+- the keyboard and SDL3 gamepads, with retail's join-by-Start, and a keyboard page in BUTTON CONFIG for rebinding the keys
+- windowed, borderless or fullscreen, the resolution and the aspect ratio, set in SCREEN ADJUST, paced to 60 frames a second
+- EXIT GAME in the mode menu (retail's SELECT GAME), which quits cleanly
 
 Not done yet:
 
 - the cue banks' pitch LFO (a slight vibrato on some voices)
-- a menu for rebinding the keyboard
 - the OpenGL fallback for the game screen (Vulkan is required for now)
 - replay saving and online play (the game runs offline)
 
@@ -70,7 +70,19 @@ Players join the way they did on the Xbox: press Start on any pad.
 | Start    | Enter     |
 | Back     | Backspace |
 
+Those are the keyboard's defaults. In OPTION → BUTTON CONFIG, F1 opens the keyboard page: pick a button with the arrows, press Enter, then the new key (a key already in use swaps over). Esc goes back. The page always uses the arrows, Enter and Esc, whatever the bindings.
+
 The keyboard is port 0. Gamepads take ports 1 to 3 in the order SDL3 reports them, and they are read even when the window is not focused.
+
+## Display
+
+OPTION → SCREEN ADJUST has three rows after FILTER:
+
+- WINDOW MODE: WINDOWED, BORDERLESS (the desktop's size) or FULLSCREEN (a mode of the display).
+- RESOLUTION: the window's size, or the fullscreen mode. The list is the display's modes and the 4:3 sizes that fit it. Borderless always uses the desktop.
+- ASPECT RATIO: 4:3 (the original, with bars at the sides), 16:9 (widened), or FULL (the whole window).
+
+DEFAULT SETTING puts them back to a 1280×960 window at 4:3.
 
 ## Layout
 
@@ -84,6 +96,8 @@ data/fonts/
 data/save/                system.sav, directions.sav
 data/last_session.input   the last session's inputs, for replaying a bug
 data/crash.log            the backtrace of the last crash
+config/keyboard.txt       the keyboard's bindings
+config/display.txt        the window mode, resolution and aspect ratio
 ```
 
 ## Build

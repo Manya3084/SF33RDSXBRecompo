@@ -22,7 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern const s8 *Menu_Letter_Data[2][67];
+extern const s8 *Menu_Letter_Data[2][70]; /* 67 to 69: the port's window rows */
 extern struct _TASK task[11];
 extern u8 No_Trans;
 extern const s16 Fade_Pos_tbl[8];

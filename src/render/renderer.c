@@ -52,6 +52,13 @@ int sf_render_present_list(SfRenderer *renderer, const SfDrawList *list, char *e
     return sf_vk_present_list(renderer, list, err, err_n);
 }
 
+void sf_render_set_aspect(SfRenderer *renderer, float aspect)
+{
+    if (renderer) {
+        renderer->aspect = aspect;
+    }
+}
+
 int sf_render_read_screen(SfRenderer *renderer, const uint8_t **rgba, int *w, int *h)
 {
     if (!renderer || renderer->kind == SF_RENDER_OPENGL) {

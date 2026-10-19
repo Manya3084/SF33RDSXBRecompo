@@ -36,7 +36,8 @@ int sf_scene_set_scale(SfScene *s, int scale, char *err, size_t err_n);
 void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *list);
 
 /* Inside the window's render pass: the output, kept 4:3. */
-void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, const SfDrawList *list);
+/* aspect: the shown screen's width over height, centred; 0 fills. */
+void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, float aspect, const SfDrawList *list);
 
 /* The screen (output 0) or the output (1) back to the host: record the
  * copy, then read it once the commands have finished. The pixels are RGBA

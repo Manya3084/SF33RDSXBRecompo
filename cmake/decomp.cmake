@@ -135,6 +135,7 @@ add_library(sf_port STATIC
     src/port/sound.c
     src/port/se.c
     src/port/menu_ext.c
+    src/port/display.c
     src/port/live.c
     src/game/adx.c
     src/game/aix.c

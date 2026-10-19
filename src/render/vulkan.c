@@ -333,6 +333,7 @@ int sf_vk_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n)
         return -1;
     }
     r->kind = SF_RENDER_VULKAN;
+    r->aspect = 4.f / 3.f;
     r->window = window;
     exts = SDL_Vulkan_GetInstanceExtensions(&ext_count);
     if (!exts || ext_count == 0) {
@@ -1014,7 +1015,7 @@ static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *li
     rp.clearValueCount = 1;
     rp.pClearValues = &clear;
     vkCmdBeginRenderPass(r->cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
-    sf_scene_record_show(r->scene, r->cmd, r->extent, list);
+    sf_scene_record_show(r->scene, r->cmd, r->extent, r->aspect, list);
     vkCmdEndRenderPass(r->cmd);
     return vkEndCommandBuffer(r->cmd) == VK_SUCCESS ? 0 : -1;
 }
@@ -1155,6 +1156,7 @@ int sf_vk_create_headless(SfRenderer **out, char *err, size_t err_n)
         return -1;
     }
     r->kind = SF_RENDER_VULKAN;
+    r->aspect = 4.f / 3.f;
     memset(&app, 0, sizeof app);
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.apiVersion = VK_API_VERSION_1_0;

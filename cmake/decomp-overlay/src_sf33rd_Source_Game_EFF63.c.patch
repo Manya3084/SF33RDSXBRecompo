@@ -1,0 +1,37 @@
+--- a/EFF63.c
++++ b/EFF63.c
+@@ -54,6 +54,8 @@
+ extern u8 Disp_Size_V;
+ extern struct _SYSTEM_W sys_w;
+ void Setup_Letter_63(WORK_Other_CONN* ewk, s16 disp_index);
++static void Setup_Letter_63_Str(WORK_Other_CONN* ewk, const u8* ptr);
++const char* sf_display_text(int row);
+ 
+ const s8* Letter_Data_63[3][21] = { { "-10", "-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1", "0",
+                                       "1",   "2",  "3",  "4",  "5",  "6",  "7",  "8",  "9",  "10" },
+@@ -213,6 +215,13 @@
+         disp_index >>= 1;
+         break;
+ 
++    case 5:
++    case 6:
++    case 7:
++        /* Port: the window's mode, size and aspect (src/port/display.c). */
++        Setup_Letter_63_Str(ewk, (const u8*)sf_display_text(ewk->wu.type - 5));
++        return;
++
+     default:
+         disp_index = sys_w.screen_mode;
+         break;
+@@ -222,7 +231,10 @@
+ }
+ 
+ void Setup_Letter_63(WORK_Other_CONN* ewk, s16 disp_index) {
+-    const u8* ptr = (u8*)Letter_Data_63[ewk->wu.dir_step][disp_index];
++    Setup_Letter_63_Str(ewk, (u8*)Letter_Data_63[ewk->wu.dir_step][disp_index]);
++}
++
++static void Setup_Letter_63_Str(WORK_Other_CONN* ewk, const u8* ptr) {
+     s16 ix = 0;
+     s16 x = 0;
+ 

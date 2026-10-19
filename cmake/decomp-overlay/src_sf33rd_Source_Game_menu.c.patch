@@ -1,0 +1,74 @@
+--- a/menu.c
++++ b/menu.c
+@@ -414,6 +414,8 @@
+ void Game_Option(struct _TASK* task_ptr);
+ void Button_Config(struct _TASK* task_ptr);
+ void Screen_Adjust(struct _TASK* task_ptr);
++int sf_display_step(int row, int dir);
++void sf_display_default(void);
+ void Sound_Test(struct _TASK* task_ptr);
+ void Memory_Card(struct _TASK* task_ptr);
+ void Extra_Option(struct _TASK* task_ptr);
+@@ -2755,15 +2757,18 @@
+         Order_Dir[0x65] = 8;
+         Order_Timer[0x65] = 1;
+ 
+-        for (ix = 0; ix < 5; ix++) {
++        /* Port: eight values, the last three the window's. */
++        for (ix = 0; ix < 8; ix++) {
+             effect_63_init(ix + 0x66, 0, 2, ix, ix);
+             Order[ix + 0x66] = 1;
+             Order_Dir[ix + 0x66] = 4;
+             Order_Timer[ix + 0x66] = ix + 0x14;
+         }
+ 
+-        for (ix = 0, unused_s3 = char_index = 0xF; ix < 7; ix++, unused_s2 = char_index++) {
+-            effect_61_init(0, ix + 0x50, 0, 2, char_index, ix, 0x7047);
++        /* Port: ten rows, the window's three (labels 67 to 69) after FILTER. */
++        for (ix = 0, unused_s3 = char_index = 0xF; ix < 10; ix++, unused_s2 = char_index++) {
++            static const s16 port_rows[10] = { 0xF, 0x10, 0x11, 0x12, 0x13, 67, 68, 69, 0x14, 0x15 };
++            effect_61_init(0, ix + 0x50, 0, 2, port_rows[ix], ix, 0x7047);
+             Order[ix + 0x50] = 1;
+             Order_Dir[ix + 0x50] = 4;
+             Order_Timer[ix + 0x50] = ix + 0x14;
+@@ -2807,7 +2812,7 @@
+     u16 sw;
+     sw = ~plsw_01[PL_id] & plsw_00[PL_id];
+     sw = Check_Menu_Lever(PL_id, 0);
+-    MC_Move_Sub(sw, 0, 6, 0xFF);
++    MC_Move_Sub(sw, 0, 9, 0xFF); /* Port: ten rows */
+     Screen_Move_Sub_LR(sw);
+ }
+ 
+@@ -2821,7 +2826,7 @@
+         return;
+     }
+ 
+-    if (Menu_Cursor_Y[0] == 6 || IO_Result == 0x200) {
++    if (Menu_Cursor_Y[0] == 9 || IO_Result == 0x200) { /* Port: EXIT is row 9 */
+         SE_selected();
+         Menu_Suicide[1] = 0;
+         Menu_Suicide[2] = 1;
+@@ -2849,8 +2854,9 @@
+         return;
+     }
+ 
+-    if (Menu_Cursor_Y[PL_id] == 5) {
++    if (Menu_Cursor_Y[PL_id] == 8) { /* Port: DEFAULT SETTING is row 8 */
+         SE_selected();
++        sf_display_default();
+         X_Adjust_Buff[2] = 0;
+         Y_Adjust_Buff[2] = 0;
+         Disp_Size_H = 100;
+@@ -2973,6 +2979,11 @@
+         }
+     }
+ 
++    /* Port: rows 5 to 7, the window's mode, size and aspect. */
++    if ((sw == 4 || sw == 8) && Menu_Cursor_Y[0] >= 5 && Menu_Cursor_Y[0] <= 7) {
++        flag = sf_display_step(Menu_Cursor_Y[0] - 5, sw == 4 ? -1 : 1);
++    }
++
+     if (flag) {
+         SE_dir_cursor_move();
+     }

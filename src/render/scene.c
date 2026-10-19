@@ -1373,7 +1373,7 @@ void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l)
     s->back_valid = 1;
 }
 
-void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, const SfDrawList *l)
+void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, float aspect, const SfDrawList *l)
 {
     VkViewport viewport;
     VkRect2D scissor;
@@ -1384,12 +1384,15 @@ void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, co
     if (!s->show_pipe) {
         return;
     }
-    /* the 640x480 output, kept 4:3 and centred in the window */
+    /* the 640x480 output in the asked shape, centred in the window */
     frame_w = (float)extent.width;
-    frame_h = frame_w * 3.f / 4.f;
-    if (frame_h > (float)extent.height) {
-        frame_h = (float)extent.height;
-        frame_w = frame_h * 4.f / 3.f;
+    frame_h = (float)extent.height;
+    if (aspect > 0.f) {
+        frame_h = frame_w / aspect;
+        if (frame_h > (float)extent.height) {
+            frame_h = (float)extent.height;
+            frame_w = frame_h * aspect;
+        }
     }
     viewport.x = ((float)extent.width - frame_w) / 2.f;
     viewport.y = ((float)extent.height - frame_h) / 2.f;

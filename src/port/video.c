@@ -24,6 +24,7 @@ void sf_video_init(int w, int h)
             exit(1);
         }
         sf_gfx_init();
+        sf_display_init();
         return;
     }
     s_window = SDL_CreateWindow("Street Fighter III: 3rd Strike", w * 2, 480 * 2,
@@ -37,6 +38,17 @@ void sf_video_init(int w, int h)
         exit(1);
     }
     sf_gfx_init();
+    sf_display_init();
+}
+
+SDL_Window *sf_video_window(void)
+{
+    return s_window;
+}
+
+void sf_video_set_aspect(float aspect)
+{
+    sf_render_set_aspect(s_renderer, aspect);
 }
 
 /* SF_SHOT=FRAME:PATH writes the screen after that frame as a PPM. */
