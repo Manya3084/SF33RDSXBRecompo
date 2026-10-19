@@ -14,7 +14,7 @@
          switch (IO_Result) {
          case 0x100:
 +            if (Menu_Cursor_Y[0] == 6) {
-+                /* Port: no Xbox Live (online play would come here) */
++                /* Port: no Xbox Live; the cursor skips it, and A on it does nothing */
 +                break;
 +            }
 +
@@ -83,4 +83,13 @@
 +
      if (flag) {
          SE_dir_cursor_move();
+     }
+@@ -3545,7 +3561,7 @@
+ u16 MC_Move_Sub(u16 sw, s16 cursor_id, s16 menu_max, s16 cansel_menu) {
+ #define MC_SKIP_ROW(y)                                                                                             \
+     ((D_00796884 == 12 && (y) < 3) || (D_00796884 == 10 && ((y) == 3 || (y) == 7)) || (D_00796884 == 19 && (y) == 1) || \
+-     (D_00796884 == 13 && (y) == 2))
++     (D_00796884 == 13 && (y) == 2) || (D_00796884 == 20 && (y) == 6)) /* Port: no Xbox Live */
+     if (Menu_Cursor_Move > 0) {
+         return 0;
      }
