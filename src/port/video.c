@@ -144,8 +144,8 @@ void sf_video_present(void)
             fclose(f);
         }
     }
-    if (!getenv("SF_HEADLESS")) {
-        pace(); /* headless tests run as fast as they can */
+    if (!getenv("SF_HEADLESS") || getenv("SF_PACE")) {
+        pace(); /* headless tests run as fast as they can, unless SF_PACE */
     }
     screenshot(frame++);
     sf_gfx_frame_done();

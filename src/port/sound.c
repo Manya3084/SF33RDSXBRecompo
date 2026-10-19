@@ -27,6 +27,7 @@
 #include <AL/alc.h>
 
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,6 +60,7 @@ typedef struct Voice {
     Pcm now;
     int32_t pos;
     double due; /* samples owed to the frame clock */
+    int started; /* the source was started on what it holds */
     int playing;
     int ended;
     int paused;
@@ -80,6 +82,24 @@ typedef struct AdxtHandle {
 } AdxtHandle;
 static AdxtHandle s_adxt[4];
 static Voice s_aixp;
+
+/* SF_SOUND_DEBUG=1 logs each stream call with the frame it came on. */
+static void sdebug(const char *fmt, ...)
+{
+    static int on = -1;
+    va_list ap;
+    if (on < 0) {
+        on = getenv("SF_SOUND_DEBUG") != NULL;
+    }
+    if (!on) {
+        return;
+    }
+    fprintf(stderr, "sound: frame %d: ", sf_port_frame);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+}
 
 static float gain_of(s32 vol)
 {
@@ -164,10 +184,15 @@ static void voice_init(Voice *v)
     v->gain = 1.0f;
 }
 
-/* Buffers the source has played go back to the free list. */
+/* Buffers the source has played go back to the free list. A source that
+ * is not started counts everything it holds as processed, so its new
+ * buffers stay until it starts. */
 static void voice_reclaim(Voice *v)
 {
     ALint done = 0;
+    if (!v->started) {
+        return;
+    }
     alGetSourcei(v->source, AL_BUFFERS_PROCESSED, &done);
     while (done-- > 0 && v->free_n < VOICE_BUFFERS) {
         alSourceUnqueueBuffers(v->source, 1, &v->free_buf[v->free_n]);
@@ -191,6 +216,7 @@ static void voice_stop(Voice *v)
         alSourceUnqueueBuffers(v->source, 1, &v->free_buf[v->free_n]);
         v->free_n++;
     }
+    v->started = 0;
     pcm_free(&v->now);
 }
 
@@ -283,9 +309,16 @@ static void voice_pump(Voice *v)
     if (n < want) {
         v->playing = 0;
         v->ended = 1;
+        sdebug("voice %p ended", (void *)v);
     }
     if (!v->source) {
         return;
+    }
+    alGetSourcei(v->source, AL_SOURCE_STATE, &state);
+    if (v->started && state == AL_STOPPED) {
+        /* it ran dry: what it holds has played; start again on new samples */
+        voice_reclaim(v);
+        v->started = 0;
     }
     voice_reclaim(v);
     if (n > 0 && v->free_n > 0) {
@@ -297,8 +330,9 @@ static void voice_pump(Voice *v)
     /* a full queue (a run faster than the device) drops the frame */
     alGetSourcei(v->source, AL_BUFFERS_QUEUED, &queued);
     alGetSourcei(v->source, AL_SOURCE_STATE, &state);
-    if (state != AL_PLAYING && (queued >= PREROLL || (!v->playing && queued > 0))) {
-        alSourcePlay(v->source); /* starting, or it ran dry for a moment */
+    if (!v->started && (queued >= PREROLL || (!v->playing && queued > 0))) {
+        alSourcePlay(v->source);
+        v->started = 1;
     }
 }
 
@@ -375,6 +409,7 @@ void ADXT_Destroy(AdxtHandle *a)
 void ADXT_Stop(AdxtHandle *a)
 {
     if (a) {
+        sdebug("ADXT_Stop %p", (void *)&a->v);
         voice_stop(&a->v);
         a->v.seamless = 0;
     }
@@ -386,6 +421,7 @@ void ADXT_StartAfs(AdxtHandle *a, s32 patid, s32 fid)
     if (!a) {
         return;
     }
+    sdebug("ADXT_StartAfs %p file %d", (void *)&a->v, fid);
     voice_stop(&a->v);
     a->v.seamless = 0;
     if (pcm_from_afs(fid, &a->v.now) == 0) {
@@ -400,6 +436,7 @@ void ADXT_StartMem(AdxtHandle *a, void *adx)
     if (!a || !adx) {
         return;
     }
+    sdebug("ADXT_StartMem %p", (void *)&a->v);
     voice_stop(&a->v);
     a->v.seamless = 0;
     size = adx_size(adx);
@@ -416,6 +453,7 @@ void ADXT_StartMem(AdxtHandle *a, void *adx)
 void ADXT_EntryAfs(AdxtHandle *a, s32 patid, s32 fid)
 {
     (void)patid;
+    sdebug("ADXT_EntryAfs %p file %d (%d queued)", (void *)(a ? &a->v : NULL), fid, a ? a->v.entry_n : -1);
     if (a && a->v.entry_n < ENTRY_MAX) {
         a->v.entries[a->v.entry_n++] = fid;
     }
@@ -438,6 +476,7 @@ void ADXT_StartSeamless(AdxtHandle *a)
     if (!a) {
         return;
     }
+    sdebug("ADXT_StartSeamless %p (%d queued)", (void *)&a->v, a->v.entry_n);
     voice_stop(&a->v);
     a->v.seamless = 1;
     if (voice_next_entry(&a->v)) {
@@ -461,8 +500,9 @@ void ADXT_Pause(AdxtHandle *a, s32 sw)
     if (!a) {
         return;
     }
+    sdebug("ADXT_Pause %p %d", (void *)&a->v, sw);
     a->v.paused = sw != 0;
-    if (a->v.source && a->v.playing) {
+    if (a->v.source && a->v.started) {
         if (sw) {
             alSourcePause(a->v.source);
         } else {
@@ -481,6 +521,7 @@ void ADXT_SetOutVol(AdxtHandle *a, s32 vol)
     if (!a) {
         return;
     }
+    sdebug("ADXT_SetOutVol %p %d", (void *)&a->v, vol);
     a->v.gain = gain_of(vol);
     if (a->v.source) {
         alSourcef(a->v.source, AL_GAIN, a->v.gain);
@@ -533,6 +574,7 @@ void xb_aixp_StartFnameSurround(void *aixp, const char *fname, void *dir)
     char err[256];
     (void)aixp;
     (void)dir;
+    sdebug("AIXP start %s", fname);
     voice_stop(&s_aixp);
     if (sf_exe_dir(base, sizeof base) != 0) {
         return;
@@ -573,6 +615,7 @@ void xb_aixp_StartFnameSurround(void *aixp, const char *fname, void *dir)
 void AIXP_Stop(void *aixp)
 {
     (void)aixp;
+    sdebug("AIXP_Stop");
     voice_stop(&s_aixp);
 }
 
@@ -595,7 +638,7 @@ void AIXP_Pause(void *aixp, s32 sw)
 {
     (void)aixp;
     s_aixp.paused = sw != 0;
-    if (s_aixp.source && s_aixp.playing) {
+    if (s_aixp.source && s_aixp.started) {
         if (sw) {
             alSourcePause(s_aixp.source);
         } else {
