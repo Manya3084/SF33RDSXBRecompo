@@ -63,6 +63,12 @@ int main(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
+    {
+        int cli = sf_setup_cli(argc, argv);
+        if (cli >= 0) {
+            return cli;
+        }
+    }
     crash_handler();
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (getenv("SF_HEADLESS") && getenv("SF_RENDERER") && strcmp(getenv("SF_RENDERER"), "opengl") == 0) {

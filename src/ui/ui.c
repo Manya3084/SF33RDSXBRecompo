@@ -1,10 +1,7 @@
 #include "ui/ui.h"
 
-#include "game/pieces.h"
-
-#include "mem/heap.h"
-
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const uint8_t k_glyph[][8] = {
@@ -82,7 +79,7 @@ int sf_canvas_open(SfCanvas *canvas, int width, int height)
 {
     canvas->width = width;
     canvas->height = height;
-    canvas->rgba = sf_alloc((size_t)width * (size_t)height * 4u);
+    canvas->rgba = malloc((size_t)width * (size_t)height * 4u);
     return canvas->rgba ? 0 : -1;
 }
 
@@ -91,7 +88,7 @@ void sf_canvas_close(SfCanvas *canvas)
     if (!canvas) {
         return;
     }
-    sf_free(canvas->rgba);
+    free(canvas->rgba);
     canvas->rgba = NULL;
 }
 
@@ -147,90 +144,22 @@ static void text(SfCanvas *canvas, int x, int y, const char *s, uint8_t r, uint8
     }
 }
 
-static void blit(SfCanvas *canvas, const uint8_t *rgba, int w, int h, int dx, int dy, int scale)
-{
-    int y;
-    int x;
-    if (!rgba || w <= 0 || h <= 0 || scale < 1) {
-        return;
-    }
-    for (y = 0; y < h; y++) {
-        for (x = 0; x < w; x++) {
-            const uint8_t *p = rgba + ((size_t)y * (size_t)w + (size_t)x) * 4u;
-            int sy;
-            int sx;
-            if (p[3] == 0) {
-                continue;
-            }
-            for (sy = 0; sy < scale; sy++) {
-                for (sx = 0; sx < scale; sx++) {
-                    put(canvas, dx + x * scale + sx, dy + y * scale + sy, p[0], p[1], p[2]);
-                }
-            }
-        }
-    }
-}
-
-/* Largest integer scale that fits, then centered. The opening is the picture. */
-static void blit_game(SfCanvas *canvas, const uint8_t *rgba, int w, int h)
-{
-    int scale = 1;
-    int x;
-    int y;
-    if (w > 0 && h > 0 && canvas->width >= w && canvas->height >= h) {
-        int sx = canvas->width / w;
-        int sy = canvas->height / h;
-        scale = sx < sy ? sx : sy;
-    }
-    if (scale < 1) {
-        scale = 1;
-    }
-    x = (canvas->width - w * scale) / 2;
-    y = (canvas->height - h * scale) / 2;
-    blit(canvas, rgba, w, h, x, y, scale);
-}
-
+/* The first start's screen (src/port/setup.c): where to get the game data. */
 void sf_ui_draw(SfCanvas *canvas, const SfUi *ui)
 {
-    int i;
     fill(canvas, 12, 16, 28);
-    if (ui->screen != SF_UI_TITLE) {
-        text(canvas, 32, 28, "STREET FIGHTER III", 240, 210, 140);
-        text(canvas, 32, 52, "3RD STRIKE", 240, 210, 140);
-    }
-    if (ui->screen == SF_UI_SETUP) {
-        text(canvas, 32, 100, "XBOX DATA WAS NOT FOUND.", 220, 220, 220);
-        text(canvas, 32, 140, "ENTER: XBOX ISO, ZIP, OR 7Z", 180, 190, 210);
-        text(canvas, 32, 164, "F: EXTRACTED XBOX FOLDER", 180, 190, 210);
-        text(canvas, 32, 188, "OR DROP THE XBOX DATA HERE", 180, 190, 210);
-        text(canvas, 32, 228, "XBOX DISC ONLY.", 180, 190, 210);
-    } else if (ui->screen == SF_UI_TITLE) {
-        if (ui->opening_hold && ui->pieces) {
-            blit_game(canvas, ui->pieces, SF_PIECE_W, SF_PIECE_H);
-        } else if (ui->opening && ui->opening_w > 0 && ui->opening_h > 0) {
-            blit_game(canvas, ui->opening, ui->opening_w, ui->opening_h);
-        }
-    } else if (ui->screen == SF_UI_DISPLAY) {
-        text(canvas, 32, 100, "DISPLAY", 220, 220, 220);
-        text(canvas, 32, 140, ui->menu_row == 0 ? "> RESOLUTION" : "  RESOLUTION", 220, 220, 220);
-        for (i = 0; i < SF_RES_COUNT; i++) {
-            char line[64];
-            snprintf(line, sizeof line, "%s %s", i == ui->menu_res ? " >" : "  ", sf_res_presets[i].label);
-            text(canvas, 48, 168 + i * 20, line, i == ui->menu_res ? 240 : 160, 210, 160);
-        }
-        text(canvas, 32, 280, ui->menu_row == 1 ? "> RENDERER" : "  RENDERER", 220, 220, 220);
-        text(canvas, 48, 304, ui->menu_renderer == 0 ? " > VULKAN" : "   VULKAN", 220, 220, 220);
-        text(canvas, 48, 324, ui->menu_renderer == 1 ? " > OPENGL" : "   OPENGL", 220, 220, 220);
-        text(canvas, 32, 370, "A APPLY   B CLOSE", 180, 190, 210);
-    } else {
-        text(canvas, 32, 120, "XBOX LIVE", 220, 220, 220);
-        text(canvas, 32, 160, "NOT IN THIS PORT", 220, 180, 140);
-        text(canvas, 32, 210, "B CLOSE", 180, 190, 210);
-    }
-    if (ui->screen != SF_UI_TITLE && ui->status && ui->status[0]) {
+    text(canvas, 32, 28, "STREET FIGHTER III", 240, 210, 140);
+    text(canvas, 32, 52, "3RD STRIKE", 240, 210, 140);
+    text(canvas, 32, 100, "XBOX DATA WAS NOT FOUND.", 220, 220, 220);
+    text(canvas, 32, 140, "CLICK OR ENTER: XBOX ISO / ZIP / 7Z", 180, 190, 210);
+    text(canvas, 32, 164, "F: EXTRACTED XBOX FOLDER", 180, 190, 210);
+    text(canvas, 32, 188, "OR DROP THE XBOX DATA HERE", 180, 190, 210);
+    text(canvas, 32, 228, "XBOX DISC ONLY. NOTHING LEAVES THIS COMPUTER.", 180, 190, 210);
+    text(canvas, 32, 252, "ESC: QUIT", 180, 190, 210);
+    if (ui->status && ui->status[0]) {
         text(canvas, 32, 430, ui->status, 220, 120, 120);
     }
-    if (ui->screen != SF_UI_TITLE && ui->note && ui->note[0]) {
+    if (ui->note && ui->note[0]) {
         text(canvas, 32, 470, ui->note, 160, 170, 190);
     }
 }

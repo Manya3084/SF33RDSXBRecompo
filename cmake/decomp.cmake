@@ -139,6 +139,8 @@ add_library(sf_port STATIC
     src/port/menu_ext.c
     src/port/display.c
     src/port/state.c
+    src/port/setup.c
+    src/ui/ui.c
     src/port/live.c
     src/game/adx.c
     src/game/aix.c
@@ -148,7 +150,7 @@ add_library(sf_port STATIC
     src/mem/heap.c
 )
 target_link_libraries(sf_port PUBLIC ZLIB::ZLIB OpenAL::OpenAL)
-target_link_libraries(sf_port PUBLIC sf_gfx sf_render)
+target_link_libraries(sf_port PUBLIC sf_gfx sf_render sf_import)
 set_target_properties(sf_port PROPERTIES POSITION_INDEPENDENT_CODE OFF)
 target_compile_options(sf_port PRIVATE -fno-pie)
 
@@ -176,7 +178,7 @@ if(WIN32)
         execute_process(COMMAND ${CMAKE_C_COMPILER} -print-file-name=${_l} OUTPUT_VARIABLE _p OUTPUT_STRIP_TRAILING_WHITESPACE)
         list(APPEND _stub_win --host "${_p}")
     endforeach()
-    foreach(_l libSDL3.dll.a libvulkan-1.dll.a libopenal.dll.a libz.dll.a)
+    foreach(_l libSDL3.dll.a libvulkan-1.dll.a libopenal.dll.a libz.dll.a libarchive.dll.a)
         list(APPEND _stub_win --host "${SF_WIN_SYSROOT}/lib/${_l}")
     endforeach()
 endif()
@@ -199,11 +201,15 @@ add_custom_command(OUTPUT "${SF_DECOMP_GEN}/stubs.c"
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" ${_stub_win}
         --aliases "${SF_DECOMP_GEN}/fold.txt" "${SF_DECOMP_GEN}/stubs.c"
         $<TARGET_FILE:sf_decomp> $<TARGET_FILE:sf_port> $<TARGET_FILE:sf_gfx> $<TARGET_FILE:sf_render>
-    DEPENDS sf_decomp sf_port sf_gfx sf_render "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" "${SF_DECOMP_GEN}/fold.txt"
+        $<TARGET_FILE:sf_import>
+    DEPENDS sf_decomp sf_port sf_gfx sf_render sf_import "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py"
+        "${SF_DECOMP_GEN}/fold.txt"
     COMMENT "Port stubs")
 
 add_executable(sf33rdsxb_game src/port/main.c src/host/paths.c "${SF_DECOMP_GEN}/stubs.c")
 target_include_directories(sf33rdsxb_game PRIVATE src)
+# one program: the game, which imports the disc the first time it starts
+set_target_properties(sf33rdsxb_game PROPERTIES OUTPUT_NAME sf33rdsxb)
 target_compile_options(sf33rdsxb_game PRIVATE -fno-pie)
 set_source_files_properties("${SF_DECOMP_GEN}/stubs.c" PROPERTIES COMPILE_OPTIONS "-Wno-error;-w;-fno-builtin")
 if(WIN32)

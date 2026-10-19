@@ -373,13 +373,8 @@ static int finish_shaders(const char *install, const char *tool, SfExtractResult
     if (convert_dir(nv2a, "", spirv, tool, result) != 0) {
         return -1;
     }
-    if (result->shaders > 0 && !tool) {
-        add_note(result, "Shader tool was not found. SPIR-V was not written.");
-    } else if (result->spirv_failed > 0) {
-        add_note(result, "NV2A shaders were copied. SPIR-V conversion failed for some of them.");
-    } else if (result->spirv > 0) {
-        add_note(result, "NV2A shaders were converted to SPIR-V for Vulkan and OpenGL.");
-    }
+    /* without the tool the disc's shaders stay as they are: the game
+     * draws with its own */
     if (write_manifest(install, result) != 0) {
         add_note(result, "The data manifest was not written.");
     }
@@ -537,6 +532,12 @@ static int import_sound_banks(const char *install, SfExtractResult *result)
     }
     result->files += SF_SOUND_BANKS;
     unlink(xbe);
+    {
+        char tmp[4096];
+        if (sf_join(tmp, sizeof tmp, install, "data/.import-tmp") == 0) {
+            rmdir(tmp); /* empty now */
+        }
+    }
     return 0;
 }
 

@@ -26,6 +26,13 @@ void sf_video_present(void);
  * shown in (width over height; 0 fills the window). */
 struct SDL_Window *sf_video_window(void);
 void sf_video_set_aspect(float aspect);
+struct SfCanvas;
+void sf_video_present_canvas(const struct SfCanvas *canvas);
+
+/* The first start's import screen, and the import on the command line
+ * (src/port/setup.c). */
+int sf_setup_run(const char *install);
+int sf_setup_cli(int argc, char **argv);
 
 /* The window's mode, size and aspect, kept in config/display.txt; SCREEN
  * ADJUST's rows 5 to 7 (src/port/display.c). */

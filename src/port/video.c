@@ -27,7 +27,8 @@ static void open_gl(int w)
     char err[512];
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    /* compatibility: the first start's screen draws the old way */
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     s_window = SDL_CreateWindow("Street Fighter III: 3rd Strike", w * 2, 480 * 2,
                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_OPENGL);
@@ -80,6 +81,13 @@ void sf_video_init(int w, int h)
     open_gl(w);
     sf_gfx_init();
     sf_display_init();
+}
+
+/* A picture of the whole window (the first start's screen). */
+void sf_video_present_canvas(const SfCanvas *canvas)
+{
+    char err[256];
+    sf_render_present(s_renderer, canvas, err, sizeof err);
 }
 
 SDL_Window *sf_video_window(void)

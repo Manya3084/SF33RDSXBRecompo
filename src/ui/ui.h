@@ -6,31 +6,11 @@
 
 #include <stdint.h>
 
-typedef enum SfUiScreen {
-    SF_UI_SETUP = 0,
-    SF_UI_TITLE,
-    SF_UI_DISPLAY,
-    SF_UI_LIVE
-} SfUiScreen;
-
+/* The first start's screen: a status line (what is being read, or why it
+ * failed) and a note. */
 typedef struct SfUi {
-    SfUiScreen screen;
-    int menu_row;
-    int menu_res;
-    int menu_renderer;
-    int gl_fallback;
-    SfRendererKind active;
     const char *status;
     const char *note;
-    const char *track;
-    const uint8_t *picture;
-    int picture_w;
-    int picture_h;
-    const uint8_t *opening;
-    int opening_w;
-    int opening_h;
-    int opening_hold;
-    const uint8_t *pieces;
 } SfUi;
 
 int sf_canvas_open(SfCanvas *canvas, int width, int height);

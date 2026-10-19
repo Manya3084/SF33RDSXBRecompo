@@ -35,7 +35,7 @@ import sys
 
 NM = "nm"
 OBJDUMP = "objdump"
-HOST_LIBS = ["libc.so.6", "libm.so.6", "libz.so.1", "libSDL3.so.0", "libvulkan.so.1", "libGL.so.1", "libopenal.so.1"]
+HOST_LIBS = ["libc.so.6", "libm.so.6", "libz.so.1", "libSDL3.so.0", "libvulkan.so.1", "libGL.so.1", "libopenal.so.1", "libarchive.so.13"]
 
 
 def syms(path: str, dynamic: bool = False) -> tuple[set[str], set[str]]:

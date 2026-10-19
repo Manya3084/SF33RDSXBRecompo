@@ -273,7 +273,7 @@ int sf_archive_export(const char *archive, SfArchiveMapFn map, void *user,
             continue;
         }
         size = archive_entry_size(ent);
-        if (size < 0 || (uint64_t)size > (2ull << 30)) {
+        if (size < 0 || (uint64_t)size > (16ull << 30)) { /* an Xbox DVD-9 image is up to 7.6 GB */
             archive_read_free(a);
             sf_set_err(err, err_n, "archive member is too large");
             return -1;

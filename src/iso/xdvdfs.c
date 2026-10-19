@@ -236,8 +236,15 @@ SfXdvdfs *sf_xdvdfs_open(const char *path, char *err, size_t err_n)
     }
     free(buf);
     if (img->root_sector == 0) {
+        uint8_t pvd[40];
+        /* an ISO 9660 volume for the PlayStation is the PS2 disc */
+        if (read_at(fd, 0x8000, pvd, sizeof pvd) == 0 && memcmp(pvd + 1, "CD001", 5) == 0 &&
+            memcmp(pvd + 8, "PLAYSTATION", 11) == 0) {
+            sf_set_err(err, err_n, "This is the PlayStation 2 disc. The port needs the Xbox disc.");
+        } else {
+            sf_set_err(err, err_n, "not an Xbox XDVDFS image");
+        }
         sf_xdvdfs_close(img);
-        sf_set_err(err, err_n, "not an Xbox XDVDFS image");
         return NULL;
     }
     return img;

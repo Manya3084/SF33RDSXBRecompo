@@ -1,6 +1,8 @@
 # SF33RDSXBRecompo
 
-Native x86-64 port of Street Fighter III: 3rd Strike, built from the Xbox version.
+Native x86-64 port of Street Fighter III: 3rd Strike, built from the Xbox version, for Linux and Windows.
+
+![The title screen](docs/images/title.png)
 
 The game logic is the C of [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb), compiled for x86-64. Everything the Xbox provided under it is written natively here: SDL3 for the window, input and timing, a Vulkan renderer for the game's draws (OpenGL 3.3 where Vulkan is missing), OpenAL for sound, and plain files for the disc archive and the saves. No Xbox code is built. There is no Xbox heap, XDK, xboxkrnl, D3D8, CRI middleware, XACT or XOnline dependency. The XBE is read once, at import, for the sound effects' cue tables; nothing from the disc is in this repository. [docs/porting.md](docs/porting.md) describes how the pieces fit.
 
@@ -49,10 +51,26 @@ Never commit anything under `data/`. It is the game itself.
 ## Running
 
 ```
-sf33rdsxb
+sf33rdsxb            (Linux)
+sf33rdsxb.exe        (Windows)
 ```
 
-The first time, it asks for your Xbox disc (an image, a zip or 7z of it, or the extracted folder; drop it on the window or pick it) and imports it into `data/` next to the program. Once the data is there, it starts the game (`sf33rdsxb_game`, which can also be run directly). Data imported before the sound effects were read from `sf33rd.xbe` has to be imported again.
+The first time, the window asks for your Xbox disc:
+
+![The first start: where to get the game data](docs/images/import.png)
+
+- click the window (or press Enter) and pick the disc image, or a zip or 7z of it;
+- or press F and pick the extracted disc folder (the one holding `sf33rd.xbe` and `XB_HostPC`);
+- or drop any of those on the window.
+
+It imports the game into `data/` next to the program (about 1.3 GB) and starts it. The next time, it starts straight away. Only the Xbox disc works; a PlayStation 2 image is refused with a message saying so. Data imported before the sound effects were read from `sf33rd.xbe` is asked for again.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![The mode menu](docs/images/mode-menu.png) | ![A fight](docs/images/fight.png) |
+| ![Ken's super art](docs/images/super.png) | ![K.O.](docs/images/ko.png) |
 
 ## Controls
 

@@ -3,6 +3,8 @@
  * part of the port; everything else is the game's own call, or the native
  * platform function of the same name in src/port. */
 
+#include "host/paths.h"
+#include "iso/extract.h"
 #include "port/port.h"
 
 #include <stdio.h>
@@ -66,7 +68,13 @@ int sf_port_quitting(void)
 
 void sf_game_init(void)
 {
+    char base[4096];
     sf_video_init(640, 448);
+    /* the first start: the disc is imported before the game reads it */
+    if (sf_exe_dir(base, sizeof base) == 0 && !sf_data_ready(base) && sf_setup_run(base) != 0) {
+        sf_port_quit();
+        return;
+    }
     /* retail's device setup ends with the pads */
     flPADInitialize();
     flSetRenderState(0x14, 0);

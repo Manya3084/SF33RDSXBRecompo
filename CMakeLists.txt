@@ -63,35 +63,6 @@ if(LIBARCHIVE_FOUND)
     target_link_libraries(sf_import PUBLIC PkgConfig::LIBARCHIVE)
 endif()
 
-add_executable(sf33rdsxb
-    src/main.c
-    src/mem/heap.c
-    src/game/task.c
-    src/game/memman.c
-    src/game/fs.c
-    src/game/ppg.c
-    src/game/title.c
-    src/game/opening.c
-    src/game/pieces.c
-    src/game/adx.c
-    src/game/aix.c
-    src/game/xwb.c
-    src/game/tracks.c
-    src/host/paths.c
-    src/host/settings.c
-    src/platform/input.c
-    src/platform/audio.c
-    src/render/nv2a.c
-    src/ui/ui.c
-)
-target_include_directories(sf33rdsxb PRIVATE src)
-target_link_libraries(sf33rdsxb PRIVATE sf_import sf_render SDL3::SDL3 OpenAL::OpenAL Vulkan::Vulkan OpenGL::GL ZLIB::ZLIB m)
-if(SF_USE_MIMALLOC)
-    pkg_check_modules(MIMALLOC REQUIRED mimalloc)
-    target_compile_definitions(sf33rdsxb PRIVATE SF_USE_MIMALLOC)
-    target_include_directories(sf33rdsxb PRIVATE ${MIMALLOC_INCLUDE_DIRS})
-    target_link_libraries(sf33rdsxb PRIVATE ${MIMALLOC_LIBRARIES})
-endif()
 
 # The tests run where they are built (they spawn tools and write temp
 # trees the POSIX way); a cross build for Windows leaves them out.
