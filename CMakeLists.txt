@@ -43,6 +43,7 @@ add_executable(sf33rdsxb
     src/game/ppg.c
     src/game/title.c
     src/game/opening.c
+    src/game/pieces.c
     src/game/adx.c
     src/game/aix.c
     src/game/xwb.c
@@ -80,7 +81,7 @@ enable_testing()
 add_executable(test_frame tests/test_frame.c src/game/task.c src/game/memman.c src/game/opening.c src/mem/heap.c)
 target_include_directories(test_frame PRIVATE src)
 
-add_executable(test_picture tests/test_picture.c src/game/fs.c src/game/ppg.c src/game/title.c src/mem/heap.c)
+add_executable(test_picture tests/test_picture.c src/game/fs.c src/game/ppg.c src/game/title.c src/game/pieces.c src/mem/heap.c)
 target_include_directories(test_picture PRIVATE src)
 target_link_libraries(test_picture PRIVATE ZLIB::ZLIB)
 

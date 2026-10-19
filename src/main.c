@@ -9,6 +9,7 @@
 #include "game/task.h"
 #include "game/title.h"
 #include "game/opening.h"
+#include "game/pieces.h"
 #include "mem/heap.h"
 #include "host/paths.h"
 #include "host/settings.h"
@@ -54,6 +55,7 @@ typedef struct App {
     uint8_t *opening;
     int opening_w;
     int opening_h;
+    uint8_t *pieces;
     SfOpening beat;
     SfTrack *tracks;
     int track_count;
@@ -176,6 +178,9 @@ static void clear_picture(App *app)
     app->ui.opening = NULL;
     app->ui.opening_w = 0;
     app->ui.opening_h = 0;
+    sf_free(app->pieces);
+    app->pieces = NULL;
+    app->ui.pieces = NULL;
 }
 
 static void load_logo(App *app)
@@ -458,11 +463,25 @@ static void load_bgm(App *app)
     }
 }
 
+static void load_pieces(App *app)
+{
+    char err[256];
+    err[0] = 0;
+    if (sf_pieces_load(app->install, &app->pieces, err, sizeof err) != 0) {
+        fprintf(stderr, "%s\n", err[0] ? err : "the opening pieces did not decode");
+        app->pieces = NULL;
+        app->ui.pieces = NULL;
+        return;
+    }
+    app->ui.pieces = app->pieces;
+}
+
 static void load_title(App *app)
 {
     clear_picture(app);
     load_logo(app);
     load_opening(app);
+    load_pieces(app);
     load_bgm(app);
     sf_opening_init(&app->beat);
     app->ui.opening_hold = 0;

@@ -1,4 +1,5 @@
 #include "game/fs.h"
+#include "game/pieces.h"
 #include "game/ppg.h"
 #include "game/title.h"
 #include "mem/heap.h"
@@ -512,6 +513,49 @@ static void test_opening(void)
     fsClose(&colors);
 }
 
+static void test_pieces(void)
+{
+    SfFsFile bg;
+    SfFsFile colors;
+    uint8_t linear[256];
+    uint8_t *view;
+    const uint8_t *red;
+    const uint8_t *ink;
+    int side;
+    char err[128];
+    FILE *fp = fopen("data/afs/index", "r");
+    if (!fp) {
+        printf("skip opening pieces (no archive index)\n");
+        return;
+    }
+    fclose(fp);
+    memset(&bg, 0, sizeof bg);
+    memset(&colors, 0, sizeof colors);
+    err[0] = 0;
+    side = 0;
+    expect(fsOpen(".", 79, &bg, err, sizeof err) == 0, "bg20.bin opens");
+    expect(bg.data && strcmp(bg.name, "bg20.bin") == 0 && bg.size == 1024980, "bg20.bin name and size");
+    expect(fsOpen(".", 82, &colors, err, sizeof err) == 0, "title.bin opens for the pieces");
+    if (!bg.data || !colors.data) {
+        fsClose(&bg);
+        fsClose(&colors);
+        return;
+    }
+    expect(sf_pieces_linear(bg.data, bg.size, 2395, linear, (int)sizeof linear, &side) == 0, "chip 2395 untwiddles");
+    expect(side == 16 && linear[100] == 35, "chip 2395 index 100 is 35");
+    view = sf_alloc((size_t)SF_PIECE_W * (size_t)SF_PIECE_H * 4u);
+    expect(view && sf_pieces_view(bg.data, bg.size, colors.data, colors.size, view, err, sizeof err) == 0, "opening pieces compose");
+    if (view) {
+        red = view + ((size_t)117 * (size_t)SF_PIECE_W + 2u) * 4u;
+        ink = view + ((size_t)40 * (size_t)SF_PIECE_W + 200u) * 4u;
+        expect(red[0] == 255 && red[1] == 0 && red[2] == 0 && red[3] == 255, "slogan pixel 2,117 is red");
+        expect(ink[0] == 222 && ink[1] == 239 && ink[2] == 231 && ink[3] == 255, "sketch pixel 200,40 is pale green");
+    }
+    sf_free(view);
+    fsClose(&bg);
+    fsClose(&colors);
+}
+
 int main(void)
 {
     test_synthetic();
@@ -520,6 +564,7 @@ int main(void)
     test_rank1();
     test_title();
     test_opening();
+    test_pieces();
     if (g_fail) {
         fprintf(stderr, "%d failed\n", g_fail);
         return 1;

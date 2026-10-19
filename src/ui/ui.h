@@ -30,6 +30,7 @@ typedef struct SfUi {
     int opening_w;
     int opening_h;
     int opening_hold;
+    const uint8_t *pieces;
 } SfUi;
 
 int sf_canvas_open(SfCanvas *canvas, int width, int height);
