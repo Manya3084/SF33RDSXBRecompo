@@ -24,7 +24,7 @@ The same screen shows the first opening tile. `OPBG_Init` reads `Opening.ppg` (f
 
 The title screen plays `ST3_3_OP.aix` when that file was copied at import. It is an AIXF container of AIXP packets. Track 0 is the front stereo ADX: 48000 Hz, version 4, 4-bit, 18-byte blocks, high-pass 500, 1673218 samples. Its copyright offset is too small for a loop, so the theme plays once. The other two stereo pairs stay packed. The arrow keys leave that theme for the loose mixes. Right starts at `o01_A_NYC.adx` (file 87). That mix is stereo, 48000 Hz, and loops from sample 191744 through sample 2875501. A version 3 mix stores its loop at byte 0x14, so `01_A_NYC.adx` loops from sample 25312 through sample 2699712. Stem files stay out of the list. A, S, D, and F play the first four PCM waves in `SE1.xwb` (file 8) without stopping the music. The BGM packs and the sound triggers are not running. The ADX flags byte on these mixes is 0, so the scale is the low 13 bits of the frame word plus one. A frame word with bit 15 set ends the stream. The filter coefficients stay in double precision.
 
-Game logic will be ported from [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb). This repository is the runtime.
+Game logic will be ported from [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb). This repository is the runtime. `sf33rdsxb_game` links the decomp's game logic, without any of its Xbox code, against the native platform layer in `src/port/`; see [porting.md](docs/porting.md).
 
 ## Controls
 

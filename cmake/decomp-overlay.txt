@@ -1,0 +1,7 @@
+# Decomp files that compile from a changed copy for x86-64 (see cmake/decomp.cmake).
+# Each change keeps the MSVC relink as it is and belongs upstream in time.
+#   patch PATH    apply cmake/decomp-overlay/<PATH with / as _>.patch
+#   lowaddr PATH  tools/lowaddr_init.py: address words in static tables
+
+# edrw/gedrw/cedrw_data_tbl hold the rewrite tables' addresses.
+lowaddr src/sf33rd/Source/Game/end_data.c

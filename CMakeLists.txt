@@ -94,3 +94,5 @@ add_test(NAME shaders COMMAND test_shaders)
 add_test(NAME frame COMMAND test_frame)
 add_test(NAME picture COMMAND test_picture)
 add_test(NAME adx COMMAND test_adx)
+
+include(cmake/decomp.cmake)
