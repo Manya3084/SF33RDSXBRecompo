@@ -1045,6 +1045,29 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
     if (sf_scene_prepare(r->scene, list, err, err_n) != 0) {
         return -1;
     }
+    if (!r->swapchain) {
+        /* headless: the screen is drawn, read back when asked, not shown */
+        VkCommandBufferBeginInfo begin;
+        vkResetFences(r->device, 1, &r->fence);
+        vkResetCommandBuffer(r->cmd, 0);
+        memset(&begin, 0, sizeof begin);
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        vkBeginCommandBuffer(r->cmd, &begin);
+        sf_scene_record(r->scene, r->cmd, list);
+        if (r->shot_pending) {
+            sf_scene_record_readback(r->scene, r->cmd, 1);
+        }
+        vkEndCommandBuffer(r->cmd);
+        memset(&submit, 0, sizeof submit);
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &r->cmd;
+        if (vkQueueSubmit(r->queue, 1, &submit, r->fence) != VK_SUCCESS) {
+            sf_set_err(err, err_n, "Vulkan submit failed");
+            return -1;
+        }
+        return 0;
+    }
     ar = vkAcquireNextImageKHR(r->device, r->swapchain, UINT64_MAX, r->image_ok, VK_NULL_HANDLE, &image_index);
     if (ar == VK_ERROR_OUT_OF_DATE_KHR) {
         vkDeviceWaitIdle(r->device);
@@ -1107,4 +1130,108 @@ int sf_vk_read_screen(SfRenderer *r, const uint8_t **rgba, int *w, int *h)
     *rgba = sf_scene_read(r->scene, w, h);
     r->shot_pending = 0;
     return *rgba ? 0 : -1;
+}
+
+/* A renderer with no window (tests): a device that can draw the game's
+ * screen, its queue, one command buffer and a fence. */
+int sf_vk_create_headless(SfRenderer **out, char *err, size_t err_n)
+{
+    SfRenderer *r = calloc(1, sizeof *r);
+    VkApplicationInfo app;
+    VkInstanceCreateInfo ii;
+    uint32_t n = 0;
+    VkPhysicalDevice devs[16];
+    uint32_t i;
+    float prio = 1.f;
+    VkDeviceQueueCreateInfo qi;
+    VkDeviceCreateInfo di;
+    VkPhysicalDeviceFeatures features;
+    VkCommandPoolCreateInfo pi;
+    VkCommandBufferAllocateInfo ci;
+    VkFenceCreateInfo fi;
+    *out = NULL;
+    if (!r) {
+        sf_set_err(err, err_n, "out of memory");
+        return -1;
+    }
+    r->kind = SF_RENDER_VULKAN;
+    memset(&app, 0, sizeof app);
+    app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.apiVersion = VK_API_VERSION_1_0;
+    memset(&ii, 0, sizeof ii);
+    ii.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ii.pApplicationInfo = &app;
+    if (vkCreateInstance(&ii, NULL, &r->instance) != VK_SUCCESS) {
+        sf_set_err(err, err_n, "Vulkan instance failed");
+        sf_vk_destroy(r);
+        return -1;
+    }
+    vkEnumeratePhysicalDevices(r->instance, &n, NULL);
+    if (n > 16) {
+        n = 16;
+    }
+    vkEnumeratePhysicalDevices(r->instance, &n, devs);
+    for (i = 0; i < n && !r->physical; i++) {
+        uint32_t qn = 0;
+        VkQueueFamilyProperties q[16];
+        uint32_t k;
+        if (!sf_scene_supported(devs[i])) {
+            continue;
+        }
+        vkGetPhysicalDeviceQueueFamilyProperties(devs[i], &qn, NULL);
+        if (qn > 16) {
+            qn = 16;
+        }
+        vkGetPhysicalDeviceQueueFamilyProperties(devs[i], &qn, q);
+        for (k = 0; k < qn; k++) {
+            if (q[k].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                r->physical = devs[i];
+                r->family = k;
+                break;
+            }
+        }
+    }
+    if (!r->physical) {
+        sf_set_err(err, err_n, "no Vulkan device can draw the game's screen");
+        sf_vk_destroy(r);
+        return -1;
+    }
+    memset(&qi, 0, sizeof qi);
+    qi.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    qi.queueFamilyIndex = r->family;
+    qi.queueCount = 1;
+    qi.pQueuePriorities = &prio;
+    memset(&features, 0, sizeof features);
+    sf_scene_features(&features);
+    memset(&di, 0, sizeof di);
+    di.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    di.queueCreateInfoCount = 1;
+    di.pQueueCreateInfos = &qi;
+    di.pEnabledFeatures = &features;
+    if (vkCreateDevice(r->physical, &di, NULL, &r->device) != VK_SUCCESS) {
+        sf_set_err(err, err_n, "Vulkan device failed");
+        sf_vk_destroy(r);
+        return -1;
+    }
+    vkGetDeviceQueue(r->device, r->family, 0, &r->queue);
+    memset(&pi, 0, sizeof pi);
+    pi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pi.queueFamilyIndex = r->family;
+    memset(&ci, 0, sizeof ci);
+    ci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ci.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ci.commandBufferCount = 1;
+    memset(&fi, 0, sizeof fi);
+    fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    if (vkCreateCommandPool(r->device, &pi, NULL, &r->pool) != VK_SUCCESS ||
+        (ci.commandPool = r->pool, vkAllocateCommandBuffers(r->device, &ci, &r->cmd)) != VK_SUCCESS ||
+        vkCreateFence(r->device, &fi, NULL, &r->fence) != VK_SUCCESS) {
+        sf_set_err(err, err_n, "Vulkan command setup failed");
+        sf_vk_destroy(r);
+        return -1;
+    }
+    *out = r;
+    return 0;
 }

@@ -17,6 +17,15 @@ void sf_video_init(int w, int h)
 {
     char err[512];
     (void)h;
+    if (getenv("SF_HEADLESS")) {
+        /* tests: nothing on the desktop, the screen only read back */
+        if (sf_render_create_headless(&s_renderer, err, sizeof err) != 0) {
+            fprintf(stderr, "video: headless Vulkan: %s\n", err);
+            exit(1);
+        }
+        sf_gfx_init();
+        return;
+    }
     s_window = SDL_CreateWindow("Street Fighter III: 3rd Strike", w * 2, 480 * 2,
                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_VULKAN);
     if (!s_window) {

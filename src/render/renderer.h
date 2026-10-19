@@ -17,6 +17,10 @@ typedef struct SfDrawList SfDrawList;
 
 int sf_render_create(SfRenderer **out, SDL_Window *window, SfRendererKind kind, char *err, size_t err_n);
 void sf_render_destroy(SfRenderer *renderer);
+
+/* Vulkan with no window: the game's screen is drawn and can be read back
+ * (sf_render_read_screen), and nothing is shown. For tests. */
+int sf_render_create_headless(SfRenderer **out, char *err, size_t err_n);
 SfRendererKind sf_render_kind(const SfRenderer *renderer);
 int sf_render_present(SfRenderer *renderer, const SfCanvas *canvas, char *err, size_t err_n);
 

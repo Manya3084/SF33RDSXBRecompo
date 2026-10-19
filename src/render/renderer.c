@@ -59,3 +59,8 @@ int sf_render_read_screen(SfRenderer *renderer, const uint8_t **rgba, int *w, in
     }
     return sf_vk_read_screen(renderer, rgba, w, h);
 }
+
+int sf_render_create_headless(SfRenderer **out, char *err, size_t err_n)
+{
+    return sf_vk_create_headless(out, err, err_n);
+}

@@ -13,6 +13,7 @@
  * Keyboard: arrows are the d-pad, Z A, X B, A X, S Y, Q White, E Black,
  * W the left trigger, R the right trigger, Enter Start, Backspace Back. */
 
+#include "host/paths.h"
 #include "port/port.h"
 
 #include "types.h"
@@ -370,10 +371,56 @@ static void read_one(int i, const XbGamepad *x)
 }
 
 /* retail's xb_PADRead */
+/* Every session's pads, frame by frame, go to data/last_session.input;
+ * SF_REPLAY=PATH plays such a file back in place of the devices. The game
+ * is deterministic in its inputs, so a replay reproduces the session. */
+#define RECORD_MAGIC "SF3I"
+
+static FILE *s_record;
+static FILE *s_replay;
+
+static void record_open(void)
+{
+    static int tried;
+    char base[4096];
+    char path[4096 + 64];
+    const char *replay = getenv("SF_REPLAY");
+    if (tried) {
+        return;
+    }
+    tried = 1;
+    if (replay) {
+        char magic[4];
+        s_replay = fopen(replay, "rb");
+        if (!s_replay || fread(magic, 4, 1, s_replay) != 1 || memcmp(magic, RECORD_MAGIC, 4) != 0) {
+            fprintf(stderr, "input: %s is not a session recording\n", replay);
+            if (s_replay) {
+                fclose(s_replay);
+                s_replay = NULL;
+            }
+        } else {
+            fprintf(stderr, "input: replaying %s\n", replay);
+        }
+        return;
+    }
+    if (sf_exe_dir(base, sizeof base) != 0) {
+        return;
+    }
+    snprintf(path, sizeof path, "%s/data/last_session.input", base);
+    if (getenv("SF_RECORD")) {
+        snprintf(path, sizeof path, "%s", getenv("SF_RECORD")); /* tests keep theirs apart */
+    }
+    s_record = fopen(path, "wb");
+    if (s_record) {
+        fwrite(RECORD_MAGIC, 4, 1, s_record);
+    }
+}
+
 void xb_PADRead(void)
 {
     XbGamepad x[PORTS];
     int i;
+    record_open();
     SDL_PumpEvents();
     refresh_gamepads();
     memset(x, 0, sizeof x);
@@ -392,6 +439,15 @@ void xb_PADRead(void)
             fputc('\n', stderr);
             last[i] = x[i].buttons;
         }
+    }
+    if (s_replay) {
+        if (fread(x, sizeof x, 1, s_replay) != 1) {
+            fprintf(stderr, "input: the recording ended at frame %d\n", sf_port_frame);
+            exit(0);
+        }
+    } else if (s_record) {
+        fwrite(x, sizeof x, 1, s_record);
+        fflush(s_record);
     }
     for (i = 0; i < PORTS; i++) {
         TARPAD *t = &tarpad_root[i];

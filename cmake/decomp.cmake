@@ -152,11 +152,11 @@ add_custom_command(OUTPUT "${SF_DECOMP_GEN}/stubs.c"
     DEPENDS sf_decomp sf_port sf_gfx sf_render "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" "${SF_DECOMP_GEN}/fold.txt"
     COMMENT "Port stubs")
 
-add_executable(sf33rdsxb_game src/port/main.c "${SF_DECOMP_GEN}/stubs.c")
+add_executable(sf33rdsxb_game src/port/main.c src/host/paths.c "${SF_DECOMP_GEN}/stubs.c")
 target_include_directories(sf33rdsxb_game PRIVATE src)
 target_compile_options(sf33rdsxb_game PRIVATE -fno-pie)
 set_source_files_properties("${SF_DECOMP_GEN}/stubs.c" PROPERTIES COMPILE_OPTIONS "-Wno-error;-w;-fno-builtin")
-target_link_options(sf33rdsxb_game PRIVATE -no-pie)
+target_link_options(sf33rdsxb_game PRIVATE -no-pie -rdynamic)
 # the port libraries twice: the decomp calls into them, and they into it
 target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB m)
 

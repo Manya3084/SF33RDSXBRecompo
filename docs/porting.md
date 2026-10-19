@@ -40,7 +40,7 @@ The memory manager is `src/game/memman.c`: the decomp's keeps two pointers in a 
 
 ## Debugging
 
-`SF_SHOT=FRAME:PATH` writes the output after that frame as a PPM (`SF_SHOT_SCREEN=1` the PS2-sized picture before its copy, `2` the layer drawn over it). `SF_DUMP_QUADS=FRAME` lists the frame's quads, `SF_DUMP_TEX=FRAME` writes its textures to the working directory. `SF_AUTOPRESS=F1,F2` holds Start for six frames from each. `SF_INPUT_DEBUG=1` prints pad changes. `SF_COUNTRY=1..4` picks the region (4, North America, by default).
+`SF_SHOT=FRAME:PATH` writes the output after that frame as a PPM (`SF_SHOT_SCREEN=1` the PS2-sized picture before its copy, `2` the layer drawn over it). `SF_DUMP_QUADS=FRAME` lists the frame's quads, `SF_DUMP_TEX=FRAME` writes its textures to the working directory. `SF_AUTOPRESS=F[:BUTTON],...` holds a button (Start by default) for six frames from each frame F. `SF_HEADLESS=1` runs with no window (Vulkan offscreen; with `SF_SHOT` for captures), `SF_NO_GAMEPADS=1` ignores real pads. Every session's inputs go to `data/last_session.input` (`SF_RECORD=PATH` elsewhere); `SF_REPLAY=PATH` plays a recording back, and the game follows it frame for frame. A crash writes its backtrace to `data/crash.log`. `SF_INPUT_DEBUG=1` prints pad changes. `SF_COUNTRY=1..4` picks the region (4, North America, by default).
 
 ## Frame
 
