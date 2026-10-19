@@ -45,9 +45,13 @@ void Irl_Scrn(void);
 void BGM_Server(void);
 s32 flSetRenderState(s32 state, u32 value);
 
+s32 flPADInitialize(void);
+
 void sf_game_init(void)
 {
     sf_video_init(640, 448);
+    /* retail's device setup ends with the pads */
+    flPADInitialize();
     flSetRenderState(0x14, 0);
     system_init_level = 0;
     ppgWorkInitializeApprication();

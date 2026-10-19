@@ -22,6 +22,33 @@ pkg_check_modules(LIBARCHIVE IMPORTED_TARGET libarchive)
 
 option(SF_USE_MIMALLOC "Use mimalloc for sf_alloc" OFF)
 
+# Shaders: GLSL compiled to SPIR-V at build time and kept as C arrays.
+find_program(GLSLC glslc REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(SF_GEN "${CMAKE_BINARY_DIR}/gen")
+set(SF_SHADER_HEADERS "")
+foreach(sh scene.vert scene.frag show.vert show.frag)
+    string(REPLACE "." "_" n "${sh}")
+    add_custom_command(OUTPUT "${SF_GEN}/render/${n}_spv.h"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SF_GEN}/render"
+        COMMAND ${GLSLC} --target-env=vulkan1.0 -O "${CMAKE_SOURCE_DIR}/shaders/${sh}" -o "${SF_GEN}/render/${n}.spv"
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/spv2h.py" "${SF_GEN}/render/${n}.spv"
+            "${SF_GEN}/render/${n}_spv.h" "sf_${n}_spv"
+        DEPENDS "${CMAKE_SOURCE_DIR}/shaders/${sh}" "${CMAKE_SOURCE_DIR}/tools/spv2h.py"
+        COMMENT "Shader ${sh}")
+    list(APPEND SF_SHADER_HEADERS "${SF_GEN}/render/${n}_spv.h")
+endforeach()
+
+add_library(sf_render STATIC
+    src/render/renderer.c
+    src/render/vulkan.c
+    src/render/gl.c
+    src/render/scene.c
+    ${SF_SHADER_HEADERS}
+)
+target_include_directories(sf_render PUBLIC src "${SF_GEN}")
+target_link_libraries(sf_render PUBLIC SDL3::SDL3 Vulkan::Vulkan OpenGL::GL)
+
 add_library(sf_import STATIC
     src/iso/xdvdfs.c
     src/iso/archive.c
@@ -52,14 +79,11 @@ add_executable(sf33rdsxb
     src/host/settings.c
     src/platform/input.c
     src/platform/audio.c
-    src/render/renderer.c
-    src/render/vulkan.c
-    src/render/gl.c
     src/render/nv2a.c
     src/ui/ui.c
 )
 target_include_directories(sf33rdsxb PRIVATE src)
-target_link_libraries(sf33rdsxb PRIVATE sf_import SDL3::SDL3 OpenAL::OpenAL Vulkan::Vulkan OpenGL::GL ZLIB::ZLIB m)
+target_link_libraries(sf33rdsxb PRIVATE sf_import sf_render SDL3::SDL3 OpenAL::OpenAL Vulkan::Vulkan OpenGL::GL ZLIB::ZLIB m)
 if(SF_USE_MIMALLOC)
     pkg_check_modules(MIMALLOC REQUIRED mimalloc)
     target_compile_definitions(sf33rdsxb PRIVATE SF_USE_MIMALLOC)

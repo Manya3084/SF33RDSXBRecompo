@@ -13,10 +13,19 @@ typedef struct SfCanvas {
 } SfCanvas;
 
 typedef struct SfRenderer SfRenderer;
+typedef struct SfDrawList SfDrawList;
 
 int sf_render_create(SfRenderer **out, SDL_Window *window, SfRendererKind kind, char *err, size_t err_n);
 void sf_render_destroy(SfRenderer *renderer);
 SfRendererKind sf_render_kind(const SfRenderer *renderer);
 int sf_render_present(SfRenderer *renderer, const SfCanvas *canvas, char *err, size_t err_n);
+
+/* The game's screen (render/draw.h). Vulkan only for now. */
+int sf_render_present_list(SfRenderer *renderer, const SfDrawList *list, char *err, size_t err_n);
+
+/* The game's 640x480 screen, RGBA. The first call asks for it with the
+ * next frame and returns 1; the call after that frame fills rgba and
+ * returns 0. -1 when there is no screen. */
+int sf_render_read_screen(SfRenderer *renderer, uint8_t *rgba);
 
 #endif

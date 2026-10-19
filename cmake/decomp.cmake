@@ -46,6 +46,11 @@ list(FILTER _src EXCLUDE REGEX "^src/sf33rd/Source/XBOX/")
 list(FILTER _src EXCLUDE REGEX "^src/cri/")
 list(FILTER _src EXCLUDE REGEX "^src/sf33rd/Source/Compress/zlib/")
 list(FILTER _src EXCLUDE REGEX "^src/sf33rd/Source/Compress/Lz77/")
+# zlibApp.c declares a 32-bit z_stream; src/port/zlib.c keeps its API
+list(REMOVE_ITEM _src "src/sf33rd/Source/Compress/zlibApp.c")
+# MemMan.c keeps two pointers in a cell header that must fit the 16-byte
+# unit; src/game/memman.c is the same heap with 32-bit links
+list(REMOVE_ITEM _src "src/sf33rd/Source/Common/MemMan.c")
 
 # A file listed in cmake/decomp-overlay.txt compiles from a copy in the
 # build tree: "patch PATH" applies cmake/decomp-overlay/<PATH with _>.patch,
@@ -96,7 +101,7 @@ set_target_properties(sf_decomp PROPERTIES C_STANDARD 17 C_EXTENSIONS ON POSITIO
 target_include_directories(sf_decomp PUBLIC "${SF_DECOMP_GEN}/include")
 # The decomp is C written to match retail code, not to pass -Wall; the
 # runtime's warnings stay on its own files.
-target_compile_options(sf_decomp PRIVATE
+target_compile_options(sf_decomp PRIVATE -g
     -w -Wno-error -fcommon -fno-strict-aliasing -fwrapv -fno-pie
     -Wno-incompatible-pointer-types -Wno-int-conversion -Wno-implicit-function-declaration
     -Wno-implicit-int -Wno-return-mismatch)
@@ -105,30 +110,39 @@ target_compile_options(sf_decomp PRIVATE
 # src/port. stubs.c is generated: one logging stub for each name the game
 # logic calls that src/port does not define yet, so the list of stubs is
 # the native work left. Linked non-PIE so addresses fit u32 words.
-add_library(sf_port STATIC
+# The native platform the game logic runs on. sf_gfx is the graphics
+# calls (tested on their own, tests/test_scene.c); sf_port the game's
+# frame and window.
+add_library(sf_gfx STATIC
     src/port/missing.c
     src/port/lowmem.c
-    src/port/frame.c
+    src/port/gfx.c
 )
-target_include_directories(sf_port PUBLIC src PRIVATE "${SF_DECOMP_GEN}/include")
-target_link_libraries(sf_port PUBLIC SDL3::SDL3)
+target_include_directories(sf_gfx PUBLIC src "${SF_DECOMP_GEN}/include")
+set_target_properties(sf_gfx PROPERTIES POSITION_INDEPENDENT_CODE OFF)
+target_compile_options(sf_gfx PRIVATE -fno-pie)
+
+add_library(sf_port STATIC
+    src/port/frame.c
+    src/port/video.c
+    src/port/system.c
+    src/port/zlib.c
+    src/port/files.c
+    src/port/input.c
+    src/host/paths.c
+    src/game/memman.c
+    src/mem/heap.c
+)
+target_link_libraries(sf_port PUBLIC ZLIB::ZLIB)
+target_link_libraries(sf_port PUBLIC sf_gfx sf_render)
 set_target_properties(sf_port PROPERTIES POSITION_INDEPENDENT_CODE OFF)
 target_compile_options(sf_port PRIVATE -fno-pie)
 
-# The decomp's fold aliases (names of merged bodies), read from its own
-# compiled objects when it has them.
-execute_process(COMMAND ${Python3_EXECUTABLE} "${SF_DECOMP_DIR}/tools/fold_aliases.py" --format ld
-    OUTPUT_FILE "${SF_DECOMP_GEN}/fold.txt" ERROR_QUIET)
-file(SIZE "${SF_DECOMP_GEN}/fold.txt" _fold_size)
-# (it exits non-zero over names whose body is Xbox Live code; the list is still whole)
-if(_fold_size EQUAL 0)
-    message(WARNING "fold_aliases.py failed; folded sub_ names will be stubs")
-endif()
 add_custom_command(OUTPUT "${SF_DECOMP_GEN}/stubs.c"
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py"
         --aliases "${SF_DECOMP_GEN}/fold.txt" "${SF_DECOMP_GEN}/stubs.c"
-        $<TARGET_FILE:sf_decomp> $<TARGET_FILE:sf_port>
-    DEPENDS sf_decomp sf_port "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" "${SF_DECOMP_GEN}/fold.txt"
+        $<TARGET_FILE:sf_decomp> $<TARGET_FILE:sf_port> $<TARGET_FILE:sf_gfx> $<TARGET_FILE:sf_render>
+    DEPENDS sf_decomp sf_port sf_gfx sf_render "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" "${SF_DECOMP_GEN}/fold.txt"
     COMMENT "Port stubs")
 
 add_executable(sf33rdsxb_game src/port/main.c "${SF_DECOMP_GEN}/stubs.c")
@@ -136,5 +150,21 @@ target_include_directories(sf33rdsxb_game PRIVATE src)
 target_compile_options(sf33rdsxb_game PRIVATE -fno-pie)
 set_source_files_properties("${SF_DECOMP_GEN}/stubs.c" PROPERTIES COMPILE_OPTIONS "-Wno-error;-w;-fno-builtin")
 target_link_options(sf33rdsxb_game PRIVATE -no-pie)
-# sf_port twice: the decomp calls into it, and stubs.c calls sf_port_missing.
-target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_decomp sf_port SDL3::SDL3 ZLIB::ZLIB m)
+# the port libraries twice: the decomp calls into them, and they into it
+target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB m)
+
+add_executable(test_scene tests/test_scene.c)
+target_link_libraries(test_scene PRIVATE sf_gfx sf_render)
+target_link_options(test_scene PRIVATE -no-pie)
+add_test(NAME scene COMMAND test_scene)
+set(_lvp "")
+foreach(f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json /usr/share/vulkan/icd.d/lvp_icd.json)
+    if(EXISTS "${f}" AND _lvp STREQUAL "")
+        set(_lvp "${f}")
+    endif()
+endforeach()
+# lavapipe when it is installed, so the test does not depend on the GPU
+if(_lvp)
+    set_tests_properties(scene PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${_lvp};VK_ICD_FILENAMES=${_lvp}")
+endif()
+set_tests_properties(scene PROPERTIES SKIP_RETURN_CODE 77)

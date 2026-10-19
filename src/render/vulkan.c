@@ -1,6 +1,7 @@
 #include "render/renderer_internal.h"
 
 #include "common.h"
+#include "render/scene.h"
 #include "render/ui_spv.h"
 
 #include <SDL3/SDL_vulkan.h>
@@ -220,6 +221,8 @@ void sf_vk_destroy(SfRenderer *r)
     if (r->device) {
         vkDeviceWaitIdle(r->device);
     }
+    sf_scene_destroy(r->scene);
+    r->scene = NULL;
     destroy_swapchain(r);
     if (r->device && r->pipeline) {
         vkDestroyPipeline(r->device, r->pipeline, NULL);
@@ -293,6 +296,7 @@ int sf_vk_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n)
     float priority = 1.f;
     VkDeviceQueueCreateInfo queue_info;
     VkDeviceCreateInfo device_info;
+    VkPhysicalDeviceFeatures features;
     const char *swap_ext = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     VkAttachmentDescription color;
     VkAttachmentReference ref;
@@ -420,6 +424,11 @@ int sf_vk_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n)
     device_info.pQueueCreateInfos = &queue_info;
     device_info.enabledExtensionCount = 1;
     device_info.ppEnabledExtensionNames = &swap_ext;
+    memset(&features, 0, sizeof features);
+    if (sf_scene_supported(r->physical)) {
+        sf_scene_features(&features);
+    }
+    device_info.pEnabledFeatures = &features;
     if (vkCreateDevice(r->physical, &device_info, NULL, &r->device) != VK_SUCCESS) {
         sf_set_err(err, err_n, "Vulkan device failed");
         sf_vk_destroy(r);
@@ -951,5 +960,123 @@ int sf_vk_present(SfRenderer *r, const SfCanvas *canvas, char *err, size_t err_n
         sf_set_err(err, err_n, "Vulkan present failed");
         return -1;
     }
+    return 0;
+}
+
+/* The game's screen: the scene draws the list offscreen, then shows it in
+ * the window's pass. The scene is made on the first call. */
+static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *list)
+{
+    VkCommandBufferBeginInfo begin;
+    VkRenderPassBeginInfo rp;
+    VkClearValue clear;
+    memset(&begin, 0, sizeof begin);
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(r->cmd, &begin) != VK_SUCCESS) {
+        return -1;
+    }
+    sf_scene_record(r->scene, r->cmd, list);
+    if (r->shot_pending) {
+        sf_scene_record_readback(r->scene, r->cmd);
+    }
+    memset(&clear, 0, sizeof clear);
+    clear.color.float32[3] = 1.f;
+    memset(&rp, 0, sizeof rp);
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = r->pass;
+    rp.framebuffer = r->frames[image_index];
+    rp.renderArea.extent = r->extent;
+    rp.clearValueCount = 1;
+    rp.pClearValues = &clear;
+    vkCmdBeginRenderPass(r->cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    sf_scene_record_show(r->scene, r->cmd, r->extent, list);
+    vkCmdEndRenderPass(r->cmd);
+    return vkEndCommandBuffer(r->cmd) == VK_SUCCESS ? 0 : -1;
+}
+
+int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t err_n)
+{
+    uint32_t image_index = 0;
+    VkResult ar;
+    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSubmitInfo submit;
+    VkPresentInfoKHR present;
+    if (!r->scene) {
+        if (!sf_scene_supported(r->physical)) {
+            sf_set_err(err, err_n, "this Vulkan device cannot index 256 textures in a shader");
+            return -1;
+        }
+        if (sf_scene_create(&r->scene, r->physical, r->device, r->pass, err, err_n) != 0) {
+            return -1;
+        }
+    }
+    if (vkWaitForFences(r->device, 1, &r->fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+        sf_set_err(err, err_n, "Vulkan fence wait failed");
+        return -1;
+    }
+    if (sf_scene_prepare(r->scene, list, err, err_n) != 0) {
+        return -1;
+    }
+    ar = vkAcquireNextImageKHR(r->device, r->swapchain, UINT64_MAX, r->image_ok, VK_NULL_HANDLE, &image_index);
+    if (ar == VK_ERROR_OUT_OF_DATE_KHR) {
+        vkDeviceWaitIdle(r->device);
+        destroy_swapchain(r);
+        return make_swapchain(r, err, err_n);
+    }
+    if (ar != VK_SUCCESS && ar != VK_SUBOPTIMAL_KHR) {
+        sf_set_err(err, err_n, "Vulkan acquire failed");
+        return -1;
+    }
+    vkResetFences(r->device, 1, &r->fence);
+    vkResetCommandBuffer(r->cmd, 0);
+    if (record_list(r, image_index, list) != 0) {
+        sf_set_err(err, err_n, "Vulkan record failed");
+        return -1;
+    }
+    memset(&submit, 0, sizeof submit);
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.waitSemaphoreCount = 1;
+    submit.pWaitSemaphores = &r->image_ok;
+    submit.pWaitDstStageMask = &wait_stage;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &r->cmd;
+    submit.signalSemaphoreCount = 1;
+    submit.pSignalSemaphores = &r->render_ok;
+    if (vkQueueSubmit(r->queue, 1, &submit, r->fence) != VK_SUCCESS) {
+        sf_set_err(err, err_n, "Vulkan submit failed");
+        return -1;
+    }
+    memset(&present, 0, sizeof present);
+    present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    present.waitSemaphoreCount = 1;
+    present.pWaitSemaphores = &r->render_ok;
+    present.swapchainCount = 1;
+    present.pSwapchains = &r->swapchain;
+    present.pImageIndices = &image_index;
+    ar = vkQueuePresentKHR(r->queue, &present);
+    if (ar == VK_ERROR_OUT_OF_DATE_KHR || ar == VK_SUBOPTIMAL_KHR) {
+        vkDeviceWaitIdle(r->device);
+        destroy_swapchain(r);
+        return make_swapchain(r, err, err_n);
+    }
+    if (ar != VK_SUCCESS) {
+        sf_set_err(err, err_n, "Vulkan present failed");
+        return -1;
+    }
+    return 0;
+}
+
+int sf_vk_read_screen(SfRenderer *r, uint8_t *rgba)
+{
+    if (!r->scene) {
+        return -1;
+    }
+    if (!r->shot_pending) {
+        r->shot_pending = 1;
+        return 1;
+    }
+    vkWaitForFences(r->device, 1, &r->fence, VK_TRUE, UINT64_MAX);
+    sf_scene_read(r->scene, rgba);
+    r->shot_pending = 0;
     return 0;
 }
