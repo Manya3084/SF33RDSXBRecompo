@@ -1,4 +1,5 @@
 #include "game/adx.h"
+#include "game/aix.h"
 #include "game/fs.h"
 #include "game/tracks.h"
 #include "game/xwb.h"
@@ -254,6 +255,90 @@ static void fill_bank(uint8_t *b, size_t n)
     b[0xAA] = 0x12;
 }
 
+static void put_aix_packet(uint8_t *p, unsigned len, const uint8_t *payload)
+{
+    put_be32(p, 0x41495850u);
+    put_be32(p + 4, len + 8u);
+    p[8] = 0;
+    p[9] = 1;
+    put_be16(p + 10, len);
+    put_be32(p + 12, 0);
+    memcpy(p + 16, payload, len);
+}
+
+static void test_aix_wrap(void)
+{
+    uint8_t adx[0x14 + 18];
+    uint8_t file[16 + 16 + 0x14 + 18];
+    SfAdx bare;
+    SfAix aix;
+    char err[64];
+    memset(adx, 0, sizeof adx);
+    fill_hdr(adx, 32, 3, 0);
+    adx[0x16] = 0x10;
+    memset(file, 0, sizeof file);
+    put_be32(file, 0x41495846u);
+    put_be32(file + 4, 8);
+    memcpy(file + 10, "(c)CRI", 6);
+    put_aix_packet(file + 16, sizeof adx, adx);
+    memset(&bare, 0, sizeof bare);
+    memset(&aix, 0, sizeof aix);
+    err[0] = 0;
+    expect(sf_adx_decode(adx, sizeof adx, &bare, err, sizeof err) == 0, "the wrapped ADX decodes on its own");
+    expect(sf_aix_decode(file, sizeof file, &aix, err, sizeof err) == 0, "the AIX container decodes");
+    expect(aix.channels == bare.channels && aix.rate == bare.rate && aix.total == bare.total && aix.pcm != NULL && bare.pcm != NULL, "the container matches the ADX");
+    if (aix.pcm && bare.pcm && aix.total == bare.total && aix.total > 0) {
+        expect(memcmp(aix.pcm, bare.pcm, (size_t)aix.total * (size_t)aix.channels * sizeof(int16_t)) == 0, "the container samples match the ADX");
+    }
+    sf_aix_free(&aix);
+    file[0] = 0;
+    expect(sf_aix_decode(file, sizeof file, &aix, err, sizeof err) != 0 && strstr(err, "aix header") != NULL, "a file without AIXF is refused");
+    sf_adx_free(&bare);
+    sf_aix_free(&aix);
+}
+
+static void test_opening_aix(void)
+{
+    FILE *fp;
+    uint8_t *file;
+    long n;
+    SfAix aix;
+    char err[128];
+    fp = fopen("data/audio/ST3_3_OP.aix", "rb");
+    if (!fp) {
+        printf("skip ST3_3_OP.aix (not imported)\n");
+        return;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        expect(0, "ST3_3_OP.aix sizes");
+        return;
+    }
+    n = ftell(fp);
+    if (n != 5687296 || fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        expect(0, "ST3_3_OP.aix is 5687296 bytes");
+        return;
+    }
+    file = sf_alloc((size_t)n);
+    if (!file || fread(file, 1, (size_t)n, fp) != (size_t)n) {
+        sf_free(file);
+        fclose(fp);
+        expect(0, "ST3_3_OP.aix reads");
+        return;
+    }
+    fclose(fp);
+    memset(&aix, 0, sizeof aix);
+    err[0] = 0;
+    expect(sf_aix_decode(file, (uint32_t)n, &aix, err, sizeof err) == 0, "ST3_3_OP.aix decodes");
+    expect(aix.channels == 2 && aix.rate == 48000 && aix.total == 1673218 && aix.loop == 0 && aix.pcm != NULL, "the opening theme is stereo 48000 with 1673218 samples");
+    if (aix.pcm && aix.channels == 2 && aix.total > 8000) {
+        expect(aix.pcm[16000] == 14326 && aix.pcm[16001] == 13549, "opening sample 8000 is 14326, 13549");
+    }
+    sf_aix_free(&aix);
+    sf_free(file);
+}
+
 static void test_names(void)
 {
     expect(sf_track_is_full("o01_A_NYC.adx") == 1, "o01_A_NYC.adx is a full mix");
@@ -360,6 +445,8 @@ int main(void)
     test_nyc();
     test_loop3();
     test_match_nyc();
+    test_aix_wrap();
+    test_opening_aix();
     test_names();
     test_bank();
     test_list();

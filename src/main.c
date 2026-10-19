@@ -1,5 +1,6 @@
 #include "common.h"
 #include "game/adx.h"
+#include "game/aix.h"
 #include "game/fs.h"
 #include "game/tracks.h"
 #include "game/xwb.h"
@@ -379,6 +380,67 @@ static void play_effect(App *app, int slot)
     }
 }
 
+static int read_whole(const char *path, uint8_t **out, uint32_t *size)
+{
+    FILE *fp;
+    long n;
+    uint8_t *data;
+    fp = fopen(path, "rb");
+    if (!fp) {
+        return -1;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return -1;
+    }
+    n = ftell(fp);
+    if (n <= 0 || (unsigned long)n > 32ul * 1024ul * 1024ul || fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return -1;
+    }
+    data = sf_alloc((size_t)n);
+    if (!data || fread(data, 1, (size_t)n, fp) != (size_t)n) {
+        sf_free(data);
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    *out = data;
+    *size = (uint32_t)n;
+    return 0;
+}
+
+static int play_opening(App *app)
+{
+    char path[8192];
+    uint8_t *file;
+    uint32_t size;
+    SfAix aix;
+    char err[256];
+    if (sf_join(path, sizeof path, app->install, "data/audio/ST3_3_OP.aix") != 0) {
+        return -1;
+    }
+    file = NULL;
+    size = 0;
+    if (read_whole(path, &file, &size) != 0) {
+        return -1;
+    }
+    memset(&aix, 0, sizeof aix);
+    err[0] = 0;
+    if (sf_aix_decode(file, size, &aix, err, sizeof err) != 0 || sf_audio_play(aix.pcm, aix.total, aix.rate, aix.channels, aix.loop, aix.loop_start, aix.loop_end) != 0) {
+        fprintf(stderr, "%s\n", err[0] ? err : "the opening theme did not play");
+        sf_free(file);
+        sf_aix_free(&aix);
+        return -1;
+    }
+    sf_free(file);
+    sf_aix_free(&aix);
+    app->track_index = -1;
+    snprintf(app->track_label, sizeof app->track_label, "ST3_3_OP.aix");
+    app->ui.track = app->track_label;
+    return 0;
+}
+
 static void load_bgm(App *app)
 {
     char err[256];
@@ -389,7 +451,9 @@ static void load_bgm(App *app)
         return;
     }
     load_effects(app);
-    play_track(app, track_named(app, "o01_A_NYC.adx"));
+    if (play_opening(app) != 0) {
+        play_track(app, track_named(app, "o01_A_NYC.adx"));
+    }
 }
 
 static void load_title(App *app)
