@@ -9,15 +9,19 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
-#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <spawn.h>
+#include <sys/wait.h>
 
 extern char **environ;
+#endif
 
 static int ends_ci(const char *s, const char *suf)
 {
@@ -174,6 +178,19 @@ static int has_cvs(const char *rel)
 
 static int run_convert(const char *tool, const char *src, const char *dst)
 {
+#ifdef _WIN32
+    /* Windows: python, if it is on the PATH */
+    const char *argv[6];
+    intptr_t rc;
+    argv[0] = "python";
+    argv[1] = tool;
+    argv[2] = src;
+    argv[3] = "-o";
+    argv[4] = dst;
+    argv[5] = NULL;
+    rc = _spawnvp(_P_WAIT, "python", argv);
+    return rc == 0 ? 0 : -1;
+#else
     char *argv[6];
     pid_t pid;
     int status = 0;
@@ -200,6 +217,7 @@ static int run_convert(const char *tool, const char *src, const char *dst)
         return -1;
     }
     return 0;
+#endif
 }
 
 static int convert_dir(const char *dir, const char *rel, const char *spirv_root, const char *tool, SfExtractResult *result)

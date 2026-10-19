@@ -93,6 +93,9 @@ if(SF_USE_MIMALLOC)
     target_link_libraries(sf33rdsxb PRIVATE ${MIMALLOC_LIBRARIES})
 endif()
 
+# The tests run where they are built (they spawn tools and write temp
+# trees the POSIX way); a cross build for Windows leaves them out.
+if(NOT WIN32)
 add_executable(test_import tests/test_import.c)
 target_include_directories(test_import PRIVATE src)
 target_link_libraries(test_import PRIVATE sf_import)
@@ -120,5 +123,6 @@ add_test(NAME shaders COMMAND test_shaders)
 add_test(NAME frame COMMAND test_frame)
 add_test(NAME picture COMMAND test_picture)
 add_test(NAME adx COMMAND test_adx)
+endif()
 
 include(cmake/decomp.cmake)

@@ -5,6 +5,7 @@
  * (sf_display_text); config/display.txt keeps them. */
 
 #include "host/paths.h"
+#include "host/compat.h"
 #include "port/port.h"
 
 #include <SDL3/SDL.h>

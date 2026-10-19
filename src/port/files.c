@@ -7,6 +7,7 @@
  * on through the sectors after the member, as a sector read from the disc
  * does. */
 
+#include "host/compat.h"
 #include "host/paths.h"
 #include "port/port.h"
 
@@ -58,7 +59,7 @@ s32 ADXF_LoadPartitionNw(s32 ptid, const char *fname, void *dir, void *ptinfo)
         return -1;
     }
     snprintf(path, sizeof path, "%s/data/afs/SF33RDXB.AFS", base);
-    s_fd = open(path, O_RDONLY);
+    s_fd = open(path, O_RDONLY | O_BINARY);
     if (s_fd < 0 || pread(s_fd, head, sizeof head, 0) != (ssize_t)sizeof head || memcmp(head, "AFS", 4) != 0) {
         fprintf(stderr, "files: %s is not the imported archive\n", path);
         s_pt_stat = ADXF_STAT_ERROR;

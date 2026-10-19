@@ -12,6 +12,7 @@
  *   in config/keyboard.txt. While it is open the game sees nothing
  *   pressed, so a session recording stays a faithful replay. */
 
+#include "host/compat.h"
 #include "port/port.h"
 
 #include "types.h"

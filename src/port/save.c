@@ -18,6 +18,7 @@
  * build lays it out. */
 
 #include "host/paths.h"
+#include "host/compat.h"
 #include "port/port.h"
 
 #include "types.h"

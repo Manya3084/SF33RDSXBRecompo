@@ -58,6 +58,27 @@ int sf_vk_shader_spirv(VkDevice device, const void *bytes, size_t size, VkShader
     return 0;
 }
 
+/* The GL calls past 1.1, through SDL: Windows' opengl32 exports only 1.1. */
+static PFNGLCREATESHADERPROC p_glCreateShader;
+static PFNGLSHADERBINARYPROC p_glShaderBinary;
+static PFNGLGETSHADERIVPROC p_glGetShaderiv;
+static PFNGLGETSHADERINFOLOGPROC p_glGetShaderInfoLog;
+static PFNGLDELETESHADERPROC p_glDeleteShader;
+static PFNGLCLIPCONTROLPROC p_glClipControl;
+
+static void load_gl(void)
+{
+    if (p_glCreateShader) {
+        return;
+    }
+    p_glCreateShader = (PFNGLCREATESHADERPROC)SDL_GL_GetProcAddress("glCreateShader");
+    p_glShaderBinary = (PFNGLSHADERBINARYPROC)SDL_GL_GetProcAddress("glShaderBinary");
+    p_glGetShaderiv = (PFNGLGETSHADERIVPROC)SDL_GL_GetProcAddress("glGetShaderiv");
+    p_glGetShaderInfoLog = (PFNGLGETSHADERINFOLOGPROC)SDL_GL_GetProcAddress("glGetShaderInfoLog");
+    p_glDeleteShader = (PFNGLDELETESHADERPROC)SDL_GL_GetProcAddress("glDeleteShader");
+    p_glClipControl = (PFNGLCLIPCONTROLPROC)SDL_GL_GetProcAddress("glClipControl");
+}
+
 int sf_gl_shader_spirv(GLenum stage, const void *bytes, size_t size, GLuint *shader, char *err, size_t err_n)
 {
     PFNGLSPECIALIZESHADERPROC specialize;
@@ -79,28 +100,30 @@ int sf_gl_shader_spirv(GLenum stage, const void *bytes, size_t size, GLuint *sha
     if (!specialize) {
         specialize = (PFNGLSPECIALIZESHADERPROC)SDL_GL_GetProcAddress("glSpecializeShaderARB");
     }
-    if (!specialize) {
+    load_gl();
+    if (!specialize || !p_glCreateShader || !p_glShaderBinary || !p_glGetShaderiv || !p_glGetShaderInfoLog ||
+        !p_glDeleteShader) {
         sf_set_err(err, err_n, "this OpenGL context cannot load SPIR-V");
         return -1;
     }
-    id = glCreateShader(stage);
+    id = p_glCreateShader(stage);
     if (!id) {
         sf_set_err(err, err_n, "OpenGL shader object failed");
         return -1;
     }
-    glShaderBinary(1, &id, GL_SHADER_BINARY_FORMAT_SPIR_V, bytes, (GLsizei)size);
+    p_glShaderBinary(1, &id, GL_SHADER_BINARY_FORMAT_SPIR_V, bytes, (GLsizei)size);
     specialize(id, "main", 0, NULL, NULL);
-    glGetShaderiv(id, SF_GL_COMPILE_STATUS, &status);
+    p_glGetShaderiv(id, SF_GL_COMPILE_STATUS, &status);
     if (!status) {
         char log[1024];
         GLsizei len = 0;
-        glGetShaderInfoLog(id, (GLsizei)sizeof log, &len, log);
+        p_glGetShaderInfoLog(id, (GLsizei)sizeof log, &len, log);
         if (len < 0) {
             len = 0;
         }
         log[len < (GLsizei)sizeof log ? len : (GLsizei)sizeof log - 1] = 0;
         sf_set_err(err, err_n, "OpenGL rejected the SPIR-V module%s%s", log[0] ? ": " : "", log);
-        glDeleteShader(id);
+        p_glDeleteShader(id);
         return -1;
     }
     *shader = id;
@@ -109,10 +132,16 @@ int sf_gl_shader_spirv(GLenum stage, const void *bytes, size_t size, GLuint *sha
 
 void sf_gl_clip_canvas(void)
 {
-    glClipControl(SF_GL_LOWER_LEFT, SF_GL_NEGATIVE_ONE_TO_ONE);
+    load_gl();
+    if (p_glClipControl) {
+        p_glClipControl(SF_GL_LOWER_LEFT, SF_GL_NEGATIVE_ONE_TO_ONE);
+    }
 }
 
 void sf_gl_clip_nv2a(void)
 {
-    glClipControl(SF_GL_UPPER_LEFT, SF_GL_ZERO_TO_ONE);
+    load_gl();
+    if (p_glClipControl) {
+        p_glClipControl(SF_GL_UPPER_LEFT, SF_GL_ZERO_TO_ONE);
+    }
 }

@@ -21,6 +21,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+/* PE has no __start_/__stop_ section bounds: the snapshot is Linux-only
+ * for now, and on Windows it is empty. */
+static char __data_start[1], _end[1];
+static char __start_sfport_data[1], __stop_sfport_data[1], __start_sfport_bss[1], __stop_sfport_bss[1];
+static char __start_sfkeep[1], __stop_sfkeep[1];
+#else
 extern char __data_start[];
 extern char _end[];
 extern char __start_sfport_data[];
@@ -29,6 +36,7 @@ extern char __start_sfport_bss[];
 extern char __stop_sfport_bss[];
 extern char __start_sfkeep[];
 extern char __stop_sfkeep[];
+#endif
 
 void sf_low_extent(uint8_t **base, size_t *used);
 
@@ -69,6 +77,17 @@ static void regions(void)
     size_t used;
     int k;
     s_reg_n = 0;
+#ifdef _WIN32
+    (void)cut;
+    (void)ncut;
+    (void)at;
+    (void)end;
+    (void)arena;
+    (void)used;
+    (void)k;
+    (void)all;
+    return;
+#endif
     if (all < 0) {
         all = getenv("SF_ROLLBACK_ALL") != NULL;
     }

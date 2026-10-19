@@ -19,6 +19,12 @@ the merged body) is not a stub: it jumps to the body's own name, so the
 arguments pass through untouched.
 
     gen_stubs.py [--aliases FOLD.txt] OUT.c ARCHIVE...
+
+For Windows (a MinGW-w64 cross build), --coff with --nm and --objdump
+naming that toolchain's tools, and --host for each import library whose
+names the system gives (in place of the Linux shared libraries). COFF
+gives calls and data references the same relocation, so there a name is
+a function when every instruction that refers to it is a call or a jump.
 """
 
 from __future__ import annotations
@@ -27,11 +33,13 @@ import re
 import subprocess
 import sys
 
+NM = "nm"
+OBJDUMP = "objdump"
 HOST_LIBS = ["libc.so.6", "libm.so.6", "libz.so.1", "libSDL3.so.0", "libvulkan.so.1", "libGL.so.1", "libopenal.so.1"]
 
 
 def syms(path: str, dynamic: bool = False) -> tuple[set[str], set[str]]:
-    args = ["nm", "-D", "--defined-only", path] if dynamic else ["nm", path]
+    args = [NM, "-D", "--defined-only", path] if dynamic else [NM, path]
     out = subprocess.run(args, capture_output=True, text=True).stdout
     d, u = set(), set()
     for line in out.splitlines():
@@ -47,13 +55,31 @@ def call_only(archives: list[str]) -> set[str]:
     """Names whose every relocation is R_X86_64_PLT32."""
     kinds: dict[str, set[str]] = {}
     for a in archives:
-        out = subprocess.run(["objdump", "-r", a], capture_output=True, text=True).stdout
+        out = subprocess.run([OBJDUMP, "-r", a], capture_output=True, text=True).stdout
         for line in out.splitlines():
             p = line.split()
             if len(p) == 3 and p[1].startswith("R_X86_64_"):
                 n = re.split(r"[-+]0x", p[2])[0]
                 kinds.setdefault(n, set()).add(p[1])
     return {n for n, k in kinds.items() if k == {"R_X86_64_PLT32"}}
+
+
+def call_only_coff(archives: list[str]) -> set[str]:
+    """Names every instruction refers to by a call or a jump (COFF)."""
+    kinds: dict[str, set[bool]] = {}
+    for a in archives:
+        out = subprocess.run([OBJDUMP, "-dr", a], capture_output=True, text=True).stdout
+        last = ""
+        for line in out.splitlines():
+            m = re.match(r"\s+[0-9a-f]+:\s+IMAGE_REL_AMD64_\w+\s+(\S+)", line)
+            if m:
+                n = re.split(r"[-+]0x", m[1])[0]
+                kinds.setdefault(n, set()).add(last.split()[0].startswith(("call", "jmp")) if last.split() else False)
+                continue
+            m = re.match(r"\s+[0-9a-f]+:\t(?:[0-9a-f]{2} )+\s*\t(.*)", line)
+            if m:
+                last = m[1]
+    return {n for n, k in kinds.items() if k == {True}}
 
 
 def host_lib(name: str) -> str | None:
@@ -71,13 +97,27 @@ def host_lib(name: str) -> str | None:
 
 
 def main() -> int:
+    global NM, OBJDUMP
     args = sys.argv[1:]
     aliases: dict[str, str] = {}
-    if args[0] == "--aliases":
-        for line in open(args[1]):
-            m = re.fullmatch(r"--defsym=(\w+)=(\w+)\s*", line)
-            if m:
-                aliases[m[1]] = m[2]
+    coff = False
+    hosts: list[str] = []
+    while args and args[0].startswith("--"):
+        if args[0] == "--aliases":
+            for line in open(args[1]):
+                m = re.fullmatch(r"--defsym=(\w+)=(\w+)\s*", line)
+                if m:
+                    aliases[m[1]] = m[2]
+        elif args[0] == "--nm":
+            NM = args[1]
+        elif args[0] == "--objdump":
+            OBJDUMP = args[1]
+        elif args[0] == "--host":
+            hosts.append(args[1])
+        elif args[0] == "--coff":
+            coff = True
+            args = args[1:]
+            continue
         args = args[2:]
     out, archives = args[0], args[1:]
     defined, undef = set(), set()
@@ -86,10 +126,16 @@ def main() -> int:
         defined |= d
         undef |= u
     host = set()
-    for lib in HOST_LIBS:
-        p = host_lib(lib)
-        if p:
-            host |= syms(p, dynamic=True)[0]
+    if hosts:
+        for p in hosts:
+            d = syms(p)[0]
+            # an import library defines NAME and __imp_NAME
+            host |= d | {n[6:] for n in d if n.startswith("__imp_")}
+    else:
+        for lib in HOST_LIBS:
+            p = host_lib(lib)
+            if p:
+                host |= syms(p, dynamic=True)[0]
     # names the linker itself provides: the section bounds the game-state
     # snapshot reads (src/port/state.c)
     linker = {"__data_start", "_edata", "__bss_start", "_end"}
@@ -107,11 +153,12 @@ def main() -> int:
         'void sf_port_missing(const char *name);',
         "",
     ]
-    funcs = call_only(archives)
+    funcs = call_only_coff(archives) if coff else call_only(archives)
     for n in need:
         if n in aliases:
             t = aliases[n]
-            lines.append(f'__asm__(".text\\n.globl {n}\\n.type {n}, @function\\n{n}:\\n    jmp {t}\\n");')
+            kind = "" if coff else f"\\n.type {n}, @function"
+            lines.append(f'__asm__(".text\\n.globl {n}{kind}\\n{n}:\\n    jmp {t}\\n");')
         elif n not in funcs:
             lines.append(f"__attribute__((aligned(16))) unsigned char {n}[65536];")
         else:

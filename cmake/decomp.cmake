@@ -22,13 +22,15 @@ message(STATUS "3s-decomp-ogxb: ${SF_DECOMP_DIR}")
 
 set(SF_DECOMP_GEN "${CMAKE_BINARY_DIR}/decomp")
 
-# include/, with LP64 sizes.
+# include/, with 64-bit sizes.
 file(GLOB_RECURSE _inc RELATIVE "${SF_DECOMP_DIR}/include" "${SF_DECOMP_DIR}/include/*.h")
 foreach(h IN LISTS _inc)
     configure_file("${SF_DECOMP_DIR}/include/${h}" "${SF_DECOMP_GEN}/include/${h}" COPYONLY)
 endforeach()
 file(READ "${SF_DECOMP_GEN}/include/types.h" _types)
-set(_lp64 "typedef long intptr_t;\ntypedef unsigned long uintptr_t;\ntypedef unsigned long size_t;\ntypedef long ssize_t;")
+# the compiler's own pointer-sized types: long on Linux (LP64), long long
+# on Windows (LLP64)
+set(_lp64 "typedef __INTPTR_TYPE__ intptr_t;\ntypedef __UINTPTR_TYPE__ uintptr_t;\ntypedef __SIZE_TYPE__ size_t;\ntypedef __PTRDIFF_TYPE__ ssize_t;")
 string(REPLACE "typedef s32 intptr_t;\ntypedef u32 uintptr_t;\ntypedef u32 size_t;\ntypedef s32 ssize_t;" "${_lp64}" _types64 "${_types}")
 if(_types64 STREQUAL _types)
     message(FATAL_ERROR "decomp include/types.h: the 32-bit size typedefs moved; update cmake/decomp.cmake")
@@ -154,15 +156,47 @@ target_compile_options(sf_port PRIVATE -fno-pie)
 # are not the game's state: their sections are renamed so the linker marks
 # them (__start_sfport_data and the rest) and a game-state snapshot
 # (src/port/state.c) leaves them out.
-find_program(SF_OBJCOPY NAMES objcopy REQUIRED)
+if(WIN32)
+    find_program(SF_OBJCOPY NAMES x86_64-w64-mingw32-objcopy REQUIRED)
+else()
+    find_program(SF_OBJCOPY NAMES objcopy REQUIRED)
+endif()
 foreach(_lib sf_port sf_gfx sf_render)
     add_custom_command(TARGET ${_lib} POST_BUILD
         COMMAND ${SF_OBJCOPY} --rename-section .data=sfport_data --rename-section .bss=sfport_bss $<TARGET_FILE:${_lib}>
         COMMENT "Port state sections in ${_lib}")
 endforeach()
 
+# Windows: the MinGW tools, and the import libraries whose names the
+# system gives (the C runtime, kernel32, OpenGL, and the DLLs it ships with)
+set(_stub_win "")
+if(WIN32)
+    set(_stub_win --coff --nm x86_64-w64-mingw32-nm --objdump x86_64-w64-mingw32-objdump)
+    foreach(_l libmsvcrt.a libmingwex.a libmingw32.a libmoldname.a libkernel32.a libuser32.a libopengl32.a libgcc.a)
+        execute_process(COMMAND ${CMAKE_C_COMPILER} -print-file-name=${_l} OUTPUT_VARIABLE _p OUTPUT_STRIP_TRAILING_WHITESPACE)
+        list(APPEND _stub_win --host "${_p}")
+    endforeach()
+    foreach(_l libSDL3.dll.a libvulkan-1.dll.a libopenal.dll.a libz.dll.a)
+        list(APPEND _stub_win --host "${SF_WIN_SYSROOT}/lib/${_l}")
+    endforeach()
+endif()
+
+# The aliases for calls to the bodies retail's linker folded, from the
+# port's own archives and the decomp's symbol lists (no Xbox build needed)
+if(WIN32)
+    set(_fold_nm --nm x86_64-w64-mingw32-nm)
+else()
+    set(_fold_nm "")
+endif()
+add_custom_command(OUTPUT "${SF_DECOMP_GEN}/fold.txt"
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/fold_aliases.py" ${_fold_nm} "${SF_DECOMP_DIR}"
+        "${SF_DECOMP_GEN}/fold.txt" $<TARGET_FILE:sf_decomp> $<TARGET_FILE:sf_port> $<TARGET_FILE:sf_gfx>
+        $<TARGET_FILE:sf_render>
+    DEPENDS sf_decomp sf_port sf_gfx sf_render "${CMAKE_SOURCE_DIR}/tools/fold_aliases.py"
+    COMMENT "Folded-body aliases")
+
 add_custom_command(OUTPUT "${SF_DECOMP_GEN}/stubs.c"
-    COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py"
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" ${_stub_win}
         --aliases "${SF_DECOMP_GEN}/fold.txt" "${SF_DECOMP_GEN}/stubs.c"
         $<TARGET_FILE:sf_decomp> $<TARGET_FILE:sf_port> $<TARGET_FILE:sf_gfx> $<TARGET_FILE:sf_render>
     DEPENDS sf_decomp sf_port sf_gfx sf_render "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" "${SF_DECOMP_GEN}/fold.txt"
@@ -172,10 +206,21 @@ add_executable(sf33rdsxb_game src/port/main.c src/host/paths.c "${SF_DECOMP_GEN}
 target_include_directories(sf33rdsxb_game PRIVATE src)
 target_compile_options(sf33rdsxb_game PRIVATE -fno-pie)
 set_source_files_properties("${SF_DECOMP_GEN}/stubs.c" PROPERTIES COMPILE_OPTIONS "-Wno-error;-w;-fno-builtin")
-target_link_options(sf33rdsxb_game PRIVATE -no-pie -rdynamic -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
-# the port libraries twice: the decomp calls into them, and they into it
-target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB m)
+if(WIN32)
+    # The game keeps addresses in 32-bit words: the image at 4 MB, not
+    # moved (no ASLR, no high-entropy addresses), so its code and globals
+    # sit low as on Linux; the heap is the low arena (src/port/lowmem.c).
+    # A Windows program with no console.
+    target_link_options(sf33rdsxb_game PRIVATE -mwindows -static-libgcc -Wl,--image-base=0x400000
+        -Wl,--disable-dynamicbase -Wl,--disable-high-entropy-va -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
+    target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB)
+else()
+    target_link_options(sf33rdsxb_game PRIVATE -no-pie -rdynamic -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
+    # the port libraries twice: the decomp calls into them, and they into it
+    target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB m)
+endif()
 
+if(NOT WIN32)
 add_executable(test_scene tests/test_scene.c)
 target_link_libraries(test_scene PRIVATE sf_gfx sf_render)
 target_link_options(test_scene PRIVATE -no-pie)
@@ -191,3 +236,4 @@ if(_lvp)
     set_tests_properties(scene PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${_lvp};VK_ICD_FILENAMES=${_lvp}")
 endif()
 set_tests_properties(scene PROPERTIES SKIP_RETURN_CODE 77)
+endif()

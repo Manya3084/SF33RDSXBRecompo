@@ -4,6 +4,7 @@
 #include "render/renderer.h"
 
 #include <GL/gl.h>
+#include <GL/glext.h> /* Mesa's gl.h includes it; MinGW's does not */
 #include <vulkan/vulkan.h>
 
 typedef struct SfScene SfScene;

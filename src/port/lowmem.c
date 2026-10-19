@@ -2,7 +2,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/mman.h>
+#endif
 
 /* One arena in the low 2 GB (MAP_32BIT), carved front to back. The Xbox
  * game sizes its own heaps at start-up and never returns them, so a bump
@@ -17,12 +21,25 @@ void *sf_low_alloc(size_t size, size_t align)
 {
     size_t at;
     if (!s_base) {
+#ifdef _WIN32
+        /* Windows has no MAP_32BIT: the first free range from 256 MB up,
+         * below 2 GB, reserved and committed (pages are given on use) */
+        uintptr_t at;
+        for (at = 0x10000000u; !s_base && at + SF_LOW_ARENA <= 0x80000000u; at += 0x1000000u) {
+            s_base = VirtualAlloc((void *)at, SF_LOW_ARENA, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        }
+        if (!s_base) {
+            fprintf(stderr, "port: low arena: no %u MB free below 2 GB\n", SF_LOW_ARENA >> 20);
+            abort();
+        }
+#else
         void *p = mmap(NULL, SF_LOW_ARENA, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT | MAP_NORESERVE, -1, 0);
         if (p == MAP_FAILED) {
             perror("port: low arena");
             abort();
         }
         s_base = p;
+#endif
     }
     if (align < 16) {
         align = 16;

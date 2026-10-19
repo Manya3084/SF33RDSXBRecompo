@@ -169,7 +169,7 @@ SfXdvdfs *sf_xdvdfs_open(const char *path, char *err, size_t err_n)
     off_t end;
     const size_t cap = (1u << 20) + (MAGIC_LEN - 1);
 
-    fd = open(path, O_RDONLY);
+    fd = open(path, O_RDONLY | O_BINARY);
     if (fd < 0) {
         sf_set_err(err, err_n, "cannot open %s", path);
         return NULL;

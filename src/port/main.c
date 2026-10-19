@@ -1,10 +1,13 @@
 /* The native entry. The game itself starts in sf_game_init. */
 
+#include "host/compat.h"
 #include "port/port.h"
 
 #include <SDL3/SDL.h>
 
+#ifndef _WIN32
 #include <execinfo.h>
+#endif
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,17 +21,23 @@ static char s_crash_path[4096 + 32];
 
 static void on_crash(int sig)
 {
+#ifndef _WIN32
     void *frames[64];
     int n = backtrace(frames, 64);
+#endif
     char head[128];
     int fd;
     int len = snprintf(head, sizeof head, "crash: signal %d (%s) at game frame %d\n", sig, strsignal(sig), sf_port_frame);
     (void)!write(2, head, (size_t)len);
+#ifndef _WIN32
     backtrace_symbols_fd(frames, n, 2);
-    fd = open(s_crash_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+#endif
+    fd = open(s_crash_path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0644);
     if (fd >= 0) {
         (void)!write(fd, head, (size_t)len);
+#ifndef _WIN32
         backtrace_symbols_fd(frames, n, fd);
+#endif
         close(fd);
     }
     signal(sig, SIG_DFL);
@@ -45,7 +54,9 @@ static void crash_handler(void)
     signal(SIGABRT, on_crash);
     signal(SIGFPE, on_crash);
     signal(SIGILL, on_crash);
+#ifdef SIGBUS
     signal(SIGBUS, on_crash);
+#endif
 }
 
 int main(int argc, char **argv)

@@ -16,6 +16,7 @@
  * Start, Backspace Back. */
 
 #include "host/paths.h"
+#include "host/compat.h"
 #include "port/port.h"
 
 #include "types.h"

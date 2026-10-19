@@ -1,0 +1,47 @@
+#ifndef SF_HOST_COMPAT_H
+#define SF_HOST_COMPAT_H
+
+/* The few POSIX calls the runtime uses that Windows (MinGW-w64) spells
+ * differently or lacks. On Linux this is empty. */
+
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+#ifndef O_BINARY
+#define O_BINARY 0 /* POSIX opens are binary already */
+#endif
+
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#include <stdlib.h>
+
+#define mkdir(path, mode) _mkdir(path)
+#define realpath(path, resolved) _fullpath((resolved), (path), 4096)
+#define lstat stat
+#define S_ISLNK(m) 0
+
+/* pread: a seek and a read, as the callers read one file at a time */
+static inline long sf_pread(int fd, void *buf, size_t n, long long off)
+{
+    if (_lseeki64(fd, off, SEEK_SET) < 0) {
+        return -1;
+    }
+    return _read(fd, buf, (unsigned)n);
+}
+#define pread(fd, buf, n, off) sf_pread((fd), (buf), (n), (long long)(off))
+
+#include <time.h>
+/* the signal's number: Windows has no strsignal */
+#define strsignal(sig) "signal"
+
+static inline struct tm *sf_localtime_r(const time_t *t, struct tm *out)
+{
+    return localtime_s(out, t) == 0 ? out : NULL;
+}
+#define localtime_r(t, tm) sf_localtime_r((t), (tm))
+#endif
+
+#endif

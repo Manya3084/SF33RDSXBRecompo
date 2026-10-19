@@ -1,6 +1,8 @@
 #ifndef SF_COMMON_H
 #define SF_COMMON_H
 
+#include "host/compat.h"
+
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
