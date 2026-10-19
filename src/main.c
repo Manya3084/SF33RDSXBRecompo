@@ -57,6 +57,7 @@ typedef struct App {
     int opening_h;
     uint8_t *sketch;
     uint8_t *slogan;
+    uint8_t *next;
     uint8_t *pieces;
     SfOpening beat;
     SfTrack *tracks;
@@ -182,9 +183,11 @@ static void clear_picture(App *app)
     app->ui.opening_h = 0;
     sf_free(app->sketch);
     sf_free(app->slogan);
+    sf_free(app->next);
     sf_free(app->pieces);
     app->sketch = NULL;
     app->slogan = NULL;
+    app->next = NULL;
     app->pieces = NULL;
     app->ui.pieces = NULL;
 }
@@ -473,10 +476,11 @@ static void load_pieces(App *app)
 {
     char err[256];
     err[0] = 0;
-    if (sf_pieces_load(app->install, &app->sketch, &app->slogan, err, sizeof err) != 0) {
+    if (sf_pieces_load(app->install, &app->sketch, &app->slogan, &app->next, err, sizeof err) != 0) {
         fprintf(stderr, "%s\n", err[0] ? err : "the opening pieces did not decode");
         app->sketch = NULL;
         app->slogan = NULL;
+        app->next = NULL;
         app->pieces = NULL;
         app->ui.pieces = NULL;
         return;
@@ -485,22 +489,31 @@ static void load_pieces(App *app)
     if (!app->pieces) {
         sf_free(app->sketch);
         sf_free(app->slogan);
+        sf_free(app->next);
         app->sketch = NULL;
         app->slogan = NULL;
+        app->next = NULL;
         app->ui.pieces = NULL;
         fprintf(stderr, "the opening pieces did not allocate\n");
         return;
     }
-    sf_pieces_compose(app->sketch, app->slogan, 0, app->pieces);
+    sf_pieces_compose(app->sketch, app->slogan, 0, 0, app->pieces);
     app->ui.pieces = app->pieces;
 }
 
 static void place_pieces(App *app)
 {
-    if (!app->beat.held || !app->sketch || !app->slogan || !app->pieces) {
+    if (!app->beat.held || !app->pieces) {
         return;
     }
-    sf_pieces_compose(app->sketch, app->slogan, sf_slogan_shift(app->beat.layer_x[2]), app->pieces);
+    if (app->beat.show_next) {
+        sf_pieces_compose(app->next, NULL, 0, -224 - app->beat.f6_y[1], app->pieces);
+        return;
+    }
+    if (!app->sketch || !app->slogan) {
+        return;
+    }
+    sf_pieces_compose(app->sketch, app->slogan, sf_slogan_shift(app->beat.layer_x[2]), 16 - app->beat.f6_y[0], app->pieces);
 }
 
 static void load_title(App *app)

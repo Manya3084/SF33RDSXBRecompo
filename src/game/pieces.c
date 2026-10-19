@@ -361,41 +361,64 @@ int sf_pieces_layers(const uint8_t *bg, uint32_t bg_size, const uint8_t *title, 
     return 0;
 }
 
-void sf_pieces_compose(const uint8_t *sketch, const uint8_t *slogan, int shift, uint8_t *rgba)
+static void blit_layer(const uint8_t *src, int dx, int dy, uint8_t *dst)
 {
-    size_t n = piece_bytes();
     int y;
-    int x0;
-    int copy;
-    if (!rgba) {
+    int x;
+    if (!src || dx >= SF_PIECE_W || dx <= -SF_PIECE_W || dy >= SF_PIECE_H || dy <= -SF_PIECE_H) {
         return;
     }
-    if (sketch) {
-        memcpy(rgba, sketch, n);
-    } else {
-        memset(rgba, 0, n);
-    }
-    if (!slogan || shift >= SF_PIECE_W || shift <= -SF_PIECE_W) {
-        return;
-    }
-    x0 = shift < 0 ? -shift : 0;
-    copy = SF_PIECE_W - (shift < 0 ? -shift : shift);
     for (y = 0; y < SF_PIECE_H; y++) {
-        int x;
-        const uint8_t *row = slogan + ((size_t)y * (size_t)SF_PIECE_W + (size_t)x0) * 4u;
+        int ty = y + dy;
+        int x0;
+        int copy;
+        const uint8_t *row;
+        if ((unsigned)ty >= (unsigned)SF_PIECE_H) {
+            continue;
+        }
+        x0 = dx < 0 ? -dx : 0;
+        copy = SF_PIECE_W - (dx < 0 ? -dx : dx);
+        row = src + ((size_t)y * (size_t)SF_PIECE_W + (size_t)x0) * 4u;
         for (x = 0; x < copy; x++) {
             const uint8_t *s = row + (size_t)x * 4u;
             uint8_t *d;
             if (s[3] == 0) {
                 continue;
             }
-            d = rgba + ((size_t)y * (size_t)SF_PIECE_W + (size_t)(x0 + x + shift)) * 4u;
+            d = dst + ((size_t)ty * (size_t)SF_PIECE_W + (size_t)(x0 + x + dx)) * 4u;
             d[0] = s[0];
             d[1] = s[1];
             d[2] = s[2];
             d[3] = s[3];
         }
     }
+}
+
+void sf_pieces_compose(const uint8_t *sketch, const uint8_t *slogan, int shift_x, int shift_y, uint8_t *rgba)
+{
+    size_t n = piece_bytes();
+    if (!rgba) {
+        return;
+    }
+    memset(rgba, 0, n);
+    blit_layer(sketch, 0, shift_y, rgba);
+    blit_layer(slogan, shift_x, 0, rgba);
+}
+
+int sf_pieces_next(const uint8_t *bg, uint32_t bg_size, const uint8_t *title, uint32_t title_size, uint8_t *rgba, char *err, size_t err_n)
+{
+    uint16_t row24[64];
+    if (!bg || !title || !rgba) {
+        sf_set_err(err, err_n, "the second sketch needs bg20.bin and title.bin");
+        return -1;
+    }
+    if (bg_size < (uint32_t)SF_TEX_TABLE + 4u || pal_row(title, title_size, 24, row24) != 0) {
+        sf_set_err(err, err_n, "bg20.bin or title.bin is short");
+        return -1;
+    }
+    memset(rgba, 0, piece_bytes());
+    draw_cel(rgba, bg, bg_size, 0, 512, -224, 320, 16, 128, row24);
+    return 0;
 }
 
 /* op_bg2_0000 stores layer 2 as 16.16. The hold disp is 511 (h 319).
@@ -427,25 +450,29 @@ int sf_pieces_view(const uint8_t *bg, uint32_t bg_size, const uint8_t *title, ui
         sf_free(slogan);
         return -1;
     }
-    sf_pieces_compose(sketch, slogan, 0, rgba);
+    sf_pieces_compose(sketch, slogan, 0, 0, rgba);
     sf_free(sketch);
     sf_free(slogan);
     return 0;
 }
 
-int sf_pieces_load(const char *install, uint8_t **sketch, uint8_t **slogan, char *err, size_t err_n)
+int sf_pieces_load(const char *install, uint8_t **sketch, uint8_t **slogan, uint8_t **next, char *err, size_t err_n)
 {
     SfFsFile bg;
     SfFsFile title;
     uint8_t *sketch_px;
     uint8_t *slogan_px;
+    uint8_t *next_px;
     if (sketch) {
         *sketch = NULL;
     }
     if (slogan) {
         *slogan = NULL;
     }
-    if (!install || !sketch || !slogan) {
+    if (next) {
+        *next = NULL;
+    }
+    if (!install || !sketch || !slogan || !next) {
         sf_set_err(err, err_n, "opening pieces need a buffer");
         return -1;
     }
@@ -464,17 +491,20 @@ int sf_pieces_load(const char *install, uint8_t **sketch, uint8_t **slogan, char
     }
     sketch_px = sf_alloc(piece_bytes());
     slogan_px = sf_alloc(piece_bytes());
-    if (!sketch_px || !slogan_px) {
+    next_px = sf_alloc(piece_bytes());
+    if (!sketch_px || !slogan_px || !next_px) {
         sf_free(sketch_px);
         sf_free(slogan_px);
+        sf_free(next_px);
         fsClose(&bg);
         fsClose(&title);
         sf_set_err(err, err_n, "the opening pieces did not allocate");
         return -1;
     }
-    if (sf_pieces_layers(bg.data, bg.size, title.data, title.size, sketch_px, slogan_px, err, err_n) != 0) {
+    if (sf_pieces_layers(bg.data, bg.size, title.data, title.size, sketch_px, slogan_px, err, err_n) != 0 || sf_pieces_next(bg.data, bg.size, title.data, title.size, next_px, err, err_n) != 0) {
         sf_free(sketch_px);
         sf_free(slogan_px);
+        sf_free(next_px);
         fsClose(&bg);
         fsClose(&title);
         return -1;
@@ -483,5 +513,6 @@ int sf_pieces_load(const char *install, uint8_t **sketch, uint8_t **slogan, char
     fsClose(&title);
     *sketch = sketch_px;
     *slogan = slogan_px;
+    *next = next_px;
     return 0;
 }

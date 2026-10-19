@@ -152,10 +152,21 @@ static void test_opening(void)
     sf_opening_step(&op);
     expect(op.timer == 4 && op.status == 101 && op.scene == 1 && op.held == 1 && op.index == 0, "time 4 posts 101 and holds background 0");
     expect(op.screen == 0 && op.layer_x[2] == 0x01FF0000 && op.layer_y[2] == 0, "background 0 leaves the screens off and walks layer 2");
+    expect(op.f6_y[0] == 15 && op.f6_y[1] == -224 && op.show_next == 0, "the first sketch reads 15 at time 4");
     for (i = 0; i < 7; i++) {
         sf_opening_step(&op);
     }
-    expect(op.timer == 11 && op.status == 101 && op.scene == 1 && op.index == 0 && op.layer_x[2] == 0x01F80000, "later triggers stay unposted while background 0 is held");
+    expect(op.timer == 11 && op.status == 2 && op.scene == 2 && op.index == 0 && op.obj_disp == 0 && op.layer_x[2] == 0x01F80000 && op.f6_y[0] == 11, "time 11 posts status 2 and background 0 keeps walking");
+    while (op.timer < 79) {
+        sf_opening_step(&op);
+    }
+    expect(op.timer == 79 && op.status == 11 && op.scene == 11 && op.index == 1 && op.obj_disp == 1 && op.r_no_2 == 2 && op.show_next == 0 && op.screen == 0 && op.layer_x[2] == 0x01B50000 && op.f6_y[0] == -23, "time 79 posts status 11 and leaves the old picture up for this frame");
+    sf_opening_step(&op);
+    expect(op.timer == 80 && op.show_next == 1 && op.f6_y[1] == -222 && op.layer_x[2] == 0x02000000 && (op.screen & 1u) == 1u && op.status == 11 && op.r_no_1 == 1, "the next frame shows the second sketch and resets layer 2");
+    while (op.timer < 123) {
+        sf_opening_step(&op);
+    }
+    expect(op.timer == 123 && op.f6_y[1] == -136 && op.f6_stop[1] == 1 && op.status == 16 && op.r_no_1 == 1 && op.layer_x[2] == 0x02000000, "the second sketch stops at -136 and scene 102 stays unposted");
 }
 
 int main(void)

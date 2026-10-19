@@ -559,11 +559,11 @@ static void test_pieces(void)
         expect(sketch && slogan && moved && sf_pieces_layers(bg.data, bg.size, colors.data, colors.size, sketch, slogan, err, sizeof err) == 0, "opening pieces split into layers");
         if (sketch && slogan && moved && view) {
             const uint8_t *gone;
-            sf_pieces_compose(sketch, slogan, 0, moved);
+            sf_pieces_compose(sketch, slogan, 0, 0, moved);
             expect(memcmp(view, moved, n) == 0, "shift 0 matches the hold");
             expect(sf_slogan_shift(0x01FF0000) == 0, "the hold camera shift is 0");
             expect(sf_slogan_shift(0x01F80000) == 7, "timer 11 shifts the slogan by 7");
-            sf_pieces_compose(sketch, slogan, sf_slogan_shift(0x01F80000), moved);
+            sf_pieces_compose(sketch, slogan, sf_slogan_shift(0x01F80000), 0, moved);
             red = moved + ((size_t)117 * (size_t)SF_PIECE_W + 9u) * 4u;
             ink = moved + ((size_t)40 * (size_t)SF_PIECE_W + 200u) * 4u;
             gone = sketch + ((size_t)117 * (size_t)SF_PIECE_W + 2u) * 4u;
@@ -574,6 +574,26 @@ static void test_pieces(void)
             expect(gone[0] == 222 && gone[1] == 239 && gone[2] == 231 && gone[3] == 255, "sketch pixel 201,40 fills the scale gap");
             gone = sketch + ((size_t)40 * (size_t)SF_PIECE_W + 206u) * 4u;
             expect(gone[0] == 214 && gone[1] == 239 && gone[2] == 222 && gone[3] == 255, "sketch pixel 206,40 keeps the texel on its left");
+            sf_pieces_compose(sketch, NULL, 0, 1, moved);
+            ink = moved + ((size_t)41 * (size_t)SF_PIECE_W + 200u) * 4u;
+            expect(ink[0] == 222 && ink[1] == 239 && ink[2] == 231 && ink[3] == 255, "a sketch shift of 1 moves pixel 200,40 down");
+        }
+        {
+            uint8_t *next = sf_alloc(n);
+            const uint8_t *px;
+            expect(next && sf_pieces_next(bg.data, bg.size, colors.data, colors.size, next, err, sizeof err) == 0, "the second sketch bakes");
+            if (next) {
+                px = next;
+                expect(px[0] == 140 && px[1] == 115 && px[2] == 74 && px[3] == 255, "second sketch pixel 0,0");
+                px = next + 50u * 4u;
+                expect(px[0] == 140 && px[1] == 115 && px[2] == 66 && px[3] == 255, "second sketch pixel 50,0");
+                if (moved) {
+                    sf_pieces_compose(next, NULL, 0, -2, moved);
+                    px = moved + 50u * 4u;
+                    expect(px[0] == 74 && px[1] == 66 && px[2] == 41 && px[3] == 255, "the first type 1 step lifts pixel 50,2 to 50,0");
+                }
+            }
+            sf_free(next);
         }
         sf_free(sketch);
         sf_free(slogan);
