@@ -5,3 +5,5 @@
 
 # edrw/gedrw/cedrw_data_tbl hold the rewrite tables' addresses.
 lowaddr src/sf33rd/Source/Game/end_data.c
+# bgrw_data_tbl holds the background rewrite tables' addresses.
+lowaddr src/sf33rd/Source/Game/bg_data.c

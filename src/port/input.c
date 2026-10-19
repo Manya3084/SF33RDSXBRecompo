@@ -442,8 +442,12 @@ void xb_PADRead(void)
     }
     if (s_replay) {
         if (fread(x, sizeof x, 1, s_replay) != 1) {
+            /* past the end: the game goes on with nothing pressed */
             fprintf(stderr, "input: the recording ended at frame %d\n", sf_port_frame);
-            exit(0);
+            fclose(s_replay);
+            s_replay = NULL;
+            memset(x, 0, sizeof x);
+            x[0].connected = 1;
         }
     } else if (s_record) {
         fwrite(x, sizeof x, 1, s_record);

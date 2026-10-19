@@ -144,7 +144,9 @@ void sf_video_present(void)
             fclose(f);
         }
     }
-    pace();
+    if (!getenv("SF_HEADLESS")) {
+        pace(); /* headless tests run as fast as they can */
+    }
     screenshot(frame++);
     sf_gfx_frame_done();
 }

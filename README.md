@@ -1,68 +1,97 @@
 # SF33RDSXBRecompo
 
-x86-64 port of Street Fighter III: 3rd Strike from the original Xbox.
+Native x86-64 port of Street Fighter III: 3rd Strike, built from the Xbox version.
 
-The game data is the Xbox version. On first launch, if `data/afs/SF33RDXB.AFS` is missing, the program asks for one of:
+The game logic is the C of [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb), compiled for x86-64. Everything the Xbox provided under it is written natively here: SDL3 for the window, input and timing, a Vulkan renderer for the game's draws, OpenAL for sound, and plain files for the disc archive and the saves. No Xbox code is built. There is no Xbox heap, XDK, xboxkrnl, D3D8, CRI middleware or XOnline dependency, and no table is read from the XBE. [docs/porting.md](docs/porting.md) describes how the pieces fit.
 
-- an Xbox XDVDFS disc image
-- a zip or 7z archive of that Xbox disc (the image itself, or the extracted Xbox tree)
-- the extracted Xbox folder (`sf33rd.xbe` and `XB_HostPC/SF33RDXB.AFS`)
+## Status
 
-Anything else is refused, including a PlayStation 2 disc packed in a zip or 7z. The reader looks for the Xbox volume id `MICROSOFT*XBOX*MEDIA` and for `XB_HostPC/SF33RDXB.AFS`. It copies the 3rd Strike archive, the opening AIX, fonts, and NV2A shaders. SF2 movies and the XBE are not copied. During that import, `.xvu` and `.xpu` shaders are converted to one SPIR-V module each. The same words load on Vulkan and on desktop OpenGL.
+Working:
 
-## Host
+- the boot logos, the opening and attract demos, the title screen and menus
+- Arcade, character select, and fights, including the attract-loop fights
+- music: the ADX and AIX tracks, decoded natively and streamed through OpenAL
+- saves (system settings and button directions) in `data/save/`
+- the keyboard and SDL3 gamepads, with retail's join-by-Start
+- any window size, at a whole multiple of 640×480 kept at 4:3, paced to 60 frames a second
 
-SDL3 opens the window. Vulkan is the primary renderer. If it fails, desktop OpenGL 4.6 (compatibility profile, not GLES) is used for that session and the saved choice stays Vulkan so the next launch tries it again. OpenGL 4.6 loads the converted modules with `glShaderBinary`. The UI canvas stays on the fixed-function path. Converted programs use Vulkan clip space (upper-left origin, zero-to-one depth); the canvas restores the ordinary OpenGL clip before it draws. OpenAL opens the audio device. The display menu changes resolution and renderer. Xbox Live is a placeholder screen.
+Not done yet:
 
-The process heap is mimalloc when the build is configured with `-DSF_USE_MIMALLOC=ON` and mimalloc is installed. Otherwise `sf_alloc` uses the C library. The fight code keeps its own cell heap: `mmHeapCreate` takes the block from `sf_alloc`, and a cell header stays 12 bytes inside the retail 16-byte unit. There is no Xbox heap, XDK, xboxkrnl, D3D8, or XOnline dependency.
+- sound effects (the XACT banks)
+- a menu for rebinding the keyboard
+- the OpenGL fallback for the game screen (Vulkan is required for now)
+- replay saving and online play (the game runs offline)
 
-Each frame runs the 12-slot task table, draws the shell, and presents once. `cpReadyTask` arms a slot. The next frame runs it. Xbox Live stays the placeholder screen.
+## Getting the data
 
-When the archive is present, `TITLE_Init` loads the logo. `Country` 1 and 2 load `Title_R.ppg` (file 84). Every other value, including the retail boot value 0, loads `TitleTM.ppg` (file 83). Each file is one 512×256 texture. `compress` 2 is zlib inflate. The 16-bit texels are byte-swapped, then A1R5G5B5 expands into the canvas. Vulkan and OpenGL present that canvas. The logo stays stored until a later beat draws it. The disc fragment modules are DOF1 and DOF2, and those combiners write black, so this picture does not sample them.
+The game data comes from your own copy of the Xbox disc. `sf33rdsxb` imports it, either on first launch or with:
 
-The same screen shows the first opening tile. `OPBG_Init` reads `Opening.ppg` (file 81) after it has been stored under RAMCNT type `0x1D`. Texture 0 is 256×256 and 8-bit. Its one rectangle covers the tile and selects palette 15. `put_chr2` adds 300 to that byte, and `title.bin` (file 82) is the color load that fills `ColorRAM` from row 300, so the colors are 64 little-endian A1R5G5B5 words in row 15. Pixel 0 is index 28, word `0xEF7B`. The title screen is that opening, scaled up to the window. The host text stays on the setup, display, and live screens. The title then steps `opening_demo`. The clock starts at 2 after the init countdown. At time 4 the status becomes 101 and `op_101_move` holds background 0. That background places no Opening.ppg cell, and `0xAF4C2` switches the opening screens off, so the loaded tile leaves. On that hold the slogan and the sketch are drawn in the tile's old place. The slogan is 21 red cells from `effect_48`. The sketch is `effect_F6` type 0, texture group `0x8C40` in `bg20.bin`, untwiddled and colored from `title.bin` rows 8 and 10. It is drawn at 80/64. Each texel covers every screen pixel from its corner to the next corner, so the paper is solid. Pixel (201, 40) is that paper, and pixel (206, 40) keeps the texel on its left. Layer 2 keeps walking until status 11, so the slogan moves one pixel to the right on each step. The red pixel at (2, 117) is at (9, 117) when the clock reaches 11. That step posts status 2. The first sketch is created on the time-3 frame and drifts down half a unit per frame, so time 11 reads y 11 and time 79 reads y -23. Time 79 posts status 11 and still draws that picture. The next frame drops the slogan and the first sketch, arms background 1, and shows `effect_F6` type 1. It is the same cell, colored from `title.bin` row 24, baked at y -224 and scale 2. Pixel (0, 0) is (140, 115, 74). It rises two pixels a frame and stops at y -136. Opening.ppg textures 47 and 48 are the cells behind that sketch. Both use title.bin row 41, and the ink is opaque black. They sit at screen x -64 and 192 and shake with the opening quake, which starts at -8. Time 124 posts status 102. That drops the cells and the second sketch. effect_F6 type 2 is the next pattern of the same character, bg20 local 1, colored from title.bin row 12 at scale 80/64. It steps from x 448 to 449 on that frame. Pixel (1, 0) is the paper (247, 231, 231) and pixel (0, 0) is clear. Thirteen effect_48 letters sit behind it. Layer 2 walks down one pixel a frame, and the sketch slides right by 1.5 pixels a step until x 538 on timer 183. That parked frame uncovers the red letter at (17, 64). Status 9 stays unposted, so the following scene does not start. The other 89 tiles stay for a later beat.
+```
+sf33rdsxb --extract SOURCE --data DIR
+```
 
-The title screen plays `ST3_3_OP.aix` when that file was copied at import. It is an AIXF container of AIXP packets. Track 0 is the front stereo ADX: 48000 Hz, version 4, 4-bit, 18-byte blocks, high-pass 500, 1673218 samples. Its copyright offset is too small for a loop, so the theme plays once. The other two stereo pairs stay packed. The arrow keys leave that theme for the loose mixes. Right starts at `o01_A_NYC.adx` (file 87). That mix is stereo, 48000 Hz, and loops from sample 191744 through sample 2875501. A version 3 mix stores its loop at byte 0x14, so `01_A_NYC.adx` loops from sample 25312 through sample 2699712. Stem files stay out of the list. A, S, D, and F play the first four PCM waves in `SE1.xwb` (file 8) without stopping the music. The BGM packs and the sound triggers are not running. The ADX flags byte on these mixes is 0, so the scale is the low 13 bits of the frame word plus one. A frame word with bit 15 set ends the stream. The filter coefficients stay in double precision.
+`SOURCE` is one of:
 
-Game logic will be ported from [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb). This repository is the runtime. `sf33rdsxb_game` links the decomp's game logic, without any of its Xbox code, against the native platform layer in `src/port/`; see [porting.md](docs/porting.md).
+- an Xbox XDVDFS disc image;
+- a zip or 7z archive of that disc (the image itself, or the extracted Xbox tree);
+- the extracted Xbox folder (`sf33rd.xbe` and `XB_HostPC/SF33RDXB.AFS`).
+
+Anything else is refused, including a PlayStation 2 disc packed in a zip or 7z. The reader looks for the Xbox volume id `MICROSOFT*XBOX*MEDIA` and for `XB_HostPC/SF33RDXB.AFS`. It copies the 3rd Strike archive, the opening AIX, the fonts and the NV2A shaders. It does not copy the SF2 movies or the XBE.
+
+Never commit `data/afs/`. It is the game itself.
+
+## Running
+
+```
+build/sf33rdsxb_game
+```
+
+The game reads `data/` next to the executable.
 
 ## Controls
 
-Xbox layout on a gamepad. Keyboard stand-in: arrows are the d-pad, Z is A, X is B, A is X, S is Y, Enter is Start, Backspace is Back, Q is LB, E is RB. On the data screen, Enter picks a file and F picks a folder. On the title screen, the arrow keys change the music and A, S, D, and F play effects. Start opens the display menu. Back opens the Xbox Live placeholder. Escape quits, or closes the menu that is open.
+Players join the way they did on the Xbox: press Start on any pad.
+
+| Xbox     | Keyboard  |
+|----------|-----------|
+| d-pad    | arrows    |
+| A, B     | Z, X      |
+| X, Y     | A, S      |
+| White    | Q         |
+| Black    | E         |
+| L, R     | W, R      |
+| Start    | Enter     |
+| Back     | Backspace |
+
+The keyboard is port 0. Gamepads take ports 1 to 3 in the order SDL3 reports them, and they are read even when the window is not focused.
 
 ## Layout
 
 ```
-data/manifest
-data/afs/SF33RDXB.AFS
-data/afs/index
-data/afs/files/
-data/audio/ST3_3_OP.aix
+data/afs/SF33RDXB.AFS     the disc archive, read in place
+data/afs/index            its members: index name bytes
+data/afs/files/           the members, unpacked under their stored names
+data/audio/ST3_3_OP.aix   the opening theme
 data/fonts/
-data/shaders/nv2a/
-data/shaders/spirv/
-config/settings.txt
+data/save/                system.sav, directions.sav
+data/last_session.input   the last session's inputs, for replaying a bug
+data/crash.log            the backtrace of the last crash
 ```
-
-SPIR-V uses one descriptor set. Vertex binding 0 is 192 vec4 constants, when the program reads them, and binding 1 is the viewport. Fragment binding 2 is 16 vec4 pixel constants plus fog. Fragment bindings 3 through 6 are the four texture stages. The entry point is `main`.
-
-`SF33RDXB.AFS` stays packed, and its members are also written under `data/afs/files/` using the names stored in the archive. `data/afs/index` lists them as `index name bytes`, which is the order `ADXF_OpenAfs` uses. The Xbox archive holds 1531 files. Members are copied as stored, so image pixels stay compressed.
-
-A `.ppg` is a chunk list. `pTEX` and `pPAL` start with a 16-byte header: a big-endian tag, a big-endian size, then raw bytes. The next chunk begins at that size rounded up to 4. `pEND` is the four bytes that end the list and has no size. A `pTEX` width and height count 16-pixel cells. `pixel & 3` selects 4-bit, 8-bit, 16-bit, or 32-bit texels. `formARGB` is `0x1555` (A1R5G5B5), `0x0565` (R5G6B5), `0x4444`, or `0x8888`. Zero means the texels are indexed. `compress & 3` is a raw copy, a zlib wrapper, or zlib inflate. On this disc every `pTEX` uses inflate, and the payload begins with a zlib header. The Xbox function named as LZ77 in the decomp is that inflate. This port does not run the PlayStation 2 LZ77 bitstream. `transNums` is how many 3-byte sprite rectangles sit between the header and the pixels. A `.ppx` is the same list, and each `pCMP` chunk is one compressed block plus its expanded size.
-
-```
-sf33rdsxb
-sf33rdsxb --extract SOURCE --data DIR
-```
-
-`SOURCE` is an Xbox ISO, a zip, a 7z, or an extracted Xbox folder.
 
 ## Build
 
 ```
-cmake -S . -B build
+cmake -S . -B build -DSF_DECOMP_DIR=/path/to/3s-decomp-ogxb
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-SDL3, Vulkan, OpenAL, OpenGL, and libarchive are required. libarchive is what reads zip and 7z without pulling in the whole disc. Python 3 runs `tools/spirv.py` while importing shaders.
+Requirements:
+
+- SDL3, Vulkan, OpenAL, OpenGL, zlib and libarchive;
+- `glslc`, to compile the shaders;
+- Python 3, for the build's code generators.
+
+`SF_DECOMP_DIR` is a checkout of 3s-decomp-ogxb (default `../3s-decomp-ogxb`). Until it is merged, that checkout must be on its `xbox-port-data` branch. The port is 64-bit-only and links non-PIE (see [docs/porting.md](docs/porting.md#x86-64)).
+
+`SF_SCALE=N` fixes the render scale, and `SF_COUNTRY=1..4` picks the region. The debugging switches (headless runs, input replay, frame captures) are listed in [docs/porting.md](docs/porting.md#debugging).
