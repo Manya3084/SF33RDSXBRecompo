@@ -53,10 +53,50 @@ static void put_ent(uint8_t *dir, uint32_t off, uint16_t left, uint16_t right, u
     memcpy(p + 14, name, nlen);
 }
 
+/* A stand-in sf33rd.xbe: the header, then the 21 sound banks the import
+ * reads out of it ("SDBK" version 11, named SE and pl00 to pl19, no RPC
+ * table, 0x38 bytes each). */
+#define FAKE_XBE_N (0x1000u + 21u * 0x38u)
+
+static void fake_xbe(uint8_t *x)
+{
+    int i;
+    memset(x, 0, FAKE_XBE_N);
+    memcpy(x, "XBEH", 4);
+    for (i = 0; i < 21; i++) {
+        uint8_t *b = x + 0x1000u + (size_t)i * 0x38u;
+        memcpy(b, "SDBK", 4);
+        wu16(b + 4, 11);
+        wu32(b + 0x14, 0x38);
+        if (i == 0) {
+            memcpy(b + 0x28, "SE", 2);
+        } else {
+            b[0x28] = 'p';
+            b[0x29] = 'l';
+            b[0x2A] = (uint8_t)('0' + (i - 1) / 10);
+            b[0x2B] = (uint8_t)('0' + (i - 1) % 10);
+        }
+    }
+}
+
+static void write_fake_xbe(const char *dir)
+{
+    static uint8_t x[FAKE_XBE_N];
+    char path[4096];
+    FILE *fp;
+    fake_xbe(x);
+    snprintf(path, sizeof path, "%s/sf33rd.xbe", dir);
+    fp = fopen(path, "wb");
+    if (fp) {
+        fwrite(x, 1, sizeof x, fp);
+        fclose(fp);
+    }
+}
+
 static uint8_t *build_iso(size_t *out_n)
 {
     const uint32_t base = 4096;
-    const uint32_t sectors = 44;
+    const uint32_t sectors = 47;
     size_t n = base + (size_t)sectors * 2048u;
     uint8_t *img = calloc(1, n);
     uint8_t *vol;
@@ -76,8 +116,9 @@ static uint8_t *build_iso(size_t *out_n)
     wu32(vol + 0x18, 2048);
     root = img + base + 34u * 2048u;
     put_ent(root, 0, 6, 11, 35, 2048, 0x10, "XB_HostPC");
-    put_ent(root, 24, 0, 0, 36, 2048, 0x10, "media");
+    put_ent(root, 24, 0, 16, 36, 2048, 0x10, "media");
     put_ent(root, 44, 0, 0, 42, 3, 0x80, "zz.txt");
+    put_ent(root, 64, 0, 0, 44, FAKE_XBE_N, 0x80, "sf33rd.xbe");
     host = img + base + 35u * 2048u;
     put_ent(host, 0, 0, 7, 39, 4, 0x80, "SF33RDXB.AFS");
     put_ent(host, 28, 0, 0, 41, 4, 0x80, "ST3_3_OP.aix");
@@ -93,6 +134,7 @@ static uint8_t *build_iso(size_t *out_n)
     memcpy(img + base + 41u * 2048u, "AIX!", 4);
     memcpy(img + base + 42u * 2048u, "ZZ!", 3);
     memcpy(img + base + 43u * 2048u, "FONT", 4);
+    fake_xbe(img + base + 44u * 2048u);
     *out_n = n;
     return img;
 }
@@ -172,6 +214,9 @@ static int write_tree_zip(const char *path, const uint8_t *iso, size_t iso_n, in
     } else if (with_iso) {
         zip_file(fp, "disc.iso", iso, iso_n, &offset, cd, &cd_n, &count);
     } else {
+        static uint8_t x[FAKE_XBE_N];
+        fake_xbe(x);
+        zip_file(fp, "sf33rd.xbe", x, sizeof x, &offset, cd, &cd_n, &count);
         zip_file(fp, "XB_HostPC/SF33RDXB.AFS", "AFS!", 4, &offset, cd, &cd_n, &count);
         zip_file(fp, "XB_HostPC/ST3_3_OP.aix", "AIX!", 4, &offset, cd, &cd_n, &count);
         zip_file(fp, "media/Fonts/note.txt", "FONT", 4, &offset, cd, &cd_n, &count);
@@ -219,6 +264,10 @@ static void check_ready(const char *install, int expect_shader_fail, const char 
     expect(stat(path, &st) != 0, "movies stay out");
     snprintf(path, sizeof path, "%s/data/shaders/nv2a/dummy.xvu", install);
     expect(read_file(path, buf, 4) == 0 && memcmp(buf, "XVU!", 4) == 0, "shader copied");
+    snprintf(path, sizeof path, "%s/data/audio/sdbk/20.sdbk", install);
+    expect(read_file(path, buf, 4) == 0 && memcmp(buf, "SDBK", 4) == 0, "sound banks from the xbe");
+    snprintf(path, sizeof path, "%s/data/.import-tmp/sf33rd.xbe", install);
+    expect(stat(path, &st) != 0, "the xbe is not kept");
     if (expect_shader_fail) {
         snprintf(path, sizeof path, "%s/data/shaders/spirv/dummy.spv", install);
         expect(stat(path, &st) != 0, "bad shader is not spirv");
@@ -320,6 +369,7 @@ int main(void)
         expect(tree != NULL, "extracted folder");
         if (tree) {
             char file[4096];
+            write_fake_xbe(tree);
             snprintf(file, sizeof file, "%s/XB_HostPC", tree);
             mkdir(file, 0755);
             snprintf(file, sizeof file, "%s/XB_HostPC/SF33RDXB.AFS", tree);
@@ -353,9 +403,10 @@ int main(void)
         char archive[] = "/tmp/sf33rd-tree.7z";
         if (tree) {
             pid_t pid;
-            char *argv[] = {"7z", "a", "-bd", "-y", archive, "XB_HostPC", "media", NULL};
+            char *argv[] = {"7z", "a", "-bd", "-y", archive, "XB_HostPC", "media", "sf33rd.xbe", NULL};
             char file[4096];
             int status = 0;
+            write_fake_xbe(tree);
             snprintf(file, sizeof file, "%s/XB_HostPC", tree);
             mkdir(file, 0755);
             snprintf(file, sizeof file, "%s/XB_HostPC/SF33RDXB.AFS", tree);

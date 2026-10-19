@@ -25,6 +25,7 @@
 #include <SDL3/SDL_dialog.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -51,6 +52,7 @@ typedef struct App {
     SDL_Mutex *lock;
     int gl_fallback;
     int quit;
+    int launch; /* the data was imported: start the game on the way out */
     uint8_t *picture;
     int picture_w;
     int picture_h;
@@ -609,12 +611,12 @@ static void run_import(App *app, const char *source)
     const char *tool = app->tool[0] ? app->tool : NULL;
     set_status(app, "READING XBOX DATA");
     if (sf_extract(source, app->install, tool, progress, app, &result) == 0 && sf_data_ready(app->install)) {
-        app->ui.screen = SF_UI_TITLE;
-        set_status(app, "");
-        snprintf(app->note, sizeof app->note, "%s", result.note);
-        app->ui.note = app->note;
-        load_title(app);
-        SDL_SetWindowTitle(app->window, k_title);
+        if (result.note[0]) {
+            fprintf(stderr, "%s\n", result.note);
+        }
+        /* the data is there: the game takes over */
+        app->launch = 1;
+        app->quit = 1;
         return;
     }
     set_status(app, result.error[0] ? result.error : "XBOX DATA WAS NOT READ");
@@ -730,6 +732,21 @@ static int extract_cli(int argc, char **argv)
     return sf_data_ready(dir) ? 0 : 1;
 }
 
+/* The game, in this process's place: the launcher only gets the data. It
+ * is sf33rdsxb_game next to this program. */
+static void launch_game(const char *install)
+{
+    char path[4096 + 32];
+#ifdef _WIN32
+    snprintf(path, sizeof path, "%s/sf33rdsxb_game.exe", install);
+    _execl(path, path, (char *)NULL);
+#else
+    snprintf(path, sizeof path, "%s/sf33rdsxb_game", install);
+    execl(path, path, (char *)NULL);
+#endif
+    fprintf(stderr, "cannot start %s\n", path);
+}
+
 int main(int argc, char **argv)
 {
     App app;
@@ -746,6 +763,12 @@ int main(int argc, char **argv)
     if (sf_exe_dir(app.install, sizeof app.install) != 0) {
         fprintf(stderr, "cannot find the install directory\n");
         SDL_Quit();
+        return 1;
+    }
+    if (sf_data_ready(app.install) && !getenv("SF_LAUNCHER_STAY")) {
+        /* imported before: straight to the game */
+        SDL_Quit();
+        launch_game(app.install);
         return 1;
     }
     sf_find_shader_tool(app.install, app.tool, sizeof app.tool);
@@ -771,6 +794,13 @@ int main(int argc, char **argv)
     app.ui.gl_fallback = app.gl_fallback;
     app.ui.status = app.status;
     app.ui.note = app.note;
+    if (app.ui.screen == SF_UI_SETUP && !sf_sound_banks_ready(app.install)) {
+        char afs[4096];
+        if (sf_join(afs, sizeof afs, app.install, "data/afs/SF33RDXB.AFS") == 0 && access(afs, R_OK) == 0) {
+            /* imported before the sound effects were read from the XBE */
+            snprintf(app.note, sizeof app.note, "IMPORT THE DISC AGAIN: THE SOUND EFFECTS COME FROM SF33RD.XBE");
+        }
+    }
     if (app.ui.screen == SF_UI_TITLE) {
         load_title(&app);
     }
@@ -881,5 +911,9 @@ int main(int argc, char **argv)
     sf_audio_close();
     clear_tracks(&app);
     SDL_Quit();
+    if (app.launch) {
+        launch_game(app.install);
+        return 1;
+    }
     return 0;
 }

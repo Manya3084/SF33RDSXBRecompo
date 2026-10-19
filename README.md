@@ -49,10 +49,10 @@ Never commit anything under `data/`. It is the game itself.
 ## Running
 
 ```
-build/sf33rdsxb_game
+sf33rdsxb
 ```
 
-The game reads `data/` next to the executable.
+The first time, it asks for your Xbox disc (an image, a zip or 7z of it, or the extracted folder; drop it on the window or pick it) and imports it into `data/` next to the program. Once the data is there, it starts the game (`sf33rdsxb_game`, which can also be run directly). Data imported before the sound effects were read from `sf33rd.xbe` has to be imported again.
 
 ## Controls
 

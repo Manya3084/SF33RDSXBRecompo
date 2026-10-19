@@ -15,7 +15,9 @@ typedef struct SfExtractResult {
 
 typedef void (*SfExtractProgress)(const char *path, void *user);
 
+/* 1 when data/ holds the game: the archive and the 21 sound banks. */
 int sf_data_ready(const char *install_dir);
+int sf_sound_banks_ready(const char *install_dir);
 
 /* source is an Xbox XDVDFS image, a zip or 7z of that Xbox disc, or an extracted Xbox folder. */
 int sf_extract(const char *source, const char *install_dir, const char *shader_tool,

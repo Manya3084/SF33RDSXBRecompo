@@ -108,6 +108,18 @@ static int copy_stream(const char *src, const char *dest, char *err, size_t err_
     return 0;
 }
 
+/* The archive is in place (the import's own check, before the sound
+ * banks are read). */
+static int afs_ready(const char *install_dir)
+{
+    char path[4096];
+    struct stat st;
+    if (!install_dir || sf_join(path, sizeof path, install_dir, "data/afs/SF33RDXB.AFS") != 0) {
+        return 0;
+    }
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+}
+
 int sf_data_ready(const char *install_dir)
 {
     char path[4096];
@@ -117,6 +129,25 @@ int sf_data_ready(const char *install_dir)
     }
     if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
         return 0;
+    }
+    return sf_sound_banks_ready(install_dir);
+}
+
+/* The 21 sound banks the import reads out of sf33rd.xbe (the sound
+ * effects' cue tables): data imported before they were has to be
+ * imported again. */
+int sf_sound_banks_ready(const char *install_dir)
+{
+    char path[4096];
+    char name[32];
+    struct stat st;
+    int i;
+    for (i = 0; i < SF_SOUND_BANKS; i++) {
+        snprintf(name, sizeof name, "data/audio/sdbk/%02d.sdbk", i);
+        if (sf_join(path, sizeof path, install_dir, name) != 0 || stat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
+            st.st_size <= 0) {
+            return 0;
+        }
     }
     return 1;
 }
@@ -464,28 +495,31 @@ static int copy_tree(const char *src_dir, const char *rel, const char *dest_root
  * The XBE itself is not kept. */
 #define XBE_TMP "data/.import-tmp/sf33rd.xbe"
 
-static void import_sound_banks(const char *install, SfExtractResult *result)
+/* The sound effects' cue tables, out of the disc's sf33rd.xbe (copied to
+ * XBE_TMP by the reader and gone after): the game needs them. */
+static int import_sound_banks(const char *install, SfExtractResult *result)
 {
     char xbe[4096];
     char out[4096];
     char err[256];
     struct stat st;
     if (sf_join(xbe, sizeof xbe, install, XBE_TMP) != 0 || sf_join(out, sizeof out, install, "data/audio/sdbk") != 0) {
-        return;
+        sf_set_err(result->error, sizeof result->error, "the install path is too long");
+        return -1;
     }
     if (stat(xbe, &st) != 0) {
-        add_note(result, "sf33rd.xbe was not on the disc, so there are no sound effects.");
-        return;
+        sf_set_err(result->error, sizeof result->error, "sf33rd.xbe is not on the disc: it holds the sound effects");
+        return -1;
     }
     err[0] = 0;
     if (sf_mkdir_p(out, err, sizeof err) != 0 || sf_xbe_sound_banks(xbe, out, err, sizeof err) != 0) {
-        char note[400];
-        snprintf(note, sizeof note, "The sound effects were not imported: %s", err);
-        add_note(result, note);
-    } else {
-        result->files += SF_SOUND_BANKS;
+        sf_set_err(result->error, sizeof result->error, "the sound effects were not read from sf33rd.xbe: %s", err);
+        unlink(xbe);
+        return -1;
     }
+    result->files += SF_SOUND_BANKS;
     unlink(xbe);
+    return 0;
 }
 
 static int finish_import(const char *install, const char *tool, SfExtractProgress progress, void *user, SfExtractResult *result)
@@ -499,7 +533,9 @@ static int finish_import(const char *install, const char *tool, SfExtractProgres
         sf_set_err(result->error, sizeof result->error, "AFS path is too long");
         return -1;
     }
-    import_sound_banks(install, result);
+    if (import_sound_banks(install, result) != 0) {
+        return -1;
+    }
     rc = sf_afs_unpack(afs, dir, index, progress, user, &written, result->error, sizeof result->error);
     if (rc < 0) {
         return -1;
@@ -952,7 +988,7 @@ static int import_archive(const char *source, const char *install, const char *t
         return -1;
     }
     result->files += written;
-    if (!sf_data_ready(install)) {
+    if (!afs_ready(install)) {
         sf_set_err(result->error, sizeof result->error, "The archive did not contain the Xbox 3rd Strike files.");
         return -1;
     }
