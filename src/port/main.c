@@ -58,14 +58,20 @@ int main(int argc, char **argv)
         return 1;
     }
     sf_game_init();
-    for (;;) {
+    while (!sf_port_quitting()) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_EVENT_QUIT) {
-                SDL_Quit();
-                return 0;
+                sf_port_quit();
             }
         }
-        sf_game_frame();
+        if (!sf_port_quitting()) {
+            sf_game_frame();
+        }
     }
+    /* the sound first, so nothing plays on while the window goes */
+    sf_sound_shutdown();
+    sf_video_shutdown();
+    SDL_Quit();
+    return 0;
 }

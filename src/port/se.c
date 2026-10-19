@@ -898,3 +898,35 @@ void IXACTEngine_SetMasterVolume(s32 engine, s32 category, s32 vol)
     (void)category;
     s_master = db100(vol);
 }
+
+/* At exit, before the device closes: the voices stop and the sources and
+ * wave buffers go. */
+void sf_se_shutdown(void)
+{
+    int i;
+    int t;
+    if (!s_al) {
+        return;
+    }
+    for (i = 0; i < SE_VOICES; i++) {
+        voice_stop_al(&s_voice[i]);
+        s_voice[i].cue = 0;
+        for (t = 0; t < SE_TRACKS; t++) {
+            if (s_voice[i].tr[t].src) {
+                alDeleteSources(1, &s_voice[i].tr[t].src);
+                s_voice[i].tr[t].src = 0;
+            }
+        }
+    }
+    for (i = 0; i < SE_WAVEBANKS; i++) {
+        int w;
+        for (w = 0; s_wb[i].buffers && w < s_wb[i].count; w++) {
+            if (s_wb[i].buffers[w]) {
+                alDeleteBuffers(1, &s_wb[i].buffers[w]);
+                s_wb[i].buffers[w] = 0;
+            }
+        }
+    }
+    s_al = 0;
+    s_ready = 0;
+}

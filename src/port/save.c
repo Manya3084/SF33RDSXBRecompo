@@ -240,7 +240,7 @@ s32 SaveMove(void)
         s_pending = 0;
         if (s_mode == 3) {
             /* the menu's exit to the dashboard: there is none, so quit */
-            exit(0);
+            sf_port_quit();
         }
         if (s_mode == 2) {
             /* the boot load works in mode 1, the console's (retail's

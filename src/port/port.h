@@ -30,9 +30,34 @@ int sf_afs_read(int32_t fid, uint8_t **data, uint32_t *size);
 void sf_sound_pump(void);
 /* The sound effects: retail's per-frame XACT work (src/port/se.c). */
 void sf_se_frame(void);
+void sf_se_shutdown(void);
 
 /* The game: start-up, then one call per frame (src/port/frame.c). */
 void sf_game_init(void);
 void sf_game_frame(void);
+
+/* Quitting: the game asks (the mode menu's EXIT GAME, the window closing),
+ * and the main loop shuts down after the frame (src/port/main.c). */
+void sf_port_quit(void);
+int sf_port_quitting(void);
+void sf_video_shutdown(void);
+void sf_sound_shutdown(void);
+
+/* The keyboard's bindings (src/port/input.c): 14 rows, each an SDL
+ * scancode for an Xbox button, kept in config/keyboard.txt. */
+int sf_keys_count(void);
+const char *sf_keys_label(int i);
+int sf_keys_get(int i);
+void sf_keys_set(int i, int key);
+void sf_keys_default(void);
+int sf_keys_save(void);
+/* While on, the game sees no pad or key pressed. */
+void sf_input_block(int on);
+/* 1 while SF_REPLAY plays a recording in place of the devices. */
+int sf_input_replaying(void);
+
+/* The port's additions to the game's menus (src/port/menu_ext.c). */
+void sf_menu_ext_init(void);
+void sf_menu_ext_frame(void);
 
 #endif

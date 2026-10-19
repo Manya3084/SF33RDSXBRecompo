@@ -364,6 +364,26 @@ s32 xb_CreateDirectSound(const char *path)
     return 1;
 }
 
+/* At exit: the sources stop and the device closes. */
+void sf_sound_shutdown(void)
+{
+    size_t i;
+    if (!s_ready) {
+        return;
+    }
+    for (i = 0; i < sizeof s_adxt / sizeof s_adxt[0]; i++) {
+        voice_stop(&s_adxt[i].v);
+    }
+    voice_stop(&s_aixp);
+    sf_se_shutdown();
+    alcMakeContextCurrent(NULL);
+    alcDestroyContext(s_ctx);
+    alcCloseDevice(s_dev);
+    s_ctx = NULL;
+    s_dev = NULL;
+    s_ready = 0;
+}
+
 /* ---- ADXT ---- */
 
 void ADXT_Init(void)

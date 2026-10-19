@@ -94,6 +94,18 @@ static void pace(void)
     next += step;
 }
 
+void sf_video_shutdown(void)
+{
+    if (s_renderer) {
+        sf_render_destroy(s_renderer);
+        s_renderer = NULL;
+    }
+    if (s_window) {
+        SDL_DestroyWindow(s_window);
+        s_window = NULL;
+    }
+}
+
 void sf_video_present(void)
 {
     static int frame;

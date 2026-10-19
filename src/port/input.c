@@ -10,8 +10,10 @@
  * (xb_PADRead, xb_PADReadOne, xb_PADConvertStick) and xb_061267.c
  * (keyConvert).
  *
- * Keyboard: arrows are the d-pad, Z A, X B, A X, S Y, Q White, E Black,
- * W the left trigger, R the right trigger, Enter Start, Backspace Back. */
+ * Keyboard (the defaults; BUTTON CONFIG's keyboard page changes them and
+ * config/keyboard.txt keeps them): arrows are the d-pad, Z A, X B, A X,
+ * S Y, Q White, E Black, W the left trigger, R the right trigger, Enter
+ * Start, Backspace Back. */
 
 #include "host/paths.h"
 #include "port/port.h"
@@ -25,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define PORTS 4
 
@@ -87,12 +90,15 @@ static const u32 k_ioconv[24][2] = {
     { 0x0, 0x40000 }, { 0x0, 0x80000 }, { 0x0, 0x100000 }, { 0x0, 0x200000 }, { 0x0, 0x400000 }, { 0x0, 0x800000 },
 };
 
+static void keys_load(void);
+
 s32 xb_PADInit(void)
 {
     /* pads keep working when another window has the focus */
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_InitSubSystem(SDL_INIT_GAMEPAD);
     memset(s_pads, 0, sizeof s_pads);
+    keys_load();
     return 1;
 }
 
@@ -169,17 +175,24 @@ static f32 axis(SDL_Gamepad *g, SDL_GamepadAxis a)
     return (f32)SDL_GetGamepadAxis(g, a) / 32767.0f;
 }
 
-/* The keyboard as a gamepad: one row per binding, so the bindings can be
- * changed (and later saved) without touching the reading. A binding is a
- * button bit (XB_*) or an analog button (index | 0x100). */
+/* The keyboard as a gamepad: one row per binding. A binding is a button
+ * bit (XB_*) or an analog button (index | 0x100); name is its word in
+ * config/keyboard.txt, label what the keyboard page shows. */
 typedef struct KeyBinding {
     SDL_Scancode key;
     u16 target;
 } KeyBinding;
 
 #define BIND_ANALOG 0x100
+#define KEY_COUNT 14
 
-static KeyBinding s_keys[] = {
+static const char *const k_key_name[KEY_COUNT] = { "up", "down", "left", "right", "start", "back", "a",
+                                                   "b", "x", "y", "black", "white", "ltrigger", "rtrigger" };
+static const char *const k_key_label[KEY_COUNT] = { "UP",       "DOWN",     "LEFT",     "RIGHT",    "START",
+                                                    "BACK",     "A BUTTON", "B BUTTON", "X BUTTON", "Y BUTTON",
+                                                    "BLACK",    "WHITE",    "L TRIGGER", "R TRIGGER" };
+
+static const KeyBinding k_keys_default[KEY_COUNT] = {
     { SDL_SCANCODE_UP, XB_DPAD_UP },        { SDL_SCANCODE_DOWN, XB_DPAD_DOWN },
     { SDL_SCANCODE_LEFT, XB_DPAD_LEFT },    { SDL_SCANCODE_RIGHT, XB_DPAD_RIGHT },
     { SDL_SCANCODE_RETURN, XB_START },      { SDL_SCANCODE_BACKSPACE, XB_BACK },
@@ -188,6 +201,119 @@ static KeyBinding s_keys[] = {
     { SDL_SCANCODE_E, BIND_ANALOG | XB_BLACK }, { SDL_SCANCODE_Q, BIND_ANALOG | XB_WHITE },
     { SDL_SCANCODE_W, BIND_ANALOG | XB_LTRIG }, { SDL_SCANCODE_R, BIND_ANALOG | XB_RTRIG },
 };
+
+static KeyBinding s_keys[KEY_COUNT];
+static int s_block; /* the keyboard page is open: the game sees nothing pressed */
+
+static int keys_path(char *path, size_t n)
+{
+    char base[4096];
+    if (sf_exe_dir(base, sizeof base) != 0) {
+        return -1;
+    }
+    return snprintf(path, n, "%s/config/keyboard.txt", base) < (int)n ? 0 : -1;
+}
+
+void sf_keys_default(void)
+{
+    memcpy(s_keys, k_keys_default, sizeof s_keys);
+}
+
+/* config/keyboard.txt: a line "name=Key" per binding, Key as SDL names it */
+static void keys_load(void)
+{
+    char path[4200];
+    char line[256];
+    FILE *f;
+    sf_keys_default();
+    if (keys_path(path, sizeof path) != 0 || !(f = fopen(path, "r"))) {
+        return;
+    }
+    while (fgets(line, sizeof line, f)) {
+        char *eq = strchr(line, '=');
+        char *end;
+        int i;
+        if (!eq) {
+            continue;
+        }
+        *eq++ = 0;
+        end = eq + strcspn(eq, "\r\n");
+        *end = 0;
+        for (i = 0; i < KEY_COUNT; i++) {
+            SDL_Scancode sc;
+            if (strcmp(line, k_key_name[i]) != 0) {
+                continue;
+            }
+            sc = SDL_GetScancodeFromName(eq);
+            if (sc != SDL_SCANCODE_UNKNOWN) {
+                s_keys[i].key = sc;
+            }
+        }
+    }
+    fclose(f);
+}
+
+int sf_keys_save(void)
+{
+    char path[4200];
+    char dir[4200];
+    FILE *f;
+    int i;
+    if (keys_path(path, sizeof path) != 0) {
+        return -1;
+    }
+    snprintf(dir, sizeof dir, "%s", path);
+    *strrchr(dir, '/') = 0;
+    mkdir(dir, 0755); /* EEXIST is fine */
+    f = fopen(path, "w");
+    if (!f) {
+        fprintf(stderr, "input: cannot write %s\n", path);
+        return -1;
+    }
+    for (i = 0; i < KEY_COUNT; i++) {
+        fprintf(f, "%s=%s\n", k_key_name[i], SDL_GetScancodeName(s_keys[i].key));
+    }
+    return fclose(f) == 0 ? 0 : -1;
+}
+
+int sf_keys_count(void)
+{
+    return KEY_COUNT;
+}
+
+const char *sf_keys_label(int i)
+{
+    return k_key_label[i];
+}
+
+int sf_keys_get(int i)
+{
+    return (int)s_keys[i].key;
+}
+
+/* A key moves to binding i; the binding that had it takes i's old key. */
+void sf_keys_set(int i, int key)
+{
+    int j;
+    for (j = 0; j < KEY_COUNT; j++) {
+        if (j != i && (int)s_keys[j].key == key) {
+            s_keys[j].key = s_keys[i].key;
+        }
+    }
+    s_keys[i].key = (SDL_Scancode)key;
+}
+
+void sf_input_block(int on)
+{
+    s_block = on;
+}
+
+static FILE *s_replay;
+
+int sf_input_replaying(void)
+{
+    return s_replay != NULL;
+}
 
 /* SF_AUTOPRESS=F[:BUTTON],...: that button (Start when none is named;
  * up, down, left, right, a, b, x, y, start, back) held on the keyboard
@@ -377,7 +503,6 @@ static void read_one(int i, const XbGamepad *x)
 #define RECORD_MAGIC "SF3I"
 
 static FILE *s_record;
-static FILE *s_replay;
 
 static void record_open(void)
 {
@@ -449,9 +574,20 @@ void xb_PADRead(void)
             memset(x, 0, sizeof x);
             x[0].connected = 1;
         }
-    } else if (s_record) {
-        fwrite(x, sizeof x, 1, s_record);
-        fflush(s_record);
+    } else {
+        if (s_block) {
+            /* the keyboard page has the keys; the game, and so the
+             * recording, sees nothing pressed */
+            for (i = 0; i < PORTS; i++) {
+                int c = x[i].connected;
+                memset(&x[i], 0, sizeof x[i]);
+                x[i].connected = c;
+            }
+        }
+        if (s_record) {
+            fwrite(x, sizeof x, 1, s_record);
+            fflush(s_record);
+        }
     }
     for (i = 0; i < PORTS; i++) {
         TARPAD *t = &tarpad_root[i];

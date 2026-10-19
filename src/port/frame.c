@@ -51,6 +51,18 @@ s32 flSetRenderState(s32 state, u32 value);
 
 s32 flPADInitialize(void);
 
+static int s_quit;
+
+void sf_port_quit(void)
+{
+    s_quit = 1;
+}
+
+int sf_port_quitting(void)
+{
+    return s_quit;
+}
+
 void sf_game_init(void)
 {
     sf_video_init(640, 448);
@@ -62,6 +74,7 @@ void sf_game_init(void)
     njUserInit();
     palCreateGhost();
     ppgMakeConvTableTexDC();
+    sf_menu_ext_init();
 }
 
 void sf_game_frame(void)
@@ -114,12 +127,13 @@ void sf_game_frame(void)
     PLsw[1][0] = p2sw_buff;
 
     if (getenv("SF_INPUT_DEBUG") && (p1sw_0 | p2sw_0)) {
-        fprintf(stderr, "frame: p1sw %04X p2sw %04X; entry task condition %u r_no %u %u %u\n", p1sw_0, p2sw_0,
+        fprintf(stderr, "frame %d: p1sw %04X p2sw %04X; entry task condition %u r_no %u %u %u\n", sf_port_frame, p1sw_0, p2sw_0,
                 task[1].condition, task[1].r_no[0], task[1].r_no[1], task[1].r_no[2]);
     }
     render_start();
     mpp_w.inGame = 0;
     njUserMain();
+    sf_menu_ext_frame();
     seqsBeforeProcess();
     njdp2d_draw(7);
     seqsAfterProcess();
