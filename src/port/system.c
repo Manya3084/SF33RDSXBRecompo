@@ -23,10 +23,10 @@
 
 /* Globals the game logic uses whose storage was in retail's platform
  * files, with the types the game declares them with. */
-MPP mpp_w;
-PLW plw[2];
-s32 system_init_level;
-MemMan rckey_mmobj; /* RAMCNT's heap, on the native memory manager */
+MPP mpp_w SF_GAME;
+PLW plw[2] SF_GAME;
+s32 system_init_level SF_GAME;
+MemMan rckey_mmobj SF_GAME; /* RAMCNT's heap, on the native memory manager */
 
 /* Types as the defining files have them. */
 extern struct _TASK task[11];
@@ -86,9 +86,10 @@ void Check_Replay_Status(s16 PL_id, u8 Status);
 #define SF_POOL_SIZE 0xE00000u
 #define SF_POOL_ALIGN 0x40u
 
-static uint8_t *s_pool_base;
-static uintptr_t s_pool_front;
-static uintptr_t s_pool_back;
+/* the work pool's ends move as the game takes and gives back work: game state */
+static uint8_t *s_pool_base SF_GAME;
+static uintptr_t s_pool_front SF_GAME;
+static uintptr_t s_pool_back SF_GAME;
 
 static void pool_init(void)
 {
@@ -309,7 +310,7 @@ s32 njUserMain(void)
 
 /* ---- the PS2-sized picture (retail's CP3toPS2Draw, xb_0F4537.c) ---- */
 
-static int s_cp3_on;
+static int s_cp3_on SF_GAME;
 
 extern struct _SAVE_W save_w[6];
 extern u8 Disp_Size_H;

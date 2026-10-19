@@ -34,9 +34,9 @@
 #define SAVE_VERSION 1u
 
 /* Storage the game declares and retail's platform files defined. */
-u8 sound_mode;
-s16 bgm_level;
-s16 se_level;
+u8 sound_mode SF_GAME;
+s16 bgm_level SF_GAME;
+s16 se_level SF_GAME;
 
 extern struct _SAVE_W save_w[6];
 extern _REPLAY_W Replay_w;
@@ -66,7 +66,7 @@ s16 Check_SysDir_Page(void);
 static const char *const k_name[2] = { "system.sav", "directions.sav" };
 
 /* The player who picked the replay to load (retail's, read by Load_Replay). */
-u8 D_007AA5EF;
+u8 D_007AA5EF SF_GAME;
 
 static int s_kind;
 static int s_mode;

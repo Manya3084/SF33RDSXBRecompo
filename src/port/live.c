@@ -10,9 +10,10 @@
  * already holds, and here the exchange finishes at once and leaves them.
  * Whether it also changes permission_player offline is unconfirmed. */
 
+#include "port/port.h"
 #include "types.h"
 
-static s32 s_sync_done;
+static s32 s_sync_done SF_GAME;
 
 s32 xb_GetOnlineFlag(void)
 {

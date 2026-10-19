@@ -68,7 +68,7 @@ static const s32 k_pan_r[65] = {
 };
 
 /* Retail's mono switch (mlSysSetMono writes it): every effect centred. */
-s32 D_00797100;
+s32 D_00797100 SF_GAME;
 
 /* ---- the sound banks (cue tables) ---- */
 

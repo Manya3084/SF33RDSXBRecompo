@@ -310,6 +310,33 @@ void sf_input_block(int on)
 
 static FILE *s_replay;
 
+/* The tape: every frame's pads from a mark, so frames run again after a
+ * rollback read the same pads (src/port/state.c). Recording, each read
+ * appends; playing, each read takes the next instead of the devices. */
+#define TAPE_MAX 1024
+static XbGamepad s_tape[TAPE_MAX][PORTS] SF_KEEP;
+static int s_tape_n SF_KEEP;
+static int s_tape_at SF_KEEP = -1; /* playing from here; -1 recording or off */
+static int s_tape_on SF_KEEP;
+
+void sf_input_tape_mark(void)
+{
+    s_tape_on = 1;
+    s_tape_n = 0;
+    s_tape_at = -1;
+}
+
+void sf_input_tape_rewind(void)
+{
+    s_tape_at = 0;
+}
+
+void sf_input_tape_off(void)
+{
+    s_tape_on = 0;
+    s_tape_at = -1;
+}
+
 int sf_input_replaying(void)
 {
     return s_replay != NULL;
@@ -565,6 +592,14 @@ void xb_PADRead(void)
             last[i] = x[i].buttons;
         }
     }
+    if (s_tape_at >= 0) {
+        /* frames running again: the pads they had */
+        memcpy(x, s_tape[s_tape_at], sizeof x);
+        if (++s_tape_at >= s_tape_n) {
+            s_tape_at = -1; /* caught up: the devices again, still taped */
+        }
+        goto have_pads;
+    }
     if (s_replay) {
         if (fread(x, sizeof x, 1, s_replay) != 1) {
             /* past the end: the game goes on with nothing pressed */
@@ -589,6 +624,10 @@ void xb_PADRead(void)
             fflush(s_record);
         }
     }
+    if (s_tape_on && s_tape_n < TAPE_MAX) {
+        memcpy(s_tape[s_tape_n++], x, sizeof x);
+    }
+have_pads:
     for (i = 0; i < PORTS; i++) {
         TARPAD *t = &tarpad_root[i];
         read_one(i, &x[i]);

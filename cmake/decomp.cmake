@@ -136,6 +136,7 @@ add_library(sf_port STATIC
     src/port/se.c
     src/port/menu_ext.c
     src/port/display.c
+    src/port/state.c
     src/port/live.c
     src/game/adx.c
     src/game/aix.c
@@ -149,6 +150,17 @@ target_link_libraries(sf_port PUBLIC sf_gfx sf_render)
 set_target_properties(sf_port PROPERTIES POSITION_INDEPENDENT_CODE OFF)
 target_compile_options(sf_port PRIVATE -fno-pie)
 
+# The port's own variables (the window, textures, sound, input devices)
+# are not the game's state: their sections are renamed so the linker marks
+# them (__start_sfport_data and the rest) and a game-state snapshot
+# (src/port/state.c) leaves them out.
+find_program(SF_OBJCOPY NAMES objcopy REQUIRED)
+foreach(_lib sf_port sf_gfx sf_render)
+    add_custom_command(TARGET ${_lib} POST_BUILD
+        COMMAND ${SF_OBJCOPY} --rename-section .data=sfport_data --rename-section .bss=sfport_bss $<TARGET_FILE:${_lib}>
+        COMMENT "Port state sections in ${_lib}")
+endforeach()
+
 add_custom_command(OUTPUT "${SF_DECOMP_GEN}/stubs.c"
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py"
         --aliases "${SF_DECOMP_GEN}/fold.txt" "${SF_DECOMP_GEN}/stubs.c"
@@ -160,7 +172,7 @@ add_executable(sf33rdsxb_game src/port/main.c src/host/paths.c "${SF_DECOMP_GEN}
 target_include_directories(sf33rdsxb_game PRIVATE src)
 target_compile_options(sf33rdsxb_game PRIVATE -fno-pie)
 set_source_files_properties("${SF_DECOMP_GEN}/stubs.c" PROPERTIES COMPILE_OPTIONS "-Wno-error;-w;-fno-builtin")
-target_link_options(sf33rdsxb_game PRIVATE -no-pie -rdynamic)
+target_link_options(sf33rdsxb_game PRIVATE -no-pie -rdynamic -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
 # the port libraries twice: the decomp calls into them, and they into it
 target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB m)
 

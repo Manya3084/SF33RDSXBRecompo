@@ -90,7 +90,14 @@ def main() -> int:
         p = host_lib(lib)
         if p:
             host |= syms(p, dynamic=True)[0]
-    need = sorted(n for n in undef - defined - host if not n.startswith("_GLOBAL_OFFSET_TABLE_"))
+    # names the linker itself provides: the section bounds the game-state
+    # snapshot reads (src/port/state.c)
+    linker = {"__data_start", "_edata", "__bss_start", "_end"}
+    need = sorted(
+        n
+        for n in undef - defined - host - linker
+        if not n.startswith(("_GLOBAL_OFFSET_TABLE_", "__start_", "__stop_"))
+    )
     # an alias whose body is not built yet needs a stub of its own
     need += sorted({aliases[n] for n in need if n in aliases} - defined - set(need))
     lines = [

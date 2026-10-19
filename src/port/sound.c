@@ -69,7 +69,15 @@ typedef struct Voice {
     int32_t entries[ENTRY_MAX];
     int entry_n;
     int seamless;
+    /* what now holds, so a rollback can decode it again: an archive
+     * member (a stem when stem), an ADX in the game's memory, the AIX */
+    int src;
+    s32 src_fid;
+    const void *src_mem;
+    int src_stem;
 } Voice;
+
+enum { SRC_NONE, SRC_AFS, SRC_MEM, SRC_AIX };
 
 static ALCdevice *s_dev;
 static ALCcontext *s_ctx;
@@ -206,6 +214,7 @@ static void voice_stop(Voice *v)
     v->playing = 0;
     v->ended = 0;
     v->paused = 0;
+    v->src = SRC_NONE;
     if (!v->source) {
         pcm_free(&v->now);
         return;
@@ -231,11 +240,15 @@ static int voice_next_entry(Voice *v)
     memmove(v->entries, v->entries + 1, (size_t)(v->entry_n - 1) * sizeof v->entries[0]);
     v->entry_n--;
     pcm_free(&v->now);
+    v->src = SRC_NONE;
     if (pcm_from_afs(fid, &v->now) != 0) {
         return 0;
     }
     v->now.loop = 0; /* a stem plays once; the queue is the loop */
     v->pos = 0;
+    v->src = SRC_AFS;
+    v->src_fid = fid;
+    v->src_stem = 1;
     return 1;
 }
 
@@ -446,6 +459,9 @@ void ADXT_StartAfs(AdxtHandle *a, s32 patid, s32 fid)
     a->v.seamless = 0;
     if (pcm_from_afs(fid, &a->v.now) == 0) {
         a->v.pos = 0;
+        a->v.src = SRC_AFS;
+        a->v.src_fid = fid;
+        a->v.src_stem = 0;
         voice_start(&a->v);
     }
 }
@@ -466,6 +482,8 @@ void ADXT_StartMem(AdxtHandle *a, void *adx)
     }
     if (size && pcm_from_adx(adx, size, &a->v.now) == 0) {
         a->v.pos = 0;
+        a->v.src = SRC_MEM;
+        a->v.src_mem = adx;
         voice_start(&a->v);
     }
 }
@@ -583,7 +601,9 @@ void *AIXP_Create(s32 maxnch, s32 nstm, void *work, s32 worksize)
 
 /* The opening theme, data/audio/NAME: its front stereo pair (the AIX's
  * other pairs are the surround channels). */
-void xb_aixp_StartFnameSurround(void *aixp, const char *fname, void *dir)
+static char s_aix_name[64];
+
+static int aix_load(const char *fname, Pcm *out)
 {
     char base[4096];
     char path[4096 + 300];
@@ -592,18 +612,14 @@ void xb_aixp_StartFnameSurround(void *aixp, const char *fname, void *dir)
     uint8_t *data;
     SfAix aix;
     char err[256];
-    (void)aixp;
-    (void)dir;
-    sdebug("AIXP start %s", fname);
-    voice_stop(&s_aixp);
     if (sf_exe_dir(base, sizeof base) != 0) {
-        return;
+        return -1;
     }
     snprintf(path, sizeof path, "%s/data/audio/%s", base, fname);
     f = fopen(path, "rb");
     if (!f) {
         fprintf(stderr, "sound: %s missing\n", path);
-        return;
+        return -1;
     }
     fseek(f, 0, SEEK_END);
     n = ftell(f);
@@ -612,22 +628,36 @@ void xb_aixp_StartFnameSurround(void *aixp, const char *fname, void *dir)
     if (!data || fread(data, 1, (size_t)n, f) != (size_t)n) {
         fclose(f);
         free(data);
-        return;
+        return -1;
     }
     fclose(f);
     if (sf_aix_decode(data, (uint32_t)n, &aix, err, sizeof err) != 0) {
         fprintf(stderr, "sound: %s: %s\n", fname, err);
         free(data);
-        return;
+        return -1;
     }
     free(data);
-    s_aixp.now.pcm = aix.pcm;
-    s_aixp.now.channels = aix.channels;
-    s_aixp.now.rate = aix.rate;
-    s_aixp.now.total = aix.total;
-    s_aixp.now.loop = aix.loop;
-    s_aixp.now.loop_start = aix.loop_start;
-    s_aixp.now.loop_end = aix.loop_end;
+    out->pcm = aix.pcm;
+    out->channels = aix.channels;
+    out->rate = aix.rate;
+    out->total = aix.total;
+    out->loop = aix.loop;
+    out->loop_start = aix.loop_start;
+    out->loop_end = aix.loop_end;
+    return 0;
+}
+
+void xb_aixp_StartFnameSurround(void *aixp, const char *fname, void *dir)
+{
+    (void)aixp;
+    (void)dir;
+    sdebug("AIXP start %s", fname);
+    voice_stop(&s_aixp);
+    if (aix_load(fname, &s_aixp.now) != 0) {
+        return;
+    }
+    snprintf(s_aix_name, sizeof s_aix_name, "%s", fname);
+    s_aixp.src = SRC_AIX;
     s_aixp.pos = 0;
     voice_start(&s_aixp);
 }
@@ -687,4 +717,139 @@ void *XPhysicalAlloc(u32 size, u32 addr, u32 align, u32 protect)
     (void)addr;
     (void)protect;
     return sf_low_alloc(size, align ? align : 16);
+}
+
+/* ---- rollback: the streams' place in the game's time ---- */
+
+/* What the game sees of a stream (its status, its stem queue) moves with
+ * the frames, so a rollback puts it back with the game's state. The
+ * decoded audio and the device's source are not copied: a stream whose
+ * file changed is decoded again, and the source refills from the place. */
+typedef struct StreamState {
+    int used;
+    int src;
+    s32 src_fid;
+    const void *src_mem;
+    int src_stem;
+    int32_t pos;
+    double due;
+    int playing;
+    int ended;
+    int paused;
+    int loop_on;
+    float gain;
+    int32_t entries[ENTRY_MAX];
+    int entry_n;
+    int seamless;
+} StreamState;
+
+#define STREAMS (sizeof s_adxt / sizeof s_adxt[0] + 1)
+
+typedef struct SoundState {
+    StreamState st[STREAMS];
+    char aix[64];
+} SoundState;
+
+static Voice *stream(size_t i, int **used)
+{
+    if (i < sizeof s_adxt / sizeof s_adxt[0]) {
+        *used = &s_adxt[i].used;
+        return &s_adxt[i].v;
+    }
+    *used = NULL;
+    return &s_aixp;
+}
+
+size_t sf_sound_state_size(void)
+{
+    return sizeof(SoundState);
+}
+
+void sf_sound_state_save(void *buf)
+{
+    SoundState *ss = buf;
+    size_t i;
+    memset(ss, 0, sizeof *ss);
+    for (i = 0; i < STREAMS; i++) {
+        int *used;
+        Voice *v = stream(i, &used);
+        StreamState *t = &ss->st[i];
+        t->used = used ? *used : 1;
+        t->src = v->src;
+        t->src_fid = v->src_fid;
+        t->src_mem = v->src_mem;
+        t->src_stem = v->src_stem;
+        t->pos = v->pos;
+        t->due = v->due;
+        t->playing = v->playing;
+        t->ended = v->ended;
+        t->paused = v->paused;
+        t->loop_on = v->loop_on;
+        t->gain = v->gain;
+        memcpy(t->entries, v->entries, sizeof t->entries);
+        t->entry_n = v->entry_n;
+        t->seamless = v->seamless;
+    }
+    memcpy(ss->aix, s_aix_name, sizeof ss->aix);
+}
+
+void sf_sound_state_restore(const void *buf)
+{
+    const SoundState *ss = buf;
+    size_t i;
+    for (i = 0; i < STREAMS; i++) {
+        int *used;
+        Voice *v = stream(i, &used);
+        const StreamState *t = &ss->st[i];
+        int same = v->src == t->src && v->now.pcm &&
+                   (t->src == SRC_AFS ? v->src_fid == t->src_fid && v->src_stem == t->src_stem
+                    : t->src == SRC_MEM ? v->src_mem == t->src_mem
+                    : t->src == SRC_AIX ? strcmp(s_aix_name, ss->aix) == 0
+                                        : 1);
+        if (used) {
+            *used = t->used;
+        }
+        if (!same) {
+            voice_stop(v); /* frees the audio, empties the source */
+            if (t->src == SRC_AFS && pcm_from_afs(t->src_fid, &v->now) == 0) {
+                if (t->src_stem) {
+                    v->now.loop = 0;
+                }
+            } else if (t->src == SRC_MEM && t->src_mem) {
+                uint32_t size = adx_size(t->src_mem);
+                if (!size || pcm_from_adx(t->src_mem, size, &v->now) != 0) {
+                    memset(&v->now, 0, sizeof v->now);
+                }
+            } else if (t->src == SRC_AIX && aix_load(ss->aix, &v->now) == 0) {
+                snprintf(s_aix_name, sizeof s_aix_name, "%s", ss->aix);
+            }
+        } else if (v->source) {
+            /* the same audio from another place: the queued samples go */
+            ALint queued = 0;
+            alSourceStop(v->source);
+            alGetSourcei(v->source, AL_BUFFERS_QUEUED, &queued);
+            while (queued-- > 0 && v->free_n < VOICE_BUFFERS) {
+                alSourceUnqueueBuffers(v->source, 1, &v->free_buf[v->free_n]);
+                v->free_n++;
+            }
+            v->started = 0;
+        }
+        v->src = v->now.pcm ? t->src : SRC_NONE;
+        v->src_fid = t->src_fid;
+        v->src_mem = t->src_mem;
+        v->src_stem = t->src_stem;
+        v->pos = t->pos;
+        v->due = t->due;
+        v->playing = t->playing && v->now.pcm;
+        v->ended = t->ended;
+        v->paused = t->paused;
+        v->loop_on = t->loop_on;
+        v->gain = t->gain;
+        memcpy(v->entries, t->entries, sizeof v->entries);
+        v->entry_n = t->entry_n;
+        v->seamless = t->seamless;
+        if (v->source) {
+            alSourcef(v->source, AL_GAIN, v->gain);
+        }
+    }
 }

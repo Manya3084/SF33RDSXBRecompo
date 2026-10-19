@@ -36,6 +36,13 @@ void *sf_low_alloc(size_t size, size_t align)
     return s_base + at;
 }
 
+/* The arena and how much of it is in use, for the game-state snapshot. */
+void sf_low_extent(uint8_t **base, size_t *used)
+{
+    *base = s_base;
+    *used = s_used;
+}
+
 void sf_low_free(void *p)
 {
     if (p && ((uint8_t *)p < s_base || (uint8_t *)p >= s_base + SF_LOW_ARENA)) {

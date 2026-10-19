@@ -66,6 +66,11 @@ int sf_keys_save(void);
 void sf_input_block(int on);
 /* 1 while SF_REPLAY plays a recording in place of the devices. */
 int sf_input_replaying(void);
+/* The input tape (rollback): mark starts taping each frame's pads, rewind
+ * makes the next reads take them again, off stops. */
+void sf_input_tape_mark(void);
+void sf_input_tape_rewind(void);
+void sf_input_tape_off(void);
 
 /* Replays (src/port/save.c): ten slots in data/save. sf_replay_slot says
  * what a slot holds (1 a replay, 0 none, -1 damaged). */
@@ -73,6 +78,22 @@ int sf_input_replaying(void);
 int sf_replay_slot(int slot, int chars[2], long long *when);
 int sf_replay_save(int slot);
 int sf_replay_load(int slot);
+
+/* The game's state as one block (src/port/state.c), for rollback. SF_KEEP
+ * puts a variable outside it, even in a test that snapshots the port too:
+ * the snapshot's own bookkeeping and the input tape. */
+#define SF_KEEP __attribute__((section("sfkeep")))
+/* SF_GAME keeps a variable a port file defines in the game's state: the
+ * game's own globals whose storage was in retail's platform files. */
+#define SF_GAME __attribute__((section("sfgame")))
+size_t sf_state_size(void);
+void sf_state_save(uint8_t *buf);
+void sf_state_restore(const uint8_t *buf);
+void sf_state_test_frame(void);
+/* The music streams' place, which the game waits on (src/port/sound.c). */
+size_t sf_sound_state_size(void);
+void sf_sound_state_save(void *buf);
+void sf_sound_state_restore(const void *buf);
 
 /* The port's additions to the game's menus (src/port/menu_ext.c). */
 /* The replay slot page, run by SaveMove each frame: start is set on the

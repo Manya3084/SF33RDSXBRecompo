@@ -153,4 +153,5 @@ void sf_game_frame(void)
     BGM_Server();
     sf_se_frame();
     sf_sound_pump();
+    sf_state_test_frame();
 }
