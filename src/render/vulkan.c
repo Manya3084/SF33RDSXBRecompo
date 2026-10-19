@@ -995,9 +995,14 @@ static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *li
     if (vkBeginCommandBuffer(r->cmd, &begin) != VK_SUCCESS) {
         return -1;
     }
+    /* SF_SHOT_SCREEN: 1 reads the PS2-sized picture, 2 the layer drawn over it */
+    const char *which = getenv("SF_SHOT_SCREEN");
+    if (r->shot_pending && which && which[0] == '1') {
+        sf_scene_read_layer1(r->scene);
+    }
     sf_scene_record(r->scene, r->cmd, list);
-    if (r->shot_pending) {
-        sf_scene_record_readback(r->scene, r->cmd, 1);
+    if (r->shot_pending && !(which && which[0] == '1')) {
+        sf_scene_record_readback(r->scene, r->cmd, which && which[0] == '2' ? 0 : 1);
     }
     memset(&clear, 0, sizeof clear);
     clear.color.float32[3] = 1.f;

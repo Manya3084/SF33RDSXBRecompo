@@ -151,6 +151,23 @@ s32 ADXF_ReadNw(void *adxf, s32 nsct, void *buf)
     return nsct;
 }
 
+/* A whole archive member, malloc'd (the sound code's reads). */
+int sf_afs_read(s32 fid, u8 **data, u32 *size)
+{
+    u8 *buf;
+    if (s_fd < 0 || fid < 0 || (u32)fid >= s_count) {
+        return -1;
+    }
+    *size = s_toc[fid * 2 + 1];
+    buf = malloc(*size ? *size : 1);
+    if (!buf || pread(s_fd, buf, *size, (off_t)s_toc[fid * 2]) != (ssize_t)*size) {
+        free(buf);
+        return -1;
+    }
+    *data = buf;
+    return 0;
+}
+
 /* the CRI server tick: nothing to run, reads finish when asked for */
 void ADXM_ExecMain(void)
 {

@@ -29,7 +29,7 @@ The game code keeps some addresses in `u32` words. `sf33rdsxb_game` is linked no
 
 ## What src/port holds
 
-- `gfx.c`: texture and palette handles, the render state call, the quads, the PS2-sized picture's copy. `render/scene.c` draws them on Vulkan at a whole multiple of 640x480 (the window's, or `SF_SCALE`), shown 4:3.
+- `gfx.c`: texture and palette handles, the render state call, the quads, the PS2-sized picture's copy. `render/scene.c` draws them on Vulkan at a whole multiple of 640x480 (the window's, or `SF_SCALE`), shown 4:3. Each quad's edges move to the 640x480 pixels D3D would cover, with its texture coordinates recomputed at the moved corners, and each sample is taken at its 640x480 pixel's centre within the quad's texture rectangle: a larger screen shows exactly the pixels 640x480 does, without the seams a finer grid opens between the game's tiles.
 - `system.c`: the start-up (`njUserInit`), the task loop, the work pool.
 - `files.c`: CRI's file calls over `data/afs/SF33RDXB.AFS`.
 - `input.c`: the keyboard (port 0) and SDL3 gamepads (ports 1 to 3) through retail's pad conversion and `keyConvert`.
@@ -40,7 +40,7 @@ The memory manager is `src/game/memman.c`: the decomp's keeps two pointers in a 
 
 ## Debugging
 
-`SF_SHOT=FRAME:PATH` writes the output after that frame as a PPM. `SF_AUTOPRESS=F1,F2` holds Start for six frames from each. `SF_INPUT_DEBUG=1` prints pad changes. `SF_COUNTRY=1..4` picks the region (4, North America, by default).
+`SF_SHOT=FRAME:PATH` writes the output after that frame as a PPM (`SF_SHOT_SCREEN=1` the PS2-sized picture before its copy, `2` the layer drawn over it). `SF_DUMP_QUADS=FRAME` lists the frame's quads, `SF_DUMP_TEX=FRAME` writes its textures to the working directory. `SF_AUTOPRESS=F1,F2` holds Start for six frames from each. `SF_INPUT_DEBUG=1` prints pad changes. `SF_COUNTRY=1..4` picks the region (4, North America, by default).
 
 ## Frame
 

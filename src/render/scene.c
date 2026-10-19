@@ -40,7 +40,8 @@ typedef struct Push {
     uint32_t ops;
     uint32_t misc;
     float size[2];
-    float pad[2];
+    float scale;
+    float pad;
 } Push;
 
 struct SfScene {
@@ -98,6 +99,7 @@ struct SfScene {
     VkPipeline copy_opaque;
     VkPipeline copy_blend;
     VkDeviceSize readback_size;
+    int read_layer1; /* debugging: read the PS2-sized picture before its copy */
 };
 
 static uint32_t mem_index(VkPhysicalDevice physical, uint32_t bits, VkMemoryPropertyFlags flags)
@@ -501,7 +503,7 @@ static VkPipeline make_pipe(SfScene *s, const SfBlendKey *k)
 {
     VkPipelineShaderStageCreateInfo stages[2];
     VkVertexInputBindingDescription vb;
-    VkVertexInputAttributeDescription va[3];
+    VkVertexInputAttributeDescription va[4];
     VkPipelineVertexInputStateCreateInfo vertex;
     VkPipelineInputAssemblyStateCreateInfo assembly;
     VkPipelineViewportStateCreateInfo viewport;
@@ -540,11 +542,15 @@ static VkPipeline make_pipe(SfScene *s, const SfBlendKey *k)
     va[2].binding = 0;
     va[2].format = VK_FORMAT_R32G32_SFLOAT;
     va[2].offset = offsetof(SfVertex, u);
+    va[3].location = 3;
+    va[3].binding = 0;
+    va[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    va[3].offset = offsetof(SfVertex, u0);
     memset(&vertex, 0, sizeof vertex);
     vertex.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex.vertexBindingDescriptionCount = 1;
     vertex.pVertexBindingDescriptions = &vb;
-    vertex.vertexAttributeDescriptionCount = 3;
+    vertex.vertexAttributeDescriptionCount = 4;
     vertex.pVertexAttributeDescriptions = va;
     memset(&assembly, 0, sizeof assembly);
     assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -1288,6 +1294,7 @@ static void record_screen(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l, 
                     (uint32_t)st->alpha_ref << 8;
         push.size[0] = st->tex ? (float)l->tex[st->tex].w : 1.f;
         push.size[1] = st->tex ? (float)l->tex[st->tex].h : 1.f;
+        push.scale = (float)k;
         vkCmdPushConstants(cmd, s->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, &push);
         vkCmdDrawIndexed(cmd, b->quads * 6, 1, (b->first / 4) * 6, 0, 0);
     }
@@ -1337,12 +1344,21 @@ static void record_copy(SfScene *s, VkCommandBuffer cmd, int clear_out, uint32_t
     vkCmdEndRenderPass(cmd);
 }
 
+void sf_scene_read_layer1(SfScene *s)
+{
+    s->read_layer1 = 1;
+}
+
 void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l)
 {
     record_uploads(s, cmd);
     if (l->cp3) {
         uint32_t at = l->cp3_at < l->b_n ? l->cp3_at : l->b_n;
         record_screen(s, cmd, l, 0, at, l->clear);
+        if (s->read_layer1) {
+            sf_scene_record_readback(s, cmd, 0);
+            s->read_layer1 = 0;
+        }
         record_copy(s, cmd, 1, l->clear, s->copy_opaque, l->cp3_rect, l->show_at);
         record_screen(s, cmd, l, at, l->b_n, 0);
         record_copy(s, cmd, 0, 0, s->copy_blend, l->show, l->show_at);

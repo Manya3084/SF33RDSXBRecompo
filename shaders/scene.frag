@@ -14,10 +14,12 @@ layout(push_constant) uniform Push {
     uint ops;   // colour op | alpha op << 8 | address u << 16 | address v << 24
     uint misc;  // point 1, indexed 2, texel uv 4, textured 8, alpha test 16, func << 5, ref << 8
     vec2 size;
+    float scale; // screen pixels per 640x480 pixel
 } pc;
 
 layout(location = 0) in vec4 v_color;
 layout(location = 1) in vec2 v_uv;
+layout(location = 2) flat in vec4 v_rect; // the quad's u0, v0, u1, v1
 layout(location = 0) out vec4 o;
 
 int address(int i, int n, uint mode)
@@ -36,9 +38,16 @@ int address(int i, int n, uint mode)
     return w < 0 ? w + n : w;
 }
 
+// The texels the quad covers. Drawn 1:1, as retail draws it, every sample
+// lands on a texel centre inside them; drawn larger, the edge samples
+// would blend in the next cell of the texture's atlas, so taps clamp here.
+ivec2 lo;
+ivec2 hi;
+
 vec4 fetch(ivec2 t)
 {
     ivec2 n = ivec2(pc.size);
+    t = clamp(t, lo, hi);
     ivec2 a = ivec2(address(t.x, n.x, (pc.ops >> 16) & 0xFFu), address(t.y, n.y, (pc.ops >> 24) & 0xFFu));
     vec4 c = texelFetch(sampler2D(tex[pc.tex], smp), a, 0);
     if ((pc.misc & 2u) != 0u) {
@@ -50,7 +59,17 @@ vec4 fetch(ivec2 t)
 
 vec4 sample_texture()
 {
-    vec2 t = (pc.misc & 4u) != 0u ? v_uv : v_uv * pc.size;
+    vec2 scale = (pc.misc & 4u) != 0u ? vec2(1.0) : pc.size;
+    // the texture coordinate at the centre of the 640x480 pixel this one
+    // is part of, which is where a 640x480 screen samples it
+    vec2 base = (floor(gl_FragCoord.xy / pc.scale) + 0.5) * pc.scale;
+    vec2 d = base - gl_FragCoord.xy;
+    vec2 uv = v_uv + dFdx(v_uv) * d.x + dFdy(v_uv) * d.y;
+    vec2 t = uv * scale;
+    vec2 r0 = v_rect.xy * scale;
+    vec2 r1 = v_rect.zw * scale;
+    lo = ivec2(floor(r0 + 1.0 / 1024.0));
+    hi = max(lo, ivec2(ceil(r1 - 1.0 / 1024.0)) - 1);
     if ((pc.misc & 1u) != 0u) {
         // NV2A interpolates in fixed point, so a sample exactly on a texel
         // edge takes the texel after it; float interpolation lands a hair

@@ -44,4 +44,8 @@ void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, co
 void sf_scene_record_readback(SfScene *s, VkCommandBuffer cmd, int output);
 const uint8_t *sf_scene_read(SfScene *s, int *w, int *h);
 
+/* Debugging: the next record reads the screen before the PS2-sized
+ * picture is copied off it (read with sf_scene_read). */
+void sf_scene_read_layer1(SfScene *s);
+
 #endif

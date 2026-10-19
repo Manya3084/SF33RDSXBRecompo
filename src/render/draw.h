@@ -73,6 +73,12 @@ typedef struct SfVertex {
     uint32_t color; /* D3DCOLOR: 0xAARRGGBB */
     float u;
     float v;
+    /* the quad's texture rectangle (its smallest and largest u and v):
+     * filtering stays inside it, as it does when the quad is drawn 1:1 */
+    float u0;
+    float v0;
+    float u1;
+    float v1;
 } SfVertex;
 
 /* A run of quads (4 vertices each, strip order 0 1 2 3) with one state. */

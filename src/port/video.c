@@ -72,6 +72,47 @@ void sf_video_present(void)
         fprintf(stderr, "video: %s\n", err);
         exit(1);
     }
+    if (getenv("SF_DUMP_QUADS") && atoi(getenv("SF_DUMP_QUADS")) == frame) {
+        /* debugging: each quad of the frame, its batch's texture and the
+         * texel rectangle it samples */
+        const SfDrawList *l = sf_gfx_list();
+        uint32_t b;
+        for (b = 0; b < l->b_n; b++) {
+            const SfBatch *bt = &l->b[b];
+            uint32_t q;
+            for (q = 0; q < bt->quads; q++) {
+                const SfVertex *v = &l->v[bt->first + q * 4];
+                const SfTexture *t = &l->tex[bt->shade.tex];
+                fprintf(stderr, "quad b%u tex %u (%dx%d) pos %.3f,%.3f-%.3f,%.3f uv %.3f,%.3f-%.3f,%.3f col %08X%s\n", b,
+                        bt->shade.tex, t->w, t->h, v[0].x, v[0].y, v[3].x, v[3].y, v[0].u * t->w, v[0].v * t->h,
+                        v[3].u * t->w, v[3].v * t->h, v[0].color, l->cp3 && b >= l->cp3_at ? " (over)" : "");
+            }
+        }
+    }
+    if (getenv("SF_DUMP_TEX") && atoi(getenv("SF_DUMP_TEX")) == frame) {
+        /* debugging: every texture as a PPM (an indexed one shows its index) */
+        const SfDrawList *l = sf_gfx_list();
+        int h;
+        for (h = 1; h < SF_TEX_MAX; h++) {
+            const SfTexture *t = &l->tex[h];
+            char path[64];
+            FILE *f;
+            int i;
+            if (!t->rgba) {
+                continue;
+            }
+            snprintf(path, sizeof path, "tex%03d%s.ppm", h, t->indexed ? "i" : "");
+            f = fopen(path, "wb");
+            if (!f) {
+                continue;
+            }
+            fprintf(f, "P6\n%d %d\n255\n", t->w, t->h);
+            for (i = 0; i < t->w * t->h; i++) {
+                fwrite(&t->rgba[i * 4], 1, 3, f);
+            }
+            fclose(f);
+        }
+    }
     screenshot(frame++);
     sf_gfx_frame_done();
 }

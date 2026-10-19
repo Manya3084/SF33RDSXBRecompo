@@ -21,6 +21,7 @@
 #include "structs.h"
 #include "sf33rd/AcrSDK/common/plcommon.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -964,6 +965,54 @@ static SfShadeState shade_state(int textured)
 
 static int s_quad_textured;
 
+/* A 640x480 pixel is a whole square of the screen at any scale. D3D covers
+ * pixel k when k (pixel centres are on integers) lies inside the quad, so
+ * an edge at e covers from pixel ceil(e) (after NV2A's 1/16 snap); the
+ * edge moves to that pixel's boundary, ceil(e) - 0.5. The texture
+ * coordinates are then taken from the quad's own position-to-texture
+ * mapping at the moved corners, so what is sampled where does not move:
+ * a larger screen covers and samples exactly what 640x480 does. */
+static float snap_edge(float e)
+{
+    return ceilf(floorf(e * 16.0f + 0.5f) / 16.0f) - 0.5f;
+}
+
+static void snap_quad(SfVertex *q)
+{
+    /* uv = a + (x - x0) * dx + (y - y0) * dy, from vertices 0, 1, 2 */
+    float ex = q[1].x - q[0].x;
+    float ey = q[1].y - q[0].y;
+    float fx = q[2].x - q[0].x;
+    float fy = q[2].y - q[0].y;
+    float det = ex * fy - ey * fx;
+    float dux;
+    float duy;
+    float dvx;
+    float dvy;
+    int i;
+    if (fabsf(det) < 1e-6f) {
+        return;
+    }
+    dux = ((q[1].u - q[0].u) * fy - (q[2].u - q[0].u) * ey) / det;
+    duy = ((q[2].u - q[0].u) * ex - (q[1].u - q[0].u) * fx) / det;
+    dvx = ((q[1].v - q[0].v) * fy - (q[2].v - q[0].v) * ey) / det;
+    dvy = ((q[2].v - q[0].v) * ex - (q[1].v - q[0].v) * fx) / det;
+    {
+        float x0 = q[0].x;
+        float y0 = q[0].y;
+        float ua = q[0].u;
+        float va = q[0].v;
+        for (i = 0; i < 4; i++) {
+            float nx = snap_edge(q[i].x);
+            float ny = snap_edge(q[i].y);
+            q[i].u = ua + (nx - x0) * dux + (ny - y0) * duy;
+            q[i].v = va + (nx - x0) * dvx + (ny - y0) * dvy;
+            q[i].x = nx;
+            q[i].y = ny;
+        }
+    }
+}
+
 static void push_quad(const SfVertex v[4])
 {
     SfDrawList *l = &g.list;
@@ -975,6 +1024,27 @@ static void push_quad(const SfVertex v[4])
         l->v = realloc(l->v, l->v_cap * sizeof *l->v);
     }
     memcpy(&l->v[l->v_n], v, 4 * sizeof *v);
+    {
+        SfVertex *q = &l->v[l->v_n];
+        float u0 = q[0].u;
+        float u1 = q[0].u;
+        float v0 = q[0].v;
+        float v1 = q[0].v;
+        int i;
+        for (i = 1; i < 4; i++) {
+            u0 = q[i].u < u0 ? q[i].u : u0;
+            u1 = q[i].u > u1 ? q[i].u : u1;
+            v0 = q[i].v < v0 ? q[i].v : v0;
+            v1 = q[i].v > v1 ? q[i].v : v1;
+        }
+        for (i = 0; i < 4; i++) {
+            q[i].u0 = u0;
+            q[i].v0 = v0;
+            q[i].u1 = u1;
+            q[i].v1 = v1;
+        }
+        snap_quad(q);
+    }
     if (!b || memcmp(&b->blend, &bk, sizeof bk) != 0 || memcmp(&b->shade, &ss, sizeof ss) != 0 ||
         b->clip[0] != g.clip[0] || b->clip[1] != g.clip[1] || b->clip[2] != g.clip[2] || b->clip[3] != g.clip[3]) {
         if (l->b_n == l->b_cap) {

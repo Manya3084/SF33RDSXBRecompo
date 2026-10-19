@@ -132,11 +132,14 @@ add_library(sf_port STATIC
     src/port/save.c
     src/port/banks.c
     src/port/math.c
+    src/port/sound.c
+    src/game/adx.c
+    src/game/aix.c
     src/host/paths.c
     src/game/memman.c
     src/mem/heap.c
 )
-target_link_libraries(sf_port PUBLIC ZLIB::ZLIB)
+target_link_libraries(sf_port PUBLIC ZLIB::ZLIB OpenAL::OpenAL)
 target_link_libraries(sf_port PUBLIC sf_gfx sf_render)
 set_target_properties(sf_port PROPERTIES POSITION_INDEPENDENT_CODE OFF)
 target_compile_options(sf_port PRIVATE -fno-pie)

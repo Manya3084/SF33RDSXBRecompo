@@ -125,4 +125,5 @@ void sf_game_frame(void)
     Irl_Family();
     Irl_Scrn();
     BGM_Server();
+    sf_sound_pump();
 }

@@ -1,0 +1,604 @@
+/* The game's music on OpenAL.
+ *
+ * The game drives its music through CRI's ADXT (an ADX streamed from the
+ * archive, a queue of ADX stems played back to back, a short ADX from
+ * memory) and AIXP (the opening theme's AIX). This keeps those calls and
+ * plays each on an OpenAL source: the file is decoded to PCM with the
+ * runtime's ADX and AIX decoders (src/game/adx.c, aix.c), and the source
+ * is fed a few buffers ahead from sf_sound_pump, once a frame. The status
+ * codes are CRI's: ADXT 0 stopped, 3 playing, 5 ended; AIXP 2 playing,
+ * 3 ended. Volumes are CRI's tenths of a decibel. */
+
+#include "game/adx.h"
+#include "game/aix.h"
+#include "host/paths.h"
+#include "port/port.h"
+
+#include "types.h"
+
+#include <AL/al.h>
+#include <AL/alc.h>
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define VOICE_BUFFERS 4
+#define BUFFER_SAMPLES 4096
+#define ENTRY_MAX 16
+
+enum { ADXT_STOP = 0, ADXT_PLAYING = 3, ADXT_PLAYEND = 5 };
+enum { AIXP_STOP = 0, AIXP_PLAYING = 2, AIXP_PLAYEND = 3 };
+
+/* Decoded PCM, interleaved s16, with its loop. */
+typedef struct Pcm {
+    int16_t *pcm;
+    int channels;
+    int rate;
+    int32_t total;
+    int loop;
+    int32_t loop_start;
+    int32_t loop_end;
+} Pcm;
+
+/* One OpenAL source fed from a Pcm, and the stems queued after it. */
+typedef struct Voice {
+    ALuint source;
+    ALuint buffers[VOICE_BUFFERS];
+    Pcm now;
+    int32_t pos;
+    int playing;
+    int ended;
+    int paused;
+    int loop_on; /* AIXP's loop switch; ADX loops follow the file */
+    float gain;
+    int32_t entries[ENTRY_MAX];
+    int entry_n;
+    int seamless;
+} Voice;
+
+static ALCdevice *s_dev;
+static ALCcontext *s_ctx;
+static int s_ready;
+
+/* The handles the game keeps. Static, so a u32 holds their address. */
+typedef struct AdxtHandle {
+    int used;
+    Voice v;
+} AdxtHandle;
+static AdxtHandle s_adxt[4];
+static Voice s_aixp;
+
+static float gain_of(s32 vol)
+{
+    if (vol <= -960) {
+        return 0.0f;
+    }
+    return powf(10.0f, (float)vol / 200.0f);
+}
+
+static void pcm_free(Pcm *p)
+{
+    free(p->pcm);
+    memset(p, 0, sizeof *p);
+}
+
+static int pcm_from_adx(const uint8_t *data, uint32_t size, Pcm *out)
+{
+    SfAdx adx;
+    char err[256];
+    if (sf_adx_decode(data, size, &adx, err, sizeof err) != 0) {
+        fprintf(stderr, "sound: ADX: %s\n", err);
+        return -1;
+    }
+    out->pcm = adx.pcm;
+    out->channels = adx.channels;
+    out->rate = adx.rate;
+    out->total = adx.total;
+    out->loop = adx.loop;
+    out->loop_start = adx.loop_start;
+    out->loop_end = adx.loop_end;
+    return 0;
+}
+
+static int pcm_from_afs(s32 fid, Pcm *out)
+{
+    uint8_t *data;
+    uint32_t size;
+    int r;
+    if (sf_afs_read(fid, &data, &size) != 0) {
+        fprintf(stderr, "sound: archive member %d unreadable\n", fid);
+        return -1;
+    }
+    r = pcm_from_adx(data, size, out);
+    if (r != 0) {
+        fprintf(stderr, "sound: archive member %d (%u bytes, starts %02X %02X %02X %02X) is not a playable ADX\n", fid,
+                size, data[0], data[1], data[2], data[3]);
+    }
+    free(data);
+    return r;
+}
+
+/* An ADX in memory: its size from the header (data offset, frames per
+ * channel, and the end frame). */
+static uint32_t adx_size(const uint8_t *p)
+{
+    uint32_t off;
+    uint32_t block;
+    uint32_t ch;
+    uint32_t total;
+    if (p[0] != 0x80 || p[1] != 0x00) {
+        return 0;
+    }
+    off = ((uint32_t)p[2] << 8 | p[3]) + 4;
+    block = p[5];
+    ch = p[7];
+    total = (uint32_t)p[12] << 24 | (uint32_t)p[13] << 16 | (uint32_t)p[14] << 8 | p[15];
+    if (block == 0 || ch == 0) {
+        return 0;
+    }
+    return off + ((total + 31) / 32 + 1) * block * ch;
+}
+
+static void voice_init(Voice *v)
+{
+    if (v->source || !s_ready) {
+        return;
+    }
+    alGenSources(1, &v->source);
+    alGenBuffers(VOICE_BUFFERS, v->buffers);
+    v->gain = 1.0f;
+}
+
+static void voice_stop(Voice *v)
+{
+    ALint queued = 0;
+    v->playing = 0;
+    v->ended = 0;
+    v->paused = 0;
+    if (!v->source) {
+        pcm_free(&v->now);
+        return;
+    }
+    alSourceStop(v->source);
+    alGetSourcei(v->source, AL_BUFFERS_QUEUED, &queued);
+    while (queued-- > 0) {
+        ALuint b;
+        alSourceUnqueueBuffers(v->source, 1, &b);
+    }
+    pcm_free(&v->now);
+}
+
+/* The next stem in the queue becomes the voice's PCM; 0 when there is none. */
+static int voice_next_entry(Voice *v)
+{
+    s32 fid;
+    if (v->entry_n == 0) {
+        return 0;
+    }
+    fid = v->entries[0];
+    memmove(v->entries, v->entries + 1, (size_t)(v->entry_n - 1) * sizeof v->entries[0]);
+    v->entry_n--;
+    pcm_free(&v->now);
+    if (pcm_from_afs(fid, &v->now) != 0) {
+        return 0;
+    }
+    v->now.loop = 0; /* a stem plays once; the queue is the loop */
+    v->pos = 0;
+    return 1;
+}
+
+/* Up to n samples per channel from the voice's PCM into out, following
+ * the file's loop or the stem queue; the count written. */
+static int32_t voice_read(Voice *v, int16_t *out, int32_t n)
+{
+    int32_t done = 0;
+    while (done < n && v->now.pcm) {
+        int32_t end = v->now.loop && v->loop_on ? v->now.loop_end : v->now.total;
+        int32_t take = end - v->pos;
+        if (take > n - done) {
+            take = n - done;
+        }
+        if (take > 0) {
+            memcpy(out + (size_t)done * v->now.channels, v->now.pcm + (size_t)v->pos * v->now.channels,
+                   (size_t)take * v->now.channels * sizeof *out);
+            v->pos += take;
+            done += take;
+        }
+        if (v->pos >= end) {
+            if (v->now.loop && v->loop_on) {
+                v->pos = v->now.loop_start;
+            } else if (v->seamless && voice_next_entry(v)) {
+                /* a stem with another layout cannot share the stream */
+            } else {
+                break;
+            }
+        }
+    }
+    return done;
+}
+
+static void voice_feed(Voice *v, ALuint b)
+{
+    static int16_t tmp[BUFFER_SAMPLES * 8];
+    int32_t n = voice_read(v, tmp, BUFFER_SAMPLES);
+    if (n <= 0) {
+        return;
+    }
+    alBufferData(b, v->now.channels == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16, tmp,
+                 (ALsizei)((size_t)n * v->now.channels * sizeof(int16_t)), v->now.rate);
+    alSourceQueueBuffers(v->source, 1, &b);
+}
+
+static void voice_start(Voice *v)
+{
+    int i;
+    voice_init(v);
+    if (!v->source || !v->now.pcm) {
+        return;
+    }
+    if (v->now.channels > 2) {
+        fprintf(stderr, "sound: %d channels; only mono and stereo play\n", v->now.channels);
+        return;
+    }
+    v->playing = 1;
+    v->ended = 0;
+    for (i = 0; i < VOICE_BUFFERS; i++) {
+        voice_feed(v, v->buffers[i]);
+    }
+    alSourcef(v->source, AL_GAIN, v->gain);
+    if (!v->paused) {
+        alSourcePlay(v->source);
+    }
+}
+
+static void voice_pump(Voice *v)
+{
+    ALint done = 0;
+    ALint queued = 0;
+    ALint state = 0;
+    if (!v->source || !v->playing) {
+        return;
+    }
+    alGetSourcei(v->source, AL_BUFFERS_PROCESSED, &done);
+    while (done-- > 0) {
+        ALuint b;
+        alSourceUnqueueBuffers(v->source, 1, &b);
+        voice_feed(v, b);
+    }
+    alGetSourcei(v->source, AL_BUFFERS_QUEUED, &queued);
+    alGetSourcei(v->source, AL_SOURCE_STATE, &state);
+    if (queued == 0) {
+        v->playing = 0;
+        v->ended = 1;
+    } else if (state != AL_PLAYING && !v->paused) {
+        alSourcePlay(v->source); /* it ran dry for a moment */
+    }
+}
+
+void sf_sound_pump(void)
+{
+    size_t i;
+    if (!s_ready) {
+        return;
+    }
+    for (i = 0; i < sizeof s_adxt / sizeof s_adxt[0]; i++) {
+        voice_pump(&s_adxt[i].v);
+    }
+    voice_pump(&s_aixp);
+}
+
+/* ---- the device ---- */
+
+s32 xb_CreateDirectSound(const char *path)
+{
+    (void)path;
+    if (s_ready) {
+        return 1;
+    }
+    s_dev = alcOpenDevice(NULL);
+    s_ctx = s_dev ? alcCreateContext(s_dev, NULL) : NULL;
+    if (!s_ctx || !alcMakeContextCurrent(s_ctx)) {
+        fprintf(stderr, "sound: no OpenAL device; the game runs silent\n");
+        return 0;
+    }
+    s_ready = 1;
+    return 1;
+}
+
+/* ---- ADXT ---- */
+
+void ADXT_Init(void)
+{
+}
+
+void ADXT_Finish(void)
+{
+}
+
+void *ADXT_Create(s32 maxch, void *work, s32 worksize)
+{
+    size_t i;
+    (void)maxch;
+    (void)work;
+    (void)worksize;
+    for (i = 0; i < sizeof s_adxt / sizeof s_adxt[0]; i++) {
+        if (!s_adxt[i].used) {
+            s_adxt[i].used = 1;
+            memset(&s_adxt[i].v.now, 0, sizeof s_adxt[i].v.now);
+            voice_init(&s_adxt[i].v);
+            s_adxt[i].v.loop_on = 1;
+            s_adxt[i].v.gain = 1.0f;
+            s_adxt[i].v.entry_n = 0;
+            s_adxt[i].v.seamless = 0;
+            return &s_adxt[i];
+        }
+    }
+    fprintf(stderr, "sound: no free ADXT handle\n");
+    return NULL;
+}
+
+void ADXT_Destroy(AdxtHandle *a)
+{
+    if (!a) {
+        return;
+    }
+    voice_stop(&a->v);
+    a->v.entry_n = 0;
+    a->used = 0;
+}
+
+void ADXT_Stop(AdxtHandle *a)
+{
+    if (a) {
+        voice_stop(&a->v);
+        a->v.seamless = 0;
+    }
+}
+
+void ADXT_StartAfs(AdxtHandle *a, s32 patid, s32 fid)
+{
+    (void)patid;
+    if (!a) {
+        return;
+    }
+    voice_stop(&a->v);
+    a->v.seamless = 0;
+    if (pcm_from_afs(fid, &a->v.now) == 0) {
+        a->v.pos = 0;
+        voice_start(&a->v);
+    }
+}
+
+void ADXT_StartMem(AdxtHandle *a, void *adx)
+{
+    uint32_t size;
+    if (!a || !adx) {
+        return;
+    }
+    voice_stop(&a->v);
+    a->v.seamless = 0;
+    size = adx_size(adx);
+    if (!size) {
+        const uint8_t *p = adx;
+        fprintf(stderr, "sound: in-memory ADX starts %02X %02X %02X %02X\n", p[0], p[1], p[2], p[3]);
+    }
+    if (size && pcm_from_adx(adx, size, &a->v.now) == 0) {
+        a->v.pos = 0;
+        voice_start(&a->v);
+    }
+}
+
+void ADXT_EntryAfs(AdxtHandle *a, s32 patid, s32 fid)
+{
+    (void)patid;
+    if (a && a->v.entry_n < ENTRY_MAX) {
+        a->v.entries[a->v.entry_n++] = fid;
+    }
+}
+
+void ADXT_ResetEntry(AdxtHandle *a)
+{
+    if (a) {
+        a->v.entry_n = 0;
+    }
+}
+
+s32 ADXT_GetNumFiles(AdxtHandle *a)
+{
+    return a ? a->v.entry_n : 0;
+}
+
+void ADXT_StartSeamless(AdxtHandle *a)
+{
+    if (!a) {
+        return;
+    }
+    voice_stop(&a->v);
+    a->v.seamless = 1;
+    if (voice_next_entry(&a->v)) {
+        voice_start(&a->v);
+    }
+}
+
+s32 ADXT_GetStat(AdxtHandle *a)
+{
+    if (!a) {
+        return ADXT_STOP;
+    }
+    if (a->v.playing) {
+        return ADXT_PLAYING;
+    }
+    return a->v.ended ? ADXT_PLAYEND : ADXT_STOP;
+}
+
+void ADXT_Pause(AdxtHandle *a, s32 sw)
+{
+    if (!a) {
+        return;
+    }
+    a->v.paused = sw != 0;
+    if (a->v.source && a->v.playing) {
+        if (sw) {
+            alSourcePause(a->v.source);
+        } else {
+            alSourcePlay(a->v.source);
+        }
+    }
+}
+
+s32 ADXT_GetStatPause(AdxtHandle *a)
+{
+    return a ? a->v.paused : 0;
+}
+
+void ADXT_SetOutVol(AdxtHandle *a, s32 vol)
+{
+    if (!a) {
+        return;
+    }
+    a->v.gain = gain_of(vol);
+    if (a->v.source) {
+        alSourcef(a->v.source, AL_GAIN, a->v.gain);
+    }
+}
+
+/* The sound option's mono; OpenAL plays what the device is set to. */
+void ADXT_SetOutputMono(s32 flag)
+{
+    (void)flag;
+}
+
+void ADXT_ClearErrCode(AdxtHandle *a)
+{
+    (void)a;
+}
+
+/* ---- AIXP ---- */
+
+void AIXP_Init(void)
+{
+}
+
+void AIXP_Finish(void)
+{
+}
+
+void *AIXP_Create(s32 maxnch, s32 nstm, void *work, s32 worksize)
+{
+    (void)maxnch;
+    (void)nstm;
+    (void)work;
+    (void)worksize;
+    voice_init(&s_aixp);
+    s_aixp.loop_on = 1;
+    s_aixp.gain = 1.0f;
+    return &s_aixp;
+}
+
+/* The opening theme, data/audio/NAME: its front stereo pair (the AIX's
+ * other pairs are the surround channels). */
+void xb_aixp_StartFnameSurround(void *aixp, const char *fname, void *dir)
+{
+    char base[4096];
+    char path[4096 + 300];
+    FILE *f;
+    long n;
+    uint8_t *data;
+    SfAix aix;
+    char err[256];
+    (void)aixp;
+    (void)dir;
+    voice_stop(&s_aixp);
+    if (sf_exe_dir(base, sizeof base) != 0) {
+        return;
+    }
+    snprintf(path, sizeof path, "%s/data/audio/%s", base, fname);
+    f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "sound: %s missing\n", path);
+        return;
+    }
+    fseek(f, 0, SEEK_END);
+    n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    data = malloc((size_t)n);
+    if (!data || fread(data, 1, (size_t)n, f) != (size_t)n) {
+        fclose(f);
+        free(data);
+        return;
+    }
+    fclose(f);
+    if (sf_aix_decode(data, (uint32_t)n, &aix, err, sizeof err) != 0) {
+        fprintf(stderr, "sound: %s: %s\n", fname, err);
+        free(data);
+        return;
+    }
+    free(data);
+    s_aixp.now.pcm = aix.pcm;
+    s_aixp.now.channels = aix.channels;
+    s_aixp.now.rate = aix.rate;
+    s_aixp.now.total = aix.total;
+    s_aixp.now.loop = aix.loop;
+    s_aixp.now.loop_start = aix.loop_start;
+    s_aixp.now.loop_end = aix.loop_end;
+    s_aixp.pos = 0;
+    voice_start(&s_aixp);
+}
+
+void AIXP_Stop(void *aixp)
+{
+    (void)aixp;
+    voice_stop(&s_aixp);
+}
+
+s32 AIXP_GetStat(void *aixp)
+{
+    (void)aixp;
+    if (s_aixp.playing) {
+        return AIXP_PLAYING;
+    }
+    return s_aixp.ended ? AIXP_PLAYEND : AIXP_STOP;
+}
+
+void AIXP_SetLpSw(void *aixp, s32 sw)
+{
+    (void)aixp;
+    s_aixp.loop_on = sw != 0;
+}
+
+void AIXP_Pause(void *aixp, s32 sw)
+{
+    (void)aixp;
+    s_aixp.paused = sw != 0;
+    if (s_aixp.source && s_aixp.playing) {
+        if (sw) {
+            alSourcePause(s_aixp.source);
+        } else {
+            alSourcePlay(s_aixp.source);
+        }
+    }
+}
+
+/* Channel 0 sets the front pair's volume; the others are surround. */
+void AIXP_SetOutVolDolbyDigital(void *aixp, s32 ch, s32 vol)
+{
+    (void)aixp;
+    if (ch != 0) {
+        return;
+    }
+    s_aixp.gain = gain_of(vol);
+    if (s_aixp.source) {
+        alSourcef(s_aixp.source, AL_GAIN, s_aixp.gain);
+    }
+}
+
+/* Retail's physical memory, for the AIX player's work area: from the
+ * low arena, since the game keeps the address in a u32. */
+void *XPhysicalAlloc(u32 size, u32 addr, u32 align, u32 protect)
+{
+    (void)addr;
+    (void)protect;
+    return sf_low_alloc(size, align ? align : 16);
+}
