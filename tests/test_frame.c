@@ -1,4 +1,5 @@
 #include "game/memman.h"
+#include "game/opening.h"
 #include "game/task.h"
 
 #include <stdint.h>
@@ -134,10 +135,34 @@ static void test_heap(void)
     expect(mmHeapInitialize(&heap, (void *)(uintptr_t)8, 16, 3, NULL) != 0, "unit must be a power of two");
 }
 
+static void test_opening(void)
+{
+    SfOpening op;
+    int i;
+    sf_opening_init(&op);
+    expect(op.timer == 0 && op.status == 0 && op.r_no_0 == 0 && op.screen == 0, "the opening clock boots clear");
+    for (i = 0; i < 11; i++) {
+        sf_opening_step(&op);
+    }
+    expect(op.r_no_0 == 1 && op.r_no_1 == 0 && op.timer == 2 && op.status == 0 && op.pos_offset == 192, "the clock starts at 2");
+    expect(op.layer_r[0] == 0 && op.screen == 0, "background 0 is not selected during the countdown");
+    sf_opening_step(&op);
+    expect(op.timer == 3 && op.status == 0 && op.held == 0 && op.index == 0, "time 3 has not posted 101");
+    expect(op.layer_r[0] == 1 && op.layer_r[1] == 1 && op.layer_r[2] == 1 && op.layer_x[2] == 0x02000000, "the first background move arms layer 2");
+    sf_opening_step(&op);
+    expect(op.timer == 4 && op.status == 101 && op.scene == 1 && op.held == 1 && op.index == 0, "time 4 posts 101 and holds background 0");
+    expect(op.screen == 0 && op.layer_x[2] == 0x01FF0000 && op.layer_y[2] == 0, "background 0 leaves the screens off and walks layer 2");
+    for (i = 0; i < 7; i++) {
+        sf_opening_step(&op);
+    }
+    expect(op.timer == 11 && op.status == 101 && op.scene == 1 && op.index == 0 && op.layer_x[2] == 0x01F80000, "later triggers stay unposted while background 0 is held");
+}
+
 int main(void)
 {
     test_tasks();
     test_heap();
+    test_opening();
     if (g_fail) {
         fprintf(stderr, "%d failed\n", g_fail);
         return 1;

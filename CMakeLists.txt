@@ -42,6 +42,7 @@ add_executable(sf33rdsxb
     src/game/fs.c
     src/game/ppg.c
     src/game/title.c
+    src/game/opening.c
     src/game/adx.c
     src/game/aix.c
     src/game/xwb.c
@@ -76,7 +77,7 @@ target_link_libraries(test_shaders PRIVATE SDL3::SDL3 Vulkan::Vulkan OpenGL::GL)
 target_compile_definitions(test_shaders PRIVATE SF_SHADER_TOOL="${CMAKE_SOURCE_DIR}/tools/spirv.py")
 
 enable_testing()
-add_executable(test_frame tests/test_frame.c src/game/task.c src/game/memman.c src/mem/heap.c)
+add_executable(test_frame tests/test_frame.c src/game/task.c src/game/memman.c src/game/opening.c src/mem/heap.c)
 target_include_directories(test_frame PRIVATE src)
 
 add_executable(test_picture tests/test_picture.c src/game/fs.c src/game/ppg.c src/game/title.c src/mem/heap.c)

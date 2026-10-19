@@ -8,6 +8,7 @@
 #include "game/ppg.h"
 #include "game/task.h"
 #include "game/title.h"
+#include "game/opening.h"
 #include "mem/heap.h"
 #include "host/paths.h"
 #include "host/settings.h"
@@ -53,6 +54,7 @@ typedef struct App {
     uint8_t *opening;
     int opening_w;
     int opening_h;
+    SfOpening beat;
     SfTrack *tracks;
     int track_count;
     int track_index;
@@ -462,6 +464,8 @@ static void load_title(App *app)
     load_logo(app);
     load_opening(app);
     load_bgm(app);
+    sf_opening_init(&app->beat);
+    app->ui.opening_hold = 0;
 }
 
 static void run_import(App *app, const char *source)
@@ -675,6 +679,8 @@ int main(int argc, char **argv)
             } else if (sf_pressed(SF_RIGHT) || sf_pressed(SF_UP)) {
                 play_track(&app, app.track_index + 1);
             }
+            sf_opening_step(&app.beat);
+            app.ui.opening_hold = app.beat.held;
         } else if (app.ui.screen == SF_UI_DISPLAY) {
             if (sf_pressed(SF_UP) || sf_pressed(SF_DOWN)) {
                 app.ui.menu_row ^= 1;
