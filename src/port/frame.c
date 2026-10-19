@@ -22,6 +22,7 @@ extern u32 Interrupt_Timer;
 extern s32 X_Adjust, Y_Adjust;
 extern s16 Correct_X[4], Correct_Y[4];
 extern struct _TASK task[11];
+extern u16 PLsw[2][2];
 
 void ppgWorkInitializeApprication(void);
 void njUserInit(void);
@@ -104,6 +105,13 @@ void sf_game_frame(void)
             p1sw_0 = sw;
         }
     }
+
+    /* retail's xb_ShiftWords7C5570: each player's switches, now and the
+     * frame before, as the menus read them */
+    PLsw[0][1] = PLsw[0][0];
+    PLsw[1][1] = PLsw[1][0];
+    PLsw[0][0] = p1sw_buff;
+    PLsw[1][0] = p2sw_buff;
 
     if (getenv("SF_INPUT_DEBUG") && (p1sw_0 | p2sw_0)) {
         fprintf(stderr, "frame: p1sw %04X p2sw %04X; entry task condition %u r_no %u %u %u\n", p1sw_0, p2sw_0,

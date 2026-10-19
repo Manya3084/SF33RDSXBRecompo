@@ -183,25 +183,58 @@ static KeyBinding s_keys[] = {
     { SDL_SCANCODE_W, BIND_ANALOG | XB_LTRIG }, { SDL_SCANCODE_R, BIND_ANALOG | XB_RTRIG },
 };
 
-/* SF_AUTOPRESS=F1,F2,...: Start held on the keyboard port for six frames
- * from each of those frames (for driving the game in tests). */
-static int auto_start(void)
+/* SF_AUTOPRESS=F[:BUTTON],...: that button (Start when none is named;
+ * up, down, left, right, a, b, x, y, start, back) held on the keyboard
+ * port for six frames from frame F (for driving the game in tests). */
+static void auto_press(XbGamepad *x)
 {
     static int frame;
     const char *env = getenv("SF_AUTOPRESS");
     int now = frame++;
     while (env && *env) {
         char *end;
+        char name[16];
+        size_t n = 0;
         long f = strtol(env, &end, 10);
         if (end == env) {
             break;
         }
-        if (now >= f && now < f + 6) {
-            return 1;
+        env = end;
+        if (*env == ':') {
+            env++;
+            while (*env && *env != ',' && n + 1 < sizeof name) {
+                name[n++] = *env++;
+            }
         }
-        env = *end == ',' ? end + 1 : end;
+        name[n] = 0;
+        if (*env == ',') {
+            env++;
+        }
+        if (now < f || now >= f + 6) {
+            continue;
+        }
+        if (n == 0 || !strcmp(name, "start")) {
+            x->buttons |= XB_START;
+        } else if (!strcmp(name, "back")) {
+            x->buttons |= XB_BACK;
+        } else if (!strcmp(name, "up")) {
+            x->buttons |= XB_DPAD_UP;
+        } else if (!strcmp(name, "down")) {
+            x->buttons |= XB_DPAD_DOWN;
+        } else if (!strcmp(name, "left")) {
+            x->buttons |= XB_DPAD_LEFT;
+        } else if (!strcmp(name, "right")) {
+            x->buttons |= XB_DPAD_RIGHT;
+        } else if (!strcmp(name, "a")) {
+            x->analog[XB_A] = 0xFF;
+        } else if (!strcmp(name, "b")) {
+            x->analog[XB_B] = 0xFF;
+        } else if (!strcmp(name, "x")) {
+            x->analog[XB_X] = 0xFF;
+        } else if (!strcmp(name, "y")) {
+            x->analog[XB_Y] = 0xFF;
+        }
     }
-    return 0;
 }
 
 static void read_keyboard(XbGamepad *x)
@@ -209,9 +242,7 @@ static void read_keyboard(XbGamepad *x)
     const bool *k = SDL_GetKeyboardState(NULL);
     size_t i;
     x->connected = 1;
-    if (auto_start()) {
-        x->buttons |= XB_START;
-    }
+    auto_press(x);
     for (i = 0; i < sizeof s_keys / sizeof s_keys[0]; i++) {
         if (!k[s_keys[i].key]) {
             continue;
