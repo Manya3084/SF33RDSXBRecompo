@@ -12,6 +12,7 @@ struct SfRenderer {
     SfRendererKind kind;
     SDL_Window *window;
     float aspect; /* the game screen's shape in the window; 0 fills it */
+    int sized_w, sized_h; /* the window's pixel size the swapchain was last made for */
     VkInstance instance;
     VkPhysicalDevice physical;
     VkDevice device;

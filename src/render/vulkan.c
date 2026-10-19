@@ -1040,6 +1040,10 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
         sf_set_err(err, err_n, "Vulkan fence wait failed");
         return -1;
     }
+    if (render_scale(r) != sf_scene_scale(r->scene) && r->swapchain) {
+        fprintf(stderr, "video: window %ux%u, the game drawn at %dx%d\n", r->extent.width, r->extent.height,
+                640 * render_scale(r), 480 * render_scale(r));
+    }
     if (sf_scene_set_scale(r->scene, render_scale(r), err, err_n) != 0) {
         return -1;
     }
@@ -1068,6 +1072,25 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
             return -1;
         }
         return 0;
+    }
+    /* Wayland does not report a swapchain out of date when the window
+     * changes size (fullscreen, a new resolution, a resize): the old images
+     * would be stretched over the new size. The size is compared here. */
+    {
+        int w = 0;
+        int h = 0;
+        SDL_GetWindowSizeInPixels(r->window, &w, &h);
+        if (w > 0 && h > 0 && (w != r->sized_w || h != r->sized_h)) {
+            r->sized_w = w;
+            r->sized_h = h;
+            if ((uint32_t)w != r->extent.width || (uint32_t)h != r->extent.height) {
+                vkDeviceWaitIdle(r->device);
+                destroy_swapchain(r);
+                if (make_swapchain(r, err, err_n) != 0) {
+                    return -1;
+                }
+            }
+        }
     }
     ar = vkAcquireNextImageKHR(r->device, r->swapchain, UINT64_MAX, r->image_ok, VK_NULL_HANDLE, &image_index);
     if (ar == VK_ERROR_OUT_OF_DATE_KHR) {
