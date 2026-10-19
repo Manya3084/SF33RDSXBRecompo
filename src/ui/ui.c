@@ -171,20 +171,33 @@ static void blit(SfCanvas *canvas, const uint8_t *rgba, int w, int h, int dx, in
     }
 }
 
-static const char *kind_name(SfRendererKind kind, int fallback)
+/* Largest integer scale that fits, then centered. The opening is the picture. */
+static void blit_game(SfCanvas *canvas, const uint8_t *rgba, int w, int h)
 {
-    if (fallback && kind == SF_RENDER_OPENGL) {
-        return "OPENGL (VULKAN FAILED)";
+    int scale = 1;
+    int x;
+    int y;
+    if (w > 0 && h > 0 && canvas->width >= w && canvas->height >= h) {
+        int sx = canvas->width / w;
+        int sy = canvas->height / h;
+        scale = sx < sy ? sx : sy;
     }
-    return kind == SF_RENDER_OPENGL ? "OPENGL" : "VULKAN";
+    if (scale < 1) {
+        scale = 1;
+    }
+    x = (canvas->width - w * scale) / 2;
+    y = (canvas->height - h * scale) / 2;
+    blit(canvas, rgba, w, h, x, y, scale);
 }
 
 void sf_ui_draw(SfCanvas *canvas, const SfUi *ui)
 {
     int i;
     fill(canvas, 12, 16, 28);
-    text(canvas, 32, 28, "STREET FIGHTER III", 240, 210, 140);
-    text(canvas, 32, 52, "3RD STRIKE", 240, 210, 140);
+    if (ui->screen != SF_UI_TITLE) {
+        text(canvas, 32, 28, "STREET FIGHTER III", 240, 210, 140);
+        text(canvas, 32, 52, "3RD STRIKE", 240, 210, 140);
+    }
     if (ui->screen == SF_UI_SETUP) {
         text(canvas, 32, 100, "XBOX DATA WAS NOT FOUND.", 220, 220, 220);
         text(canvas, 32, 140, "ENTER: XBOX ISO, ZIP, OR 7Z", 180, 190, 210);
@@ -193,29 +206,10 @@ void sf_ui_draw(SfCanvas *canvas, const SfUi *ui)
         text(canvas, 32, 228, "XBOX DISC ONLY.", 180, 190, 210);
     } else if (ui->screen == SF_UI_TITLE) {
         if (ui->opening_hold && ui->pieces) {
-            blit(canvas, ui->pieces, SF_PIECE_W, SF_PIECE_H, 32, 272, 1);
-        } else if (!ui->opening_hold && ui->opening && ui->opening_w > 0 && ui->opening_h > 0) {
-            blit(canvas, ui->opening, ui->opening_w, ui->opening_h, 32, 272, 1);
+            blit_game(canvas, ui->pieces, SF_PIECE_W, SF_PIECE_H);
+        } else if (ui->opening && ui->opening_w > 0 && ui->opening_h > 0) {
+            blit_game(canvas, ui->opening, ui->opening_w, ui->opening_h);
         }
-        if (ui->picture && ui->picture_w > 0 && ui->picture_h > 0) {
-            int scale = 2;
-            int x;
-            if (ui->picture_w * scale > canvas->width - 64 || ui->picture_h * scale > canvas->height - 128) {
-                scale = 1;
-            }
-            x = canvas->width - ui->picture_w * scale - 32;
-            blit(canvas, ui->picture, ui->picture_w, ui->picture_h, x < 32 ? 32 : x, 96, scale);
-        }
-        text(canvas, 32, 110, "DATA READY", 180, 220, 180);
-        if (ui->track && ui->track[0]) {
-            text(canvas, 32, 130, ui->track, 240, 210, 140);
-        }
-        text(canvas, 32, 150, kind_name(ui->active, ui->gl_fallback), 220, 220, 220);
-        text(canvas, 32, 170, "ARROWS: TRACK", 180, 190, 210);
-        text(canvas, 32, 190, "ASDF: EFFECTS", 180, 190, 210);
-        text(canvas, 32, 210, "START: DISPLAY", 180, 190, 210);
-        text(canvas, 32, 230, "BACK: XBOX LIVE", 180, 190, 210);
-        text(canvas, 32, 250, "ESC: QUIT", 180, 190, 210);
     } else if (ui->screen == SF_UI_DISPLAY) {
         text(canvas, 32, 100, "DISPLAY", 220, 220, 220);
         text(canvas, 32, 140, ui->menu_row == 0 ? "> RESOLUTION" : "  RESOLUTION", 220, 220, 220);
@@ -233,10 +227,10 @@ void sf_ui_draw(SfCanvas *canvas, const SfUi *ui)
         text(canvas, 32, 160, "NOT IN THIS PORT", 220, 180, 140);
         text(canvas, 32, 210, "B CLOSE", 180, 190, 210);
     }
-    if (ui->status && ui->status[0]) {
+    if (ui->screen != SF_UI_TITLE && ui->status && ui->status[0]) {
         text(canvas, 32, 430, ui->status, 220, 120, 120);
     }
-    if (ui->note && ui->note[0]) {
+    if (ui->screen != SF_UI_TITLE && ui->note && ui->note[0]) {
         text(canvas, 32, 470, ui->note, 160, 170, 190);
     }
 }

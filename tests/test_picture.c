@@ -570,6 +570,10 @@ static void test_pieces(void)
             expect(red[0] == 255 && red[1] == 0 && red[2] == 0 && red[3] == 255, "slogan pixel 9,117 is red after seven steps");
             expect(ink[0] == 222 && ink[1] == 239 && ink[2] == 231 && ink[3] == 255, "the sketch stays at pixel 200,40");
             expect(memcmp(moved + ((size_t)117 * (size_t)SF_PIECE_W + 2u) * 4u, gone, 4) == 0, "pixel 2,117 is the sketch after the slogan moves");
+            gone = sketch + ((size_t)40 * (size_t)SF_PIECE_W + 201u) * 4u;
+            expect(gone[0] == 222 && gone[1] == 239 && gone[2] == 231 && gone[3] == 255, "sketch pixel 201,40 fills the scale gap");
+            gone = sketch + ((size_t)40 * (size_t)SF_PIECE_W + 206u) * 4u;
+            expect(gone[0] == 214 && gone[1] == 239 && gone[2] == 222 && gone[3] == 255, "sketch pixel 206,40 keeps the texel on its left");
         }
         sf_free(sketch);
         sf_free(slogan);

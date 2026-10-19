@@ -11,7 +11,9 @@
    The sketch uses row 10. Chips are Capcom P6, stored in the Dreamcast
    twiddle that ppgRenewDotDataSeqs undoes. The view is the 384x224 game
    screen. The slogan is baked at the hold camera (layer 2, h 319) and
-   then slid. The sketch uses layer 1, which has not walked (h 320). */
+   then slid. The sketch uses layer 1, which has not walked (h 320).
+   A scaled chip is a filled quad. Each texel covers every screen pixel
+   from its corner up to the next texel's corner. */
 
 enum {
     SF_BG20 = 79,
@@ -298,11 +300,21 @@ static void draw_cel(uint8_t *rgba, const uint8_t *bg, uint32_t bg_n, int local,
             for (col = 0; col < dw; col++) {
                 int u = (attr & 0x8000u) ? dw - 1 - col : col;
                 int v = (attr & 0x4000u) ? dh - 1 - row : row;
-                int lx = x + col;
-                int ly = y - row;
-                int sx = (int)((double)lx * scale + (double)world_x - (double)shift_h);
-                int sy = (int)(224.0 - ((double)ly * scale + (double)world_y - (double)shift_v));
-                put_px(rgba, sx, sy, pal, linear[(size_t)v * (size_t)side + (size_t)u]);
+                int sx0 = (int)((double)(x + col) * scale + (double)world_x - (double)shift_h);
+                int sx1 = (int)((double)(x + col + 1) * scale + (double)world_x - (double)shift_h);
+                int sy0 = (int)(224.0 - ((double)(y - row) * scale + (double)world_y - (double)shift_v));
+                int sy1 = (int)(224.0 - ((double)(y - row - 1) * scale + (double)world_y - (double)shift_v));
+                int sx;
+                int sy;
+                unsigned idx = linear[(size_t)v * (size_t)side + (size_t)u];
+                /* The corner lands on the same pixel as before. The span out to
+                   the next corner is the rest of this texel's scaled quad, so a
+                   scale such as 80/64 fills the pixels truncation used to skip. */
+                for (sy = sy0; sy < sy1; sy++) {
+                    for (sx = sx0; sx < sx1; sx++) {
+                        put_px(rgba, sx, sy, pal, idx);
+                    }
+                }
             }
         }
     }
