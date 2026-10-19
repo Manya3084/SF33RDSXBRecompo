@@ -4,8 +4,15 @@
  * archive, a queue of ADX stems played back to back, a short ADX from
  * memory) and AIXP (the opening theme's AIX). This keeps those calls and
  * plays each on an OpenAL source: the file is decoded to PCM with the
- * runtime's ADX and AIX decoders (src/game/adx.c, aix.c), and the source
- * is fed a few buffers ahead from sf_sound_pump, once a frame. The status
+ * runtime's ADX and AIX decoders (src/game/adx.c, aix.c).
+ *
+ * The game waits on these streams (a stem ending, the queue running
+ * down), so they keep the game's time, not the device's: sf_sound_pump
+ * runs once a frame and takes a frame's worth of samples, 1/60 s, from
+ * each playing stream. That decides when a stream ends, and the device
+ * plays those samples a few frames behind. A run with sound, without it,
+ * or faster than real time (a headless replay) sees the same statuses on
+ * the same frames, so a session recording replays exactly. The status
  * codes are CRI's: ADXT 0 stopped, 3 playing, 5 ended; AIXP 2 playing,
  * 3 ended. Volumes are CRI's tenths of a decibel. */
 
@@ -24,8 +31,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define VOICE_BUFFERS 4
-#define BUFFER_SAMPLES 4096
+#define VOICE_BUFFERS 24 /* a frame's samples each */
+#define PREROLL 3          /* frames queued before the source starts */
+#define FRAME_SAMPLES 1600 /* the most a frame takes: 96 kHz / 60 */
 #define ENTRY_MAX 16
 
 enum { ADXT_STOP = 0, ADXT_PLAYING = 3, ADXT_PLAYEND = 5 };
@@ -46,8 +54,11 @@ typedef struct Pcm {
 typedef struct Voice {
     ALuint source;
     ALuint buffers[VOICE_BUFFERS];
+    ALuint free_buf[VOICE_BUFFERS]; /* buffers the source does not hold */
+    int free_n;
     Pcm now;
     int32_t pos;
+    double due; /* samples owed to the frame clock */
     int playing;
     int ended;
     int paused;
@@ -148,7 +159,20 @@ static void voice_init(Voice *v)
     }
     alGenSources(1, &v->source);
     alGenBuffers(VOICE_BUFFERS, v->buffers);
+    memcpy(v->free_buf, v->buffers, sizeof v->buffers);
+    v->free_n = VOICE_BUFFERS;
     v->gain = 1.0f;
+}
+
+/* Buffers the source has played go back to the free list. */
+static void voice_reclaim(Voice *v)
+{
+    ALint done = 0;
+    alGetSourcei(v->source, AL_BUFFERS_PROCESSED, &done);
+    while (done-- > 0 && v->free_n < VOICE_BUFFERS) {
+        alSourceUnqueueBuffers(v->source, 1, &v->free_buf[v->free_n]);
+        v->free_n++;
+    }
 }
 
 static void voice_stop(Voice *v)
@@ -163,9 +187,9 @@ static void voice_stop(Voice *v)
     }
     alSourceStop(v->source);
     alGetSourcei(v->source, AL_BUFFERS_QUEUED, &queued);
-    while (queued-- > 0) {
-        ALuint b;
-        alSourceUnqueueBuffers(v->source, 1, &b);
+    while (queued-- > 0 && v->free_n < VOICE_BUFFERS) {
+        alSourceUnqueueBuffers(v->source, 1, &v->free_buf[v->free_n]);
+        v->free_n++;
     }
     pcm_free(&v->now);
 }
@@ -219,23 +243,10 @@ static int32_t voice_read(Voice *v, int16_t *out, int32_t n)
     return done;
 }
 
-static void voice_feed(Voice *v, ALuint b)
-{
-    static int16_t tmp[BUFFER_SAMPLES * 8];
-    int32_t n = voice_read(v, tmp, BUFFER_SAMPLES);
-    if (n <= 0) {
-        return;
-    }
-    alBufferData(b, v->now.channels == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16, tmp,
-                 (ALsizei)((size_t)n * v->now.channels * sizeof(int16_t)), v->now.rate);
-    alSourceQueueBuffers(v->source, 1, &b);
-}
-
 static void voice_start(Voice *v)
 {
-    int i;
     voice_init(v);
-    if (!v->source || !v->now.pcm) {
+    if (!v->now.pcm) {
         return;
     }
     if (v->now.channels > 2) {
@@ -244,45 +255,56 @@ static void voice_start(Voice *v)
     }
     v->playing = 1;
     v->ended = 0;
-    for (i = 0; i < VOICE_BUFFERS; i++) {
-        voice_feed(v, v->buffers[i]);
-    }
-    alSourcef(v->source, AL_GAIN, v->gain);
-    if (!v->paused) {
-        alSourcePlay(v->source);
+    v->due = 0.0;
+    if (v->source) {
+        alSourcef(v->source, AL_GAIN, v->gain);
     }
 }
 
+/* A frame of the stream: its samples are taken now, by the game's clock,
+ * and queued on the source if the device has room for them. */
 static void voice_pump(Voice *v)
 {
-    ALint done = 0;
+    static int16_t tmp[FRAME_SAMPLES * 2];
     ALint queued = 0;
     ALint state = 0;
-    if (!v->source || !v->playing) {
+    int32_t want;
+    int32_t n;
+    if (!v->playing || v->paused) {
         return;
     }
-    alGetSourcei(v->source, AL_BUFFERS_PROCESSED, &done);
-    while (done-- > 0) {
-        ALuint b;
-        alSourceUnqueueBuffers(v->source, 1, &b);
-        voice_feed(v, b);
+    v->due += (double)v->now.rate / 60.0;
+    want = (int32_t)v->due;
+    if (want > FRAME_SAMPLES) {
+        want = FRAME_SAMPLES;
     }
-    alGetSourcei(v->source, AL_BUFFERS_QUEUED, &queued);
-    alGetSourcei(v->source, AL_SOURCE_STATE, &state);
-    if (queued == 0) {
+    v->due -= want;
+    n = voice_read(v, tmp, want);
+    if (n < want) {
         v->playing = 0;
         v->ended = 1;
-    } else if (state != AL_PLAYING && !v->paused) {
-        alSourcePlay(v->source); /* it ran dry for a moment */
+    }
+    if (!v->source) {
+        return;
+    }
+    voice_reclaim(v);
+    if (n > 0 && v->free_n > 0) {
+        ALuint b = v->free_buf[--v->free_n];
+        alBufferData(b, v->now.channels == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16, tmp,
+                     (ALsizei)((size_t)n * v->now.channels * sizeof(int16_t)), v->now.rate);
+        alSourceQueueBuffers(v->source, 1, &b);
+    }
+    /* a full queue (a run faster than the device) drops the frame */
+    alGetSourcei(v->source, AL_BUFFERS_QUEUED, &queued);
+    alGetSourcei(v->source, AL_SOURCE_STATE, &state);
+    if (state != AL_PLAYING && (queued >= PREROLL || (!v->playing && queued > 0))) {
+        alSourcePlay(v->source); /* starting, or it ran dry for a moment */
     }
 }
 
 void sf_sound_pump(void)
 {
     size_t i;
-    if (!s_ready) {
-        return;
-    }
     for (i = 0; i < sizeof s_adxt / sizeof s_adxt[0]; i++) {
         voice_pump(&s_adxt[i].v);
     }
@@ -300,8 +322,9 @@ s32 xb_CreateDirectSound(const char *path)
     s_dev = alcOpenDevice(NULL);
     s_ctx = s_dev ? alcCreateContext(s_dev, NULL) : NULL;
     if (!s_ctx || !alcMakeContextCurrent(s_ctx)) {
+        /* the streams still keep time, so the game runs as it would */
         fprintf(stderr, "sound: no OpenAL device; the game runs silent\n");
-        return 0;
+        return 1;
     }
     s_ready = 1;
     return 1;
