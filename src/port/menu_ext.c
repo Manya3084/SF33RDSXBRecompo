@@ -21,6 +21,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -90,6 +91,59 @@ void xb_ToneDownCopy(u8 a, u8 prio)
         p[i].y = (f32)Fade_Pos_tbl[i * 2 + 1];
     }
     njDrawPolygon2D(&pc, 4, PrioBase[prio], 0x60, 2);
+}
+
+/* ---- retail's debug-font print, in the menu font ---- */
+
+/* Retail prints a few messages (the pause screen's "Please reconnect the
+ * controller") with its debug font at 640x448 positions, in cells cw by ch
+ * pixels. Here the same text is the menu font on the 384x224 screen. */
+static struct {
+    int x, y; /* 640x448 */
+    int prio;
+} s_pr = { 0, 0, 1 };
+
+void xb_PrintSetAttr(s16 attr)
+{
+    (void)attr;
+}
+
+void xb_PrintSetScale(f32 z)
+{
+    int i;
+    s_pr.prio = 1;
+    for (i = 0; i < 8; i++) {
+        if (PrioBase[i] == z) {
+            s_pr.prio = i;
+        }
+    }
+}
+
+void xb_PrintSetColor(s32 cw, s32 ch)
+{
+    (void)cw;
+    (void)ch;
+}
+
+void xb_PrintSetPos(s16 x, s16 y)
+{
+    s_pr.x = x;
+    s_pr.y = y;
+}
+
+s32 xb_PrintString(const char *fmt, ...)
+{
+    char buf[128];
+    va_list ap;
+    float sc;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    /* the menu font, 8 pixels a letter on the 384-wide screen, fits the
+     * boxes retail draws round its 22-pixel cells (13 here) */
+    sc = 1.0f;
+    put_text(s_pr.x * 384 / 640, s_pr.y * 224 / 448, buf, sc, COL_TEXT, s_pr.prio);
+    return (s32)strlen(buf);
 }
 
 /* ---- EXIT GAME ---- */

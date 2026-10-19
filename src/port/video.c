@@ -51,28 +51,43 @@ void sf_video_set_aspect(float aspect)
     sf_render_set_aspect(s_renderer, aspect);
 }
 
-/* SF_SHOT=FRAME:PATH writes the screen after that frame as a PPM. */
+/* SF_SHOT=FRAME:PATH writes the screen after that frame as a PPM;
+ * SF_SHOT_EVERY=N:DIR writes DIR/NNNNNN.ppm every N frames (from
+ * SF_SHOT_FROM to SF_SHOT_TO when they are set). */
 static void screenshot(int frame)
 {
     const uint8_t *rgba;
     int w;
     int h;
     const char *env = getenv("SF_SHOT");
+    const char *every = getenv("SF_SHOT_EVERY");
     char *colon;
+    char path[4096];
     long want;
     FILE *f;
     int i;
-    if (!env) {
-        return;
-    }
-    want = strtol(env, &colon, 10);
-    if (*colon != ':' || (frame != want && frame != want + 1)) {
-        return;
+    if (every) {
+        long n = strtol(every, &colon, 10);
+        const char *from = getenv("SF_SHOT_FROM");
+        const char *to = getenv("SF_SHOT_TO");
+        if (*colon != ':' || n <= 0 || frame % n != 0 || (from && frame < atoi(from)) || (to && frame > atoi(to))) {
+            return;
+        }
+        snprintf(path, sizeof path, "%s/%06d.ppm", colon + 1, frame);
+    } else {
+        if (!env) {
+            return;
+        }
+        want = strtol(env, &colon, 10);
+        if (*colon != ':' || (frame != want && frame != want + 1)) {
+            return;
+        }
+        snprintf(path, sizeof path, "%s", colon + 1);
     }
     if (sf_render_read_screen(s_renderer, &rgba, &w, &h) != 0) {
         return;
     }
-    f = fopen(colon + 1, "wb");
+    f = fopen(path, "wb");
     if (!f) {
         return;
     }
@@ -81,7 +96,9 @@ static void screenshot(int frame)
         fwrite(&rgba[i * 4], 1, 3, f);
     }
     fclose(f);
-    fprintf(stderr, "video: frame %d written to %s\n", frame, colon + 1);
+    if (!every) {
+        fprintf(stderr, "video: frame %d written to %s\n", frame, path);
+    }
 }
 
 /* The game steps once per frame and was made for 60 of them a second
@@ -138,9 +155,12 @@ void sf_video_present(void)
             for (q = 0; q < bt->quads; q++) {
                 const SfVertex *v = &l->v[bt->first + q * 4];
                 const SfTexture *t = &l->tex[bt->shade.tex];
-                fprintf(stderr, "quad b%u tex %u (%dx%d) pos %.3f,%.3f-%.3f,%.3f uv %.3f,%.3f-%.3f,%.3f col %08X%s\n", b,
-                        bt->shade.tex, t->w, t->h, v[0].x, v[0].y, v[3].x, v[3].y, v[0].u * t->w, v[0].v * t->h,
-                        v[3].u * t->w, v[3].v * t->h, v[0].color, l->cp3 && b >= l->cp3_at ? " (over)" : "");
+                fprintf(stderr,
+                        "quad b%u tex %u (%dx%d) pos %.3f,%.3f-%.3f,%.3f uv %.3f,%.3f-%.3f,%.3f rect %.3f,%.3f-%.3f,%.3f col "
+                        "%08X addr %u%s\n",
+                        b, bt->shade.tex, t->w, t->h, v[0].x, v[0].y, v[3].x, v[3].y, v[0].u * t->w, v[0].v * t->h,
+                        v[3].u * t->w, v[3].v * t->h, v[0].u0 * t->w, v[0].v0 * t->h, v[0].u1 * t->w, v[0].v1 * t->h,
+                        v[0].color, (unsigned)bt->shade.address_u, l->cp3 && b >= l->cp3_at ? " (over)" : "");
             }
         }
     }
