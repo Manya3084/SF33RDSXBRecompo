@@ -5,6 +5,8 @@
  * - The mode menu's SELECT GAME (retail's way back to the Anniversary
  *   Collection's game list) is EXIT GAME: its prompt asks about quitting,
  *   and Reboot_Program, where retail leaves, quits the port cleanly.
+ * - REPLAY's save and load pick one of ten slots on a page of their own
+ *   (sf_replay_page, run by SaveMove), read with the game's pad input.
  * - BUTTON CONFIG has a keyboard page: F1 opens it over the screen, each
  *   Xbox button's key is shown and can be changed, and the keys are kept
  *   in config/keyboard.txt. While it is open the game sees nothing
@@ -21,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 extern const s8 *Menu_Letter_Data[2][70]; /* 67 to 69: the port's window rows */
 extern struct _TASK task[11];
@@ -393,4 +396,181 @@ void sf_menu_ext_frame(void)
     }
     sf_input_block(s_open || s_hold);
     memcpy(s_prev, k, sizeof s_prev);
+}
+
+/* ---- the replay slots ---- */
+
+/* The characters by the game's index (My_char). */
+static const char *const k_char_name[20] = { "GILL",  "ALEX", "RYU",  "YUN",   "DUDLEY",  "NECRO",  "HUGO",
+                                             "IBUKI", "ELENA", "ORO", "YANG",  "KEN",     "SEAN",   "URIEN",
+                                             "AKUMA", "CHUN-LI", "MAKOTO", "Q", "TWELVE", "REMY" };
+
+extern u16 PLsw[2][2];
+extern u8 D_007AA5EF;
+
+enum { RP_LIST, RP_CONFIRM, RP_DONE };
+
+static struct {
+    int save;
+    int step;
+    int row;
+    int timer;
+    int has[SF_REPLAY_SLOTS];
+    int chars[SF_REPLAY_SLOTS][2];
+    long long when[SF_REPLAY_SLOTS];
+    const char *note; /* a line under the list for a while */
+    int note_timer;
+} s_rp;
+
+static const char *char_name(int c)
+{
+    return c >= 0 && c < 20 ? k_char_name[c] : "?";
+}
+
+static void rp_scan(void)
+{
+    int i;
+    for (i = 0; i < SF_REPLAY_SLOTS; i++) {
+        s_rp.has[i] = sf_replay_slot(i, s_rp.chars[i], &s_rp.when[i]);
+    }
+}
+
+/* The pads' new presses, as the game's menus read them, and who pressed. */
+static u16 rp_pressed(int *who)
+{
+    int p;
+    for (p = 0; p < 2; p++) {
+        u16 sw = (u16)(~PLsw[p][1] & PLsw[p][0]);
+        if (sw & 0x303) {
+            *who = p;
+            return sw;
+        }
+    }
+    return 0;
+}
+
+static void rp_draw(int frame)
+{
+    int i;
+    xb_ToneDownCopy(0xE8, 2);
+    Akaobi();
+    put_text(0x68, 0x16, s_rp.save ? "SAVE REPLAY" : "LOAD REPLAY", 1.5f, COL_TITLE, 1);
+    for (i = 0; i < SF_REPLAY_SLOTS; i++) {
+        int y = 50 + i * 15;
+        int on = i == s_rp.row;
+        int col = on ? COL_CURSOR : COL_TEXT;
+        char num[4];
+        char line[48];
+        snprintf(num, sizeof num, "%02d", i + 1);
+        put_text(32, y, num, 1.0f, col, 1);
+        if (s_rp.has[i] > 0) {
+            char date[24];
+            time_t t = (time_t)s_rp.when[i];
+            struct tm tm;
+            snprintf(line, sizeof line, "%s VS %s", char_name(s_rp.chars[i][0]), char_name(s_rp.chars[i][1]));
+            put_text(64, y, line, 1.0f, col, 1);
+            if (t && localtime_r(&t, &tm)) {
+                strftime(date, sizeof date, "%Y-%m-%d %H:%M", &tm);
+                put_text(232, y, date, 1.0f, on ? COL_CURSOR : COL_VALUE, 1);
+            }
+        } else {
+            put_text(64, y, s_rp.has[i] < 0 ? "DAMAGED DATA" : "NO DATA", 1.0f, on ? COL_CURSOR : COL_VALUE, 1);
+        }
+    }
+    if (s_rp.step == RP_CONFIRM) {
+        if ((frame >> 4) & 1) {
+            put_centred(204, "OVERWRITE THIS REPLAY ?", 1.0f, COL_CURSOR, 1);
+        }
+        put_centred(214, "YES: A   NO: B", 1.0f, COL_VALUE, 1);
+    } else if (s_rp.note_timer > 0) {
+        put_centred(208, s_rp.note, 1.0f, COL_CURSOR, 1);
+    } else {
+        put_centred(208, s_rp.save ? "A: SAVE   B: BACK" : "A: LOAD   B: BACK", 1.0f, COL_VALUE, 1);
+    }
+}
+
+int sf_replay_page(int start, int save)
+{
+    static int frame;
+    int who = 0;
+    u16 sw;
+    if (start) {
+        memset(&s_rp, 0, sizeof s_rp);
+        s_rp.save = save;
+        rp_scan();
+        /* loading starts on the first replay there is */
+        if (!save) {
+            int i;
+            for (i = 0; i < SF_REPLAY_SLOTS && s_rp.has[i] <= 0; i++) {
+            }
+            s_rp.row = i < SF_REPLAY_SLOTS ? i : 0;
+        }
+        return 1;
+    }
+    frame++;
+    if (s_rp.note_timer > 0) {
+        s_rp.note_timer--;
+    }
+    if (s_rp.step == RP_DONE) {
+        /* "REPLAY SAVED." stays a moment before the menu goes on */
+        rp_draw(frame);
+        return --s_rp.timer > 0 ? 1 : 0;
+    }
+    sw = rp_pressed(&who);
+    if (s_rp.step == RP_CONFIRM) {
+        if (sw & 0x100) {
+            s_rp.step = RP_LIST;
+            if (sf_replay_save(s_rp.row) == 0) {
+                SE_selected();
+                s_rp.note = "REPLAY SAVED.";
+                s_rp.step = RP_DONE;
+                s_rp.timer = 60;
+                rp_scan();
+            } else {
+                s_rp.note = "THE REPLAY COULD NOT BE SAVED.";
+                s_rp.note_timer = 120;
+            }
+        } else if (sw & 0x200) {
+            SE_dir_cursor_move();
+            s_rp.step = RP_LIST;
+        }
+        rp_draw(frame);
+        return 1;
+    }
+    if (sw & 1) {
+        s_rp.row = (s_rp.row + SF_REPLAY_SLOTS - 1) % SF_REPLAY_SLOTS;
+        SE_cursor_move();
+    } else if (sw & 2) {
+        s_rp.row = (s_rp.row + 1) % SF_REPLAY_SLOTS;
+        SE_cursor_move();
+    } else if (sw & 0x200) {
+        SE_selected();
+        return -1;
+    } else if (sw & 0x100) {
+        if (save) {
+            if (s_rp.has[s_rp.row] != 0) {
+                SE_selected();
+                s_rp.step = RP_CONFIRM;
+            } else if (sf_replay_save(s_rp.row) == 0) {
+                SE_selected();
+                s_rp.note = "REPLAY SAVED.";
+                s_rp.step = RP_DONE;
+                s_rp.timer = 60;
+                rp_scan();
+            } else {
+                s_rp.note = "THE REPLAY COULD NOT BE SAVED.";
+                s_rp.note_timer = 120;
+            }
+        } else if (s_rp.has[s_rp.row] > 0 && sf_replay_load(s_rp.row) == 0) {
+            SE_selected();
+            D_007AA5EF = (u8)who;
+            return 0;
+        } else {
+            SE_dir_cursor_move();
+            s_rp.note = s_rp.has[s_rp.row] < 0 ? "THIS REPLAY IS DAMAGED." : "THERE IS NO REPLAY HERE.";
+            s_rp.note_timer = 90;
+        }
+    }
+    rp_draw(frame);
+    return 1;
 }

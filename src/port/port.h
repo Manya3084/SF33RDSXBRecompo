@@ -67,7 +67,18 @@ void sf_input_block(int on);
 /* 1 while SF_REPLAY plays a recording in place of the devices. */
 int sf_input_replaying(void);
 
+/* Replays (src/port/save.c): ten slots in data/save. sf_replay_slot says
+ * what a slot holds (1 a replay, 0 none, -1 damaged). */
+#define SF_REPLAY_SLOTS 10
+int sf_replay_slot(int slot, int chars[2], long long *when);
+int sf_replay_save(int slot);
+int sf_replay_load(int slot);
+
 /* The port's additions to the game's menus (src/port/menu_ext.c). */
+/* The replay slot page, run by SaveMove each frame: start is set on the
+ * first frame, save picks a slot to save to (else to load from). 1 while
+ * open, 0 when done, -1 when left. */
+int sf_replay_page(int start, int save);
 void sf_menu_ext_init(void);
 void sf_menu_ext_frame(void);
 

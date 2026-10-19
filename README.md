@@ -12,7 +12,7 @@ Working:
 - Arcade, character select, and fights, including the attract-loop fights
 - music: the ADX and AIX tracks, decoded natively and streamed through OpenAL
 - sound effects and voices: the game's XACT cue banks played on OpenAL (PCM and Xbox ADPCM waves, loops, envelopes, fades, panning)
-- saves (system settings and button directions) in `data/save/`
+- saves (system settings and button directions) in `data/save/`, and replays in ten slots (`replay01.sav` to `replay10.sav`), picked on the game's REPLAY screens
 - the keyboard and SDL3 gamepads, with retail's join-by-Start, and a keyboard page in BUTTON CONFIG for rebinding the keys
 - windowed, borderless or fullscreen, the resolution and the aspect ratio, set in SCREEN ADJUST, paced to 60 frames a second
 - EXIT GAME in the mode menu (retail's SELECT GAME), which quits cleanly
@@ -21,7 +21,7 @@ Not done yet:
 
 - the cue banks' pitch LFO (a slight vibrato on some voices)
 - the OpenGL fallback for the game screen (Vulkan is required for now)
-- replay saving and online play (the game runs offline)
+- online play (the game runs offline; Xbox Live is greyed out in the mode menu)
 
 ## Getting the data
 
