@@ -19,6 +19,34 @@ s32 xb_GetOnlineFlag(void)
     return 0;
 }
 
+/* The Live work's flags the offline game reads: +0x2330 (a match through
+ * Live, drawn into the capture texture) and +0x1C4 (start in the Live
+ * menu); retail reads 0 from both when it has no Live work, as here. */
+s32 xb_LiveWork_Get2330(void)
+{
+    return 0;
+}
+
+void xb_LiveWork_Set2330(s32 v)
+{
+    (void)v;
+}
+
+s32 xb_LiveWork_Get1C4(void)
+{
+    return 0;
+}
+
+/* The screen capture the Live overlay is drawn over (EFF57's wall and the
+ * select screen make it, Game.c lets it go); without Live nothing reads it. */
+void xb_CreateScreenTextures(void)
+{
+}
+
+void xb_ReleaseScreenTextures(void)
+{
+}
+
 s32 xb_NetSync_IsDone(void)
 {
     return s_sync_done;

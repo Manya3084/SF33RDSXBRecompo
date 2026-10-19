@@ -158,15 +158,25 @@ static void reset_screen_state(void)
 }
 
 void sf_input_reset(void);
+extern IO io_w;
+extern u16 p3sw_0, p3sw_1, p4sw_0, p4sw_1;
 
-static void reset_input_state(void)
+/* retail's xb_ResetInputState (xb_0611EA.c): no port has joined and no
+ * switch is held. Start-up runs it, and the Capcom logo at the start of
+ * each attract loop. */
+void xb_ResetInputState(void)
 {
     sf_input_reset();
+    memset(&io_w, 0, sizeof io_w);
     memset(Interface_Type, 0, sizeof Interface_Type);
     p1sw_0 = 0;
     p1sw_1 = 0;
     p2sw_0 = 0;
     p2sw_1 = 0;
+    p3sw_0 = 0;
+    p3sw_1 = 0;
+    p4sw_0 = 0;
+    p4sw_1 = 0;
 }
 
 void njUserInit(void)
@@ -232,7 +242,7 @@ void njUserInit(void)
     sys_w.disp.now = 1;
     sys_w.pause = 0;
     sys_w.reset = 0;
-    reset_input_state();
+    xb_ResetInputState();
     Init_sound_system();
     Init_bgm_work();
     Setup_Directory_Record_Data();
