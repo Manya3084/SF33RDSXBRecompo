@@ -5,8 +5,9 @@
 
 /* opening_demo case 1 steps this clock. Trigger 101 holds background 0.
    The piece view draws the slogan and the first sketch while the index is 0.
-   Time 79 posts status 11, drops both, and the second sketch takes the picture.
-   Scene 102 stays out. */
+   Time 79 posts status 11. The next frame drops both, shows the second
+   sketch, and turns on the two Opening.ppg cells behind it. layer_y[0] is
+   that layer's quake in pixels. Scene 102 stays out. */
 
 typedef struct SfOpening {
     int16_t timer;
@@ -21,6 +22,7 @@ typedef struct SfOpening {
     int16_t obj_disp;
     int16_t pos_offset;
     uint16_t screen;
+    int16_t quake_i;
     int8_t layer_r[3];
     int32_t layer_x[3];
     int32_t layer_y[3];

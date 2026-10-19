@@ -12,24 +12,41 @@
 static const int16_t k_time[16] = {4, 11, 19, 26, 34, 41, 49, 56, 64, 71, 79, 86, 94, 101, 109, 116};
 static const int16_t k_trg[16] = {101, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 
+/* op_quake_y_tbl0. op_bg0_0001 adds entry 1 on the arm frame, then walks. */
+static const int16_t k_quake[16] = {4, -8, 2, 1, -6, -3, 9, -3, 8, -2, 6, 3, -4, -9, 3, -1};
+
 static void bg_off(SfOpening *op, uint16_t bits)
 {
     op->screen = (uint16_t)(op->screen & (uint16_t)~bits);
 }
 
+static void quake_bg0(SfOpening *op)
+{
+    op->quake_i = (int16_t)((op->quake_i + 1) & 15);
+    op->layer_y[0] += k_quake[op->quake_i];
+}
+
 static void move_bg0(SfOpening *op, int r_index)
 {
-    if (op->layer_r[0] != 0) {
+    if (r_index != 1) {
+        if (op->layer_r[0] != 0) {
+            return;
+        }
+        op->layer_r[0] = 1;
+        op->layer_x[0] = 0x02000000;
+        op->layer_y[0] = 0;
+        bg_off(op, 1);
         return;
     }
-    op->layer_r[0] = 1;
-    op->layer_x[0] = 0x02000000;
-    op->layer_y[0] = 0;
-    if (r_index == 0) {
-        bg_off(op, 1);
-    } else {
+    /* op_bg0_0001 case 0 falls through into the quake. Later calls stay there. */
+    if (op->layer_r[0] == 0) {
+        op->layer_r[0] = 1;
+        op->layer_x[0] = 0x02000000;
+        op->layer_y[0] = 0;
+        op->quake_i = 0;
         op->screen = (uint16_t)(op->screen | 1u);
     }
+    quake_bg0(op);
 }
 
 static void move_bg1(SfOpening *op)

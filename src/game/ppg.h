@@ -23,6 +23,7 @@ typedef struct SfPpgTex {
 } SfPpgTex;
 
 int sf_ppg_tex(const uint8_t *file, uint32_t size, int index, SfPpgTex *out, char *err, size_t err_n);
+int sf_ppg_rect(const uint8_t *file, uint32_t size, int index, int n, int *x, int *y, int *w, int *h, int *pal);
 int sf_ppg_expand_ci(SfPpgTex *tex, const uint16_t *pal, int colors, char *err, size_t err_n);
 void sf_ppg_tex_free(SfPpgTex *tex);
 

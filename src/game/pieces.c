@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "game/fs.h"
+#include "game/ppg.h"
 #include "mem/heap.h"
 
 #include <string.h>
@@ -394,15 +395,22 @@ static void blit_layer(const uint8_t *src, int dx, int dy, uint8_t *dst)
     }
 }
 
-void sf_pieces_compose(const uint8_t *sketch, const uint8_t *slogan, int shift_x, int shift_y, uint8_t *rgba)
+void sf_pieces_overlay(const uint8_t *sketch, const uint8_t *slogan, int shift_x, int shift_y, uint8_t *rgba)
 {
-    size_t n = piece_bytes();
     if (!rgba) {
         return;
     }
-    memset(rgba, 0, n);
     blit_layer(sketch, 0, shift_y, rgba);
     blit_layer(slogan, shift_x, 0, rgba);
+}
+
+void sf_pieces_compose(const uint8_t *sketch, const uint8_t *slogan, int shift_x, int shift_y, uint8_t *rgba)
+{
+    if (!rgba) {
+        return;
+    }
+    memset(rgba, 0, piece_bytes());
+    sf_pieces_overlay(sketch, slogan, shift_x, shift_y, rgba);
 }
 
 int sf_pieces_next(const uint8_t *bg, uint32_t bg_size, const uint8_t *title, uint32_t title_size, uint8_t *rgba, char *err, size_t err_n)
@@ -515,4 +523,170 @@ int sf_pieces_load(const char *install, uint8_t **sketch, uint8_t **slogan, uint
     *slogan = slogan_px;
     *next = next_px;
     return 0;
+}
+
+/* Opening.ppg ixNum1st is 602, so block 0x30 is texture 47 and 0x31 is 48.
+   put_chr2 adds 300, and title.bin fills ColorRAM from that row. Both cells
+   are 256 wide. At h shift 320 they sit at screen x -64 and 192. */
+enum { SF_OPENING_PPG = 81, SF_CELL_L = 47, SF_CELL_R = 48, SF_CELL = 256 };
+
+static void blit_tex(const uint8_t *src, int sw, int sh, int dx, int dy, uint8_t *dst)
+{
+    int y;
+    int x;
+    if (!src || !dst) {
+        return;
+    }
+    for (y = 0; y < sh; y++) {
+        int ty = y + dy;
+        if ((unsigned)ty >= (unsigned)SF_PIECE_H) {
+            continue;
+        }
+        for (x = 0; x < sw; x++) {
+            int tx = x + dx;
+            const uint8_t *s;
+            uint8_t *d;
+            if ((unsigned)tx >= (unsigned)SF_PIECE_W) {
+                continue;
+            }
+            s = src + ((size_t)y * (size_t)sw + (size_t)x) * 4u;
+            if (s[3] == 0) {
+                continue;
+            }
+            d = dst + ((size_t)ty * (size_t)SF_PIECE_W + (size_t)tx) * 4u;
+            d[0] = s[0];
+            d[1] = s[1];
+            d[2] = s[2];
+            d[3] = s[3];
+        }
+    }
+}
+
+static int paint_cell(const uint8_t *file, uint32_t size, int index, const uint8_t *rgba, int base_pal, uint8_t *dst)
+{
+    int n = 0;
+    memset(dst, 0, (size_t)SF_CELL * (size_t)SF_CELL * 4u);
+    for (;;) {
+        int x;
+        int y;
+        int w;
+        int h;
+        int pal;
+        int row;
+        int col;
+        if (sf_ppg_rect(file, size, index, n, &x, &y, &w, &h, &pal) != 0) {
+            break;
+        }
+        if (pal != base_pal) {
+            return -1;
+        }
+        for (row = 0; row < h; row++) {
+            int sy = y + row;
+            if ((unsigned)sy >= (unsigned)SF_CELL) {
+                continue;
+            }
+            for (col = 0; col < w; col++) {
+                int sx = x + col;
+                const uint8_t *s;
+                uint8_t *d;
+                if ((unsigned)sx >= (unsigned)SF_CELL) {
+                    continue;
+                }
+                s = rgba + ((size_t)sy * (size_t)SF_CELL + (size_t)sx) * 4u;
+                d = dst + ((size_t)sy * (size_t)SF_CELL + (size_t)sx) * 4u;
+                d[0] = s[0];
+                d[1] = s[1];
+                d[2] = s[2];
+                d[3] = s[3];
+            }
+        }
+        n++;
+    }
+    return n > 0 ? 0 : -1;
+}
+
+static int cell_rgba(const uint8_t *file, uint32_t size, const uint8_t *title, uint32_t title_n, int index, uint8_t *dst, char *err, size_t err_n)
+{
+    SfPpgTex tex;
+    uint16_t row[64];
+    memset(&tex, 0, sizeof tex);
+    if (sf_ppg_tex(file, size, index, &tex, err, err_n) != 0) {
+        return -1;
+    }
+    if (tex.width != SF_CELL || tex.height != SF_CELL || pal_row(title, title_n, tex.pal, row) != 0 || sf_ppg_expand_ci(&tex, row, 64, err, err_n) != 0 || !tex.rgba) {
+        sf_ppg_tex_free(&tex);
+        sf_set_err(err, err_n, "an opening cell did not expand");
+        return -1;
+    }
+    if (paint_cell(file, size, index, tex.rgba, tex.pal, dst) != 0) {
+        sf_ppg_tex_free(&tex);
+        sf_set_err(err, err_n, "an opening cell rectangle did not paint");
+        return -1;
+    }
+    sf_ppg_tex_free(&tex);
+    return 0;
+}
+
+int sf_ground_load(const char *install, uint8_t **left, uint8_t **right, char *err, size_t err_n)
+{
+    SfFsFile image;
+    SfFsFile title;
+    uint8_t *left_px;
+    uint8_t *right_px;
+    size_t n = (size_t)SF_CELL * (size_t)SF_CELL * 4u;
+    if (left) {
+        *left = NULL;
+    }
+    if (right) {
+        *right = NULL;
+    }
+    if (!install || !left || !right) {
+        sf_set_err(err, err_n, "the opening ground needs a buffer");
+        return -1;
+    }
+    memset(&image, 0, sizeof image);
+    memset(&title, 0, sizeof title);
+    if (fsOpen(install, SF_OPENING_PPG, &image, err, err_n) != 0 || !image.data || strcmp(image.name, "Opening.ppg") != 0) {
+        fsClose(&image);
+        sf_set_err(err, err_n, "Opening.ppg did not open");
+        return -1;
+    }
+    if (fsOpen(install, SF_TITLE_BIN, &title, err, err_n) != 0 || !title.data || strcmp(title.name, "title.bin") != 0) {
+        fsClose(&image);
+        fsClose(&title);
+        sf_set_err(err, err_n, "title.bin did not open");
+        return -1;
+    }
+    left_px = sf_alloc(n);
+    right_px = sf_alloc(n);
+    if (!left_px || !right_px) {
+        sf_free(left_px);
+        sf_free(right_px);
+        fsClose(&image);
+        fsClose(&title);
+        sf_set_err(err, err_n, "the opening ground did not allocate");
+        return -1;
+    }
+    if (cell_rgba(image.data, image.size, title.data, title.size, SF_CELL_L, left_px, err, err_n) != 0 || cell_rgba(image.data, image.size, title.data, title.size, SF_CELL_R, right_px, err, err_n) != 0) {
+        sf_free(left_px);
+        sf_free(right_px);
+        fsClose(&image);
+        fsClose(&title);
+        return -1;
+    }
+    fsClose(&image);
+    fsClose(&title);
+    *left = left_px;
+    *right = right_px;
+    return 0;
+}
+
+void sf_ground_compose(const uint8_t *left, const uint8_t *right, int off_y, uint8_t *rgba)
+{
+    if (!rgba) {
+        return;
+    }
+    memset(rgba, 0, piece_bytes());
+    blit_tex(left, SF_CELL, SF_CELL, -64, off_y, rgba);
+    blit_tex(right, SF_CELL, SF_CELL, 192, off_y, rgba);
 }

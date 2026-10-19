@@ -160,13 +160,13 @@ static void test_opening(void)
     while (op.timer < 79) {
         sf_opening_step(&op);
     }
-    expect(op.timer == 79 && op.status == 11 && op.scene == 11 && op.index == 1 && op.obj_disp == 1 && op.r_no_2 == 2 && op.show_next == 0 && op.screen == 0 && op.layer_x[2] == 0x01B50000 && op.f6_y[0] == -23, "time 79 posts status 11 and leaves the old picture up for this frame");
+    expect(op.timer == 79 && op.status == 11 && op.scene == 11 && op.index == 1 && op.obj_disp == 1 && op.r_no_2 == 2 && op.show_next == 0 && op.screen == 0 && op.layer_x[2] == 0x01B50000 && op.layer_y[0] == 0 && op.f6_y[0] == -23, "time 79 posts status 11 and leaves the old picture up for this frame");
     sf_opening_step(&op);
-    expect(op.timer == 80 && op.show_next == 1 && op.f6_y[1] == -222 && op.layer_x[2] == 0x02000000 && (op.screen & 1u) == 1u && op.status == 11 && op.r_no_1 == 1, "the next frame shows the second sketch and resets layer 2");
+    expect(op.timer == 80 && op.show_next == 1 && op.f6_y[1] == -222 && op.layer_x[2] == 0x02000000 && (op.screen & 1u) == 1u && op.layer_y[0] == -8 && op.status == 11 && op.r_no_1 == 1, "the next frame shows the second sketch and the ground quake starts at -8");
     while (op.timer < 123) {
         sf_opening_step(&op);
     }
-    expect(op.timer == 123 && op.f6_y[1] == -136 && op.f6_stop[1] == 1 && op.status == 16 && op.r_no_1 == 1 && op.layer_x[2] == 0x02000000, "the second sketch stops at -136 and scene 102 stays unposted");
+    expect(op.timer == 123 && op.f6_y[1] == -136 && op.f6_stop[1] == 1 && op.status == 16 && op.r_no_1 == 1 && op.layer_x[2] == 0x02000000 && op.layer_y[0] == 3, "the second sketch stops at -136 and scene 102 stays unposted");
 }
 
 int main(void)

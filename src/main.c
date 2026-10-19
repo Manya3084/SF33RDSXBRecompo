@@ -58,6 +58,8 @@ typedef struct App {
     uint8_t *sketch;
     uint8_t *slogan;
     uint8_t *next;
+    uint8_t *ground_l;
+    uint8_t *ground_r;
     uint8_t *pieces;
     SfOpening beat;
     SfTrack *tracks;
@@ -184,10 +186,14 @@ static void clear_picture(App *app)
     sf_free(app->sketch);
     sf_free(app->slogan);
     sf_free(app->next);
+    sf_free(app->ground_l);
+    sf_free(app->ground_r);
     sf_free(app->pieces);
     app->sketch = NULL;
     app->slogan = NULL;
     app->next = NULL;
+    app->ground_l = NULL;
+    app->ground_r = NULL;
     app->pieces = NULL;
     app->ui.pieces = NULL;
 }
@@ -501,19 +507,43 @@ static void load_pieces(App *app)
     app->ui.pieces = app->pieces;
 }
 
+static void load_ground(App *app)
+{
+    char err[256];
+    err[0] = 0;
+    if (sf_ground_load(app->install, &app->ground_l, &app->ground_r, err, sizeof err) != 0) {
+        fprintf(stderr, "%s\n", err[0] ? err : "the opening ground did not decode");
+        app->ground_l = NULL;
+        app->ground_r = NULL;
+    }
+}
+
 static void place_pieces(App *app)
 {
+    int ground;
     if (!app->beat.held || !app->pieces) {
         return;
     }
+    ground = (app->beat.screen & 1u) && app->ground_l && app->ground_r;
+    if (ground) {
+        sf_ground_compose(app->ground_l, app->ground_r, app->beat.layer_y[0] - 16, app->pieces);
+    }
     if (app->beat.show_next) {
-        sf_pieces_compose(app->next, NULL, 0, -224 - app->beat.f6_y[1], app->pieces);
+        if (ground) {
+            sf_pieces_overlay(app->next, NULL, 0, -224 - app->beat.f6_y[1], app->pieces);
+        } else {
+            sf_pieces_compose(app->next, NULL, 0, -224 - app->beat.f6_y[1], app->pieces);
+        }
         return;
     }
     if (!app->sketch || !app->slogan) {
         return;
     }
-    sf_pieces_compose(app->sketch, app->slogan, sf_slogan_shift(app->beat.layer_x[2]), 16 - app->beat.f6_y[0], app->pieces);
+    if (ground) {
+        sf_pieces_overlay(app->sketch, app->slogan, sf_slogan_shift(app->beat.layer_x[2]), 16 - app->beat.f6_y[0], app->pieces);
+    } else {
+        sf_pieces_compose(app->sketch, app->slogan, sf_slogan_shift(app->beat.layer_x[2]), 16 - app->beat.f6_y[0], app->pieces);
+    }
 }
 
 static void load_title(App *app)
@@ -522,6 +552,7 @@ static void load_title(App *app)
     load_logo(app);
     load_opening(app);
     load_pieces(app);
+    load_ground(app);
     load_bgm(app);
     sf_opening_init(&app->beat);
     app->ui.opening_hold = 0;

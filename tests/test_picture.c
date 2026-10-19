@@ -595,6 +595,45 @@ static void test_pieces(void)
             }
             sf_free(next);
         }
+        {
+            SfFsFile image;
+            SfPpgTex cell;
+            uint8_t *left = NULL;
+            uint8_t *right = NULL;
+            uint8_t *ground = sf_alloc(n);
+            const uint8_t *word;
+            const uint8_t *px;
+            memset(&image, 0, sizeof image);
+            memset(&cell, 0, sizeof cell);
+            word = colors.data + 41 * 128 + 48 * 2;
+            expect(colors.size >= 42u * 128u && (uint16_t)(word[0] | (word[1] << 8)) == 0x8000, "title.bin row 41 index 48 is opaque black");
+            expect(fsOpen(".", 81, &image, err, sizeof err) == 0 && image.data && strcmp(image.name, "Opening.ppg") == 0, "Opening.ppg opens for the ground");
+            if (image.data) {
+                expect(sf_ppg_tex(image.data, image.size, 47, &cell, err, sizeof err) == 0 && cell.pal == 41 && cell.rects == 8, "opening texture 47 is row 41");
+                sf_ppg_tex_free(&cell);
+                expect(sf_ppg_tex(image.data, image.size, 48, &cell, err, sizeof err) == 0 && cell.pal == 41 && cell.rects == 10, "opening texture 48 is row 41");
+                sf_ppg_tex_free(&cell);
+            }
+            fsClose(&image);
+            expect(ground && sf_ground_load(".", &left, &right, err, sizeof err) == 0, "the opening ground decodes");
+            if (ground && left && right) {
+                sf_ground_compose(left, right, -24, ground);
+                px = ground;
+                expect(px[0] == 0 && px[1] == 0 && px[2] == 0 && px[3] == 255, "ground pixel 0,0 is black on the first quake");
+                px = ground + ((size_t)0 * (size_t)SF_PIECE_W + 80u) * 4u;
+                expect(px[3] == 0, "ground pixel 80,0 stays clear");
+                px = ground + ((size_t)0 * (size_t)SF_PIECE_W + 192u) * 4u;
+                expect(px[0] == 0 && px[1] == 0 && px[2] == 0 && px[3] == 255, "ground pixel 192,0 is the right cell");
+                px = ground + ((size_t)7 * (size_t)SF_PIECE_W + 39u) * 4u;
+                expect(px[3] == 0, "ground pixel 39,7 is clear at quake -8");
+                sf_ground_compose(left, right, -22, ground);
+                px = ground + ((size_t)7 * (size_t)SF_PIECE_W + 39u) * 4u;
+                expect(px[0] == 0 && px[1] == 0 && px[2] == 0 && px[3] == 255, "the next quake step paints ground pixel 39,7");
+            }
+            sf_free(left);
+            sf_free(right);
+            sf_free(ground);
+        }
         sf_free(sketch);
         sf_free(slogan);
         sf_free(moved);

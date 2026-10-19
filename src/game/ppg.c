@@ -278,6 +278,42 @@ int sf_ppg_tex(const uint8_t *file, uint32_t size, int index, SfPpgTex *out, cha
     return 0;
 }
 
+int sf_ppg_rect(const uint8_t *file, uint32_t size, int index, int n, int *x, int *y, int *w, int *h, int *pal)
+{
+    uint32_t at = 0;
+    uint32_t chunk = 0;
+    const uint8_t *hdr;
+    const uint8_t *rec;
+    int cells;
+    int trans;
+    int ip;
+    int cofs;
+    if (!file || !x || !y || !w || !h || !pal || n < 0) {
+        return -1;
+    }
+    if (find_tex(file, size, index, &at, &chunk, NULL, 0) != 0) {
+        return -1;
+    }
+    hdr = file + at;
+    trans = (int)(((unsigned)hdr[14] << 8) | hdr[15]);
+    if (n >= trans || 16 + (n + 1) * 3 > (int)chunk) {
+        return -1;
+    }
+    cells = hdr[8];
+    if (cells <= 0) {
+        return -1;
+    }
+    rec = hdr + 16 + n * 3;
+    ip = rec[1];
+    cofs = rec[2];
+    *pal = rec[0];
+    *x = (ip % cells) * 16;
+    *y = (ip / cells) * 16;
+    *w = ((cofs >> 4) + 1) * 16;
+    *h = ((cofs & 0xF) + 1) * 16;
+    return 0;
+}
+
 int sf_ppg_expand_ci(SfPpgTex *tex, const uint16_t *pal, int colors, char *err, size_t err_n)
 {
     size_t pixels;
