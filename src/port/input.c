@@ -124,6 +124,9 @@ static void refresh_gamepads(void)
     int n = 0;
     int i;
     int port = 1;
+    if (getenv("SF_NO_GAMEPADS")) {
+        return; /* tests: only the keyboard port and scripted presses */
+    }
     for (i = 1; i < PORTS; i++) {
         if (s_pads[i] && !SDL_GamepadConnected(s_pads[i])) {
             SDL_CloseGamepad(s_pads[i]);

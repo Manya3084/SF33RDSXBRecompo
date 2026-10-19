@@ -100,6 +100,7 @@ struct SfScene {
     VkPipeline copy_blend;
     VkDeviceSize readback_size;
     int read_layer1; /* debugging: read the PS2-sized picture before its copy */
+    int back_valid;  /* the output holds a frame (it starts undefined) */
 };
 
 static uint32_t mem_index(VkPhysicalDevice physical, uint32_t bits, VkMemoryPropertyFlags flags)
@@ -406,6 +407,7 @@ static int make_targets(SfScene *s, int scale)
     if (s->copy_set) {
         write_copy_sets(s);
     }
+    s->back_valid = 0;
     return 0;
 }
 
@@ -1363,9 +1365,12 @@ void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l)
         record_screen(s, cmd, l, at, l->b_n, 0);
         record_copy(s, cmd, 0, 0, s->copy_blend, l->show, l->show_at);
     } else {
+        /* no PS2-sized picture this frame: the output keeps the last one,
+         * as retail's back buffer does, and the screen is blended over it */
         record_screen(s, cmd, l, 0, l->b_n, l->clear);
-        record_copy(s, cmd, 1, 0xFF000000, s->copy_blend, l->show, l->show_at);
+        record_copy(s, cmd, !s->back_valid, 0xFF000000, s->copy_blend, l->show, l->show_at);
     }
+    s->back_valid = 1;
 }
 
 void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, const SfDrawList *l)
