@@ -1,6 +1,6 @@
 --- a/menu.c
 +++ b/menu.c
-@@ -414,6 +414,8 @@
+@@ -431,6 +431,8 @@
  void Game_Option(struct _TASK* task_ptr);
  void Button_Config(struct _TASK* task_ptr);
  void Screen_Adjust(struct _TASK* task_ptr);
@@ -9,7 +9,19 @@
  void Sound_Test(struct _TASK* task_ptr);
  void Memory_Card(struct _TASK* task_ptr);
  void Extra_Option(struct _TASK* task_ptr);
-@@ -2755,15 +2757,18 @@
+@@ -1000,6 +1002,11 @@
+ 
+         switch (IO_Result) {
+         case 0x100:
++            if (Menu_Cursor_Y[0] == 6) {
++                /* Port: no Xbox Live (online play would come here) */
++                break;
++            }
++
+             switch (Menu_Cursor_Y[0]) {
+             case 0:
+                 G_No[2] += 1;
+@@ -2773,15 +2780,18 @@
          Order_Dir[0x65] = 8;
          Order_Timer[0x65] = 1;
  
@@ -31,7 +43,7 @@
              Order[ix + 0x50] = 1;
              Order_Dir[ix + 0x50] = 4;
              Order_Timer[ix + 0x50] = ix + 0x14;
-@@ -2807,7 +2812,7 @@
+@@ -2825,7 +2835,7 @@
      u16 sw;
      sw = ~plsw_01[PL_id] & plsw_00[PL_id];
      sw = Check_Menu_Lever(PL_id, 0);
@@ -40,7 +52,7 @@
      Screen_Move_Sub_LR(sw);
  }
  
-@@ -2821,7 +2826,7 @@
+@@ -2839,7 +2849,7 @@
          return;
      }
  
@@ -49,7 +61,7 @@
          SE_selected();
          Menu_Suicide[1] = 0;
          Menu_Suicide[2] = 1;
-@@ -2849,8 +2854,9 @@
+@@ -2867,8 +2877,9 @@
          return;
      }
  
@@ -60,7 +72,7 @@
          X_Adjust_Buff[2] = 0;
          Y_Adjust_Buff[2] = 0;
          Disp_Size_H = 100;
-@@ -2973,6 +2979,11 @@
+@@ -2991,6 +3002,11 @@
          }
      }
  
