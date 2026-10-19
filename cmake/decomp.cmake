@@ -133,6 +133,7 @@ add_library(sf_port STATIC
     src/port/banks.c
     src/port/math.c
     src/port/sound.c
+    src/port/live.c
     src/game/adx.c
     src/game/aix.c
     src/host/paths.c
