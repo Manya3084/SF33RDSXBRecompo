@@ -64,6 +64,7 @@ static void test_coef(void)
     int16_t c2 = 0;
     expect(sf_adx_coef(500, 48000, &c1, &c2) == 0, "coefficient call");
     expect(c1 == 7400 && c2 == -3342, "500 Hz at 48000 is 7400, -3342");
+    expect(sf_adx_coef(1, 1450, &c1, &c2) == 0 && c1 == 8137 && c2 == -4041, "1 Hz at 1450 stays in double precision");
 }
 
 static void test_scale(void)
@@ -178,6 +179,52 @@ static void test_nyc(void)
             fprintf(stderr, "pcm37 %d pcm40 %d pcm41 %d\n", adx.pcm[37], adx.pcm[40], adx.pcm[41]);
         }
     }
+    sf_adx_free(&adx);
+    fsClose(&file);
+}
+
+/* Version 3 stores the loop at byte 0x14. One silent block follows. */
+static void test_loop3(void)
+{
+    uint8_t file[0x30 + 18];
+    SfAdx adx;
+    char err[64];
+    memset(file, 0, sizeof file);
+    fill_hdr(file, 32, 3, 0);
+    put_be16(file + 2, 0x2C);
+    put_be16(file + 0x16, 1);
+    put_be32(file + 0x1C, 8);
+    put_be32(file + 0x24, 24);
+    memset(&adx, 0, sizeof adx);
+    err[0] = 0;
+    expect(sf_adx_decode(file, sizeof file, &adx, err, sizeof err) == 0, "a version 3 header decodes");
+    expect(adx.loop == 1 && adx.loop_start == 8 && adx.loop_end == 24, "version 3 loops from 8 to 24");
+    sf_adx_free(&adx);
+}
+
+static void test_match_nyc(void)
+{
+    SfFsFile file;
+    SfAdx adx;
+    char err[128];
+    FILE *fp = fopen("data/afs/index", "r");
+    if (!fp) {
+        printf("skip 01_A_NYC (no archive index)\n");
+        return;
+    }
+    fclose(fp);
+    memset(&file, 0, sizeof file);
+    memset(&adx, 0, sizeof adx);
+    err[0] = 0;
+    expect(fsOpen(".", 568, &file, err, sizeof err) == 0, "01_A_NYC.adx opens");
+    expect(file.data && strcmp(file.name, "01_A_NYC.adx") == 0, "01_A_NYC.adx name");
+    if (!file.data) {
+        fsClose(&file);
+        return;
+    }
+    expect(sf_adx_decode(file.data, file.size, &adx, err, sizeof err) == 0, "01_A_NYC.adx decodes");
+    expect(adx.channels == 2 && adx.rate == 48000 && adx.total == 2718079, "01 is stereo 48000 with 2718079 samples");
+    expect(adx.loop == 1 && adx.loop_start == 25312 && adx.loop_end == 2699712, "01 loops from 25312 to 2699712");
     sf_adx_free(&adx);
     fsClose(&file);
 }
@@ -311,6 +358,8 @@ int main(void)
     test_end();
     test_key();
     test_nyc();
+    test_loop3();
+    test_match_nyc();
     test_names();
     test_bank();
     test_list();

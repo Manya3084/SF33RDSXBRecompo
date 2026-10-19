@@ -10,9 +10,10 @@
    the stream. The scale is ((state XOR word) & 0x1FFF) + 1, then the
    state becomes (state * km + ka) & 0x7FFF. Nibbles are high then low,
    both signed 4-bit. The predictor is an arithmetic shift by 12.
-   ADX_GetCoefficient is 0x170C60 and truncates toward zero. */
+   ADX_GetCoefficient is 0x170C60. The filter stays in double precision
+   and truncates toward zero. */
 
-#define SF_ADX_PI 3.14159265f
+#define SF_ADX_PI2 (3.14159265f * 2.0f)
 #define SF_ADX_MAX_SAMPLES (64 * 1024 * 1024)
 
 static uint16_t be16(const uint8_t *p)
@@ -27,17 +28,18 @@ static uint32_t be32(const uint8_t *p)
 
 int sf_adx_coef(int high_pass, int rate, int16_t *coef1, int16_t *coef2)
 {
-    float f21;
-    float f20;
-    float r;
+    double a;
+    double b;
+    double r;
     if (!coef1 || !coef2 || rate <= 0 || high_pass < 0) {
         return -1;
     }
-    f21 = sqrtf(2.0f) - cosf((SF_ADX_PI * 2.0f * (float)high_pass) / (float)rate);
-    f20 = sqrtf(2.0f) - 1.0f;
-    r = (f21 - sqrtf((f21 + f20) * (f21 - f20))) / f20;
-    *coef1 = (int16_t)(2.0f * r * 4096.0f);
-    *coef2 = (int16_t)(-r * r * 4096.0f);
+    /* The 2*pi factor is the float at 0x219094. The rest stays double. */
+    a = sqrt(2.0) - cos(SF_ADX_PI2 * (float)high_pass / (float)rate);
+    b = sqrt(2.0) - 1.0f;
+    r = (a - sqrt((a + b) * (a - b))) / b;
+    *coef1 = (int16_t)(r * 8192.0f);
+    *coef2 = (int16_t)(r * r * -4096.0f);
     return 0;
 }
 
@@ -87,24 +89,31 @@ static int decode_block(const uint8_t *block, int16_t coef1, int16_t coef2, int1
 
 static void read_loop(const uint8_t *file, uint32_t size, int version, int copyright, int *loop, int32_t *start, int32_t *end)
 {
+    unsigned base;
     int marker;
-    int count;
     *loop = 0;
     *start = 0;
     *end = 0;
-    if (version != 4 || size < 0x3Cu || copyright < 0x38) {
-        return;
+    /* Version 4 stores the loop at 0x20. Every other version stores it
+       at 0x14. The marker is the word two bytes in, and it must be 1.
+       The sample range begins eight bytes after the block. */
+    if (version == 4) {
+        if (size < 0x3Cu || copyright < 0x38) {
+            return;
+        }
+        base = 0x20;
+    } else {
+        if (size < 0x30u || copyright < 0x2C) {
+            return;
+        }
+        base = 0x14;
     }
-    marker = (int)be16(file + 0x22);
+    marker = (int)(int16_t)be16(file + base + 2);
     if (marker != 1) {
         return;
     }
-    count = (int16_t)be16(file + 0x26);
-    if (count == 0) {
-        return;
-    }
-    *start = (int32_t)be32(file + 0x28);
-    *end = (int32_t)be32(file + 0x30);
+    *start = (int32_t)be32(file + base + 8);
+    *end = (int32_t)be32(file + base + 16);
     if (*end <= *start || *start < 0) {
         *start = 0;
         *end = 0;
