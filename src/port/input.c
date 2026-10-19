@@ -88,6 +88,8 @@ static const u32 k_ioconv[24][2] = {
 
 s32 xb_PADInit(void)
 {
+    /* pads keep working when another window has the focus */
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_InitSubSystem(SDL_INIT_GAMEPAD);
     memset(s_pads, 0, sizeof s_pads);
     return 1;
