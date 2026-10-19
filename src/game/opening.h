@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 /* opening_demo case 1 steps this clock. Trigger 101 holds background 0.
-   The slogan and the sketch are drawn by the piece view. Later scenes
-   and the other Opening.ppg cells stay out. */
+   The piece view draws the slogan and the sketch. Layer 2 keeps walking,
+   so the slogan slides. Later scenes and the other Opening.ppg cells stay out. */
 
 typedef struct SfOpening {
     int16_t timer;

@@ -4,8 +4,9 @@
 
 /* 0xAF4C2 is Bg_Off. Background 0 clears screen bits. It does not place a cell.
    101 and 0x65 are the same status, so op_101_move stays on background 0.
-   The piece view draws the slogan and the sketch for that hold.
-   Go_BGM and ToneDown stay for a later beat. Triggers after 101 stay there too. */
+   The piece view draws the slogan and the sketch. Layer 2 keeps walking
+   on this hold, and the slogan follows that camera. Go_BGM and ToneDown
+   stay for a later beat. Triggers after 101 stay there too. */
 
 static void bg_off(SfOpening *op, uint16_t bits)
 {

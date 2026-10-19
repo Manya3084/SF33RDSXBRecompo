@@ -55,6 +55,8 @@ typedef struct App {
     uint8_t *opening;
     int opening_w;
     int opening_h;
+    uint8_t *sketch;
+    uint8_t *slogan;
     uint8_t *pieces;
     SfOpening beat;
     SfTrack *tracks;
@@ -178,7 +180,11 @@ static void clear_picture(App *app)
     app->ui.opening = NULL;
     app->ui.opening_w = 0;
     app->ui.opening_h = 0;
+    sf_free(app->sketch);
+    sf_free(app->slogan);
     sf_free(app->pieces);
+    app->sketch = NULL;
+    app->slogan = NULL;
     app->pieces = NULL;
     app->ui.pieces = NULL;
 }
@@ -467,13 +473,34 @@ static void load_pieces(App *app)
 {
     char err[256];
     err[0] = 0;
-    if (sf_pieces_load(app->install, &app->pieces, err, sizeof err) != 0) {
+    if (sf_pieces_load(app->install, &app->sketch, &app->slogan, err, sizeof err) != 0) {
         fprintf(stderr, "%s\n", err[0] ? err : "the opening pieces did not decode");
+        app->sketch = NULL;
+        app->slogan = NULL;
         app->pieces = NULL;
         app->ui.pieces = NULL;
         return;
     }
+    app->pieces = sf_alloc((size_t)SF_PIECE_W * (size_t)SF_PIECE_H * 4u);
+    if (!app->pieces) {
+        sf_free(app->sketch);
+        sf_free(app->slogan);
+        app->sketch = NULL;
+        app->slogan = NULL;
+        app->ui.pieces = NULL;
+        fprintf(stderr, "the opening pieces did not allocate\n");
+        return;
+    }
+    sf_pieces_compose(app->sketch, app->slogan, 0, app->pieces);
     app->ui.pieces = app->pieces;
+}
+
+static void place_pieces(App *app)
+{
+    if (!app->beat.held || !app->sketch || !app->slogan || !app->pieces) {
+        return;
+    }
+    sf_pieces_compose(app->sketch, app->slogan, sf_slogan_shift(app->beat.layer_x[2]), app->pieces);
 }
 
 static void load_title(App *app)
@@ -700,6 +727,7 @@ int main(int argc, char **argv)
             }
             sf_opening_step(&app.beat);
             app.ui.opening_hold = app.beat.held;
+            place_pieces(&app);
         } else if (app.ui.screen == SF_UI_DISPLAY) {
             if (sf_pressed(SF_UP) || sf_pressed(SF_DOWN)) {
                 app.ui.menu_row ^= 1;

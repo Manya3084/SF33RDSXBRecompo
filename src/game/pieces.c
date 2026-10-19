@@ -10,8 +10,8 @@
    title.bin (AFS 82) fills ColorRAM from row 300. The slogan uses row 8.
    The sketch uses row 10. Chips are Capcom P6, stored in the Dreamcast
    twiddle that ppgRenewDotDataSeqs undoes. The view is the 384x224 game
-   screen. The slogan uses opening layer 2 at the hold (h 319). The sketch
-   uses layer 1, which has not walked (h 320). */
+   screen. The slogan is baked at the hold camera (layer 2, h 319) and
+   then slid. The sketch uses layer 1, which has not walked (h 320). */
 
 enum {
     SF_BG20 = 79,
@@ -322,36 +322,118 @@ static int pal_row(const uint8_t *title, uint32_t title_n, int row, uint16_t *ou
     return 0;
 }
 
-int sf_pieces_view(const uint8_t *bg, uint32_t bg_size, const uint8_t *title, uint32_t title_size, uint8_t *rgba, char *err, size_t err_n)
+static size_t piece_bytes(void)
 {
-    uint16_t slogan[64];
-    uint16_t sketch[64];
+    return (size_t)SF_PIECE_W * (size_t)SF_PIECE_H * 4u;
+}
+
+int sf_pieces_layers(const uint8_t *bg, uint32_t bg_size, const uint8_t *title, uint32_t title_size, uint8_t *sketch, uint8_t *slogan, char *err, size_t err_n)
+{
+    uint16_t row8[64];
+    uint16_t row10[64];
     int i;
-    if (!bg || !title || !rgba) {
+    if (!bg || !title || !sketch || !slogan) {
         sf_set_err(err, err_n, "opening pieces need bg20.bin and title.bin");
         return -1;
     }
-    if (bg_size < (uint32_t)SF_TEX_TABLE + 4u || pal_row(title, title_size, 8, slogan) != 0 || pal_row(title, title_size, 10, sketch) != 0) {
+    if (bg_size < (uint32_t)SF_TEX_TABLE + 4u || pal_row(title, title_size, 8, row8) != 0 || pal_row(title, title_size, 10, row10) != 0) {
         sf_set_err(err, err_n, "bg20.bin or title.bin is short");
         return -1;
     }
-    memset(rgba, 0, (size_t)SF_PIECE_W * (size_t)SF_PIECE_H * 4u);
-    draw_cel(rgba, bg, bg_size, 0, 512, 16, 320, 16, 80, sketch);
+    memset(sketch, 0, piece_bytes());
+    memset(slogan, 0, piece_bytes());
+    draw_cel(sketch, bg, bg_size, 0, 512, 16, 320, 16, 80, row10);
     for (i = 0; i < 21; i++) {
-        draw_cel(rgba, bg, bg_size, k_letters[i].local, k_letters[i].x, k_letters[i].y, 319, 16, 64, slogan);
+        draw_cel(slogan, bg, bg_size, k_letters[i].local, k_letters[i].x, k_letters[i].y, 319, 16, 64, row8);
     }
     return 0;
 }
 
-int sf_pieces_load(const char *install, uint8_t **rgba, char *err, size_t err_n)
+void sf_pieces_compose(const uint8_t *sketch, const uint8_t *slogan, int shift, uint8_t *rgba)
+{
+    size_t n = piece_bytes();
+    int y;
+    int x0;
+    int copy;
+    if (!rgba) {
+        return;
+    }
+    if (sketch) {
+        memcpy(rgba, sketch, n);
+    } else {
+        memset(rgba, 0, n);
+    }
+    if (!slogan || shift >= SF_PIECE_W || shift <= -SF_PIECE_W) {
+        return;
+    }
+    x0 = shift < 0 ? -shift : 0;
+    copy = SF_PIECE_W - (shift < 0 ? -shift : shift);
+    for (y = 0; y < SF_PIECE_H; y++) {
+        int x;
+        const uint8_t *row = slogan + ((size_t)y * (size_t)SF_PIECE_W + (size_t)x0) * 4u;
+        for (x = 0; x < copy; x++) {
+            const uint8_t *s = row + (size_t)x * 4u;
+            uint8_t *d;
+            if (s[3] == 0) {
+                continue;
+            }
+            d = rgba + ((size_t)y * (size_t)SF_PIECE_W + (size_t)(x0 + x + shift)) * 4u;
+            d[0] = s[0];
+            d[1] = s[1];
+            d[2] = s[2];
+            d[3] = s[3];
+        }
+    }
+}
+
+/* op_bg2_0000 stores layer 2 as 16.16. The hold disp is 511 (h 319).
+   Each later step drops the disp by 1, which moves the slogan right by 1. */
+int sf_slogan_shift(int32_t layer_x)
+{
+    int disp = (int16_t)((uint32_t)layer_x >> 16);
+    return 511 - disp;
+}
+
+int sf_pieces_view(const uint8_t *bg, uint32_t bg_size, const uint8_t *title, uint32_t title_size, uint8_t *rgba, char *err, size_t err_n)
+{
+    uint8_t *sketch;
+    uint8_t *slogan;
+    if (!rgba) {
+        sf_set_err(err, err_n, "opening pieces need a buffer");
+        return -1;
+    }
+    sketch = sf_alloc(piece_bytes());
+    slogan = sf_alloc(piece_bytes());
+    if (!sketch || !slogan) {
+        sf_free(sketch);
+        sf_free(slogan);
+        sf_set_err(err, err_n, "the opening pieces did not allocate");
+        return -1;
+    }
+    if (sf_pieces_layers(bg, bg_size, title, title_size, sketch, slogan, err, err_n) != 0) {
+        sf_free(sketch);
+        sf_free(slogan);
+        return -1;
+    }
+    sf_pieces_compose(sketch, slogan, 0, rgba);
+    sf_free(sketch);
+    sf_free(slogan);
+    return 0;
+}
+
+int sf_pieces_load(const char *install, uint8_t **sketch, uint8_t **slogan, char *err, size_t err_n)
 {
     SfFsFile bg;
     SfFsFile title;
-    uint8_t *view;
-    if (rgba) {
-        *rgba = NULL;
+    uint8_t *sketch_px;
+    uint8_t *slogan_px;
+    if (sketch) {
+        *sketch = NULL;
     }
-    if (!install || !rgba) {
+    if (slogan) {
+        *slogan = NULL;
+    }
+    if (!install || !sketch || !slogan) {
         sf_set_err(err, err_n, "opening pieces need a buffer");
         return -1;
     }
@@ -368,21 +450,26 @@ int sf_pieces_load(const char *install, uint8_t **rgba, char *err, size_t err_n)
         sf_set_err(err, err_n, "title.bin did not open");
         return -1;
     }
-    view = sf_alloc((size_t)SF_PIECE_W * (size_t)SF_PIECE_H * 4u);
-    if (!view) {
+    sketch_px = sf_alloc(piece_bytes());
+    slogan_px = sf_alloc(piece_bytes());
+    if (!sketch_px || !slogan_px) {
+        sf_free(sketch_px);
+        sf_free(slogan_px);
         fsClose(&bg);
         fsClose(&title);
         sf_set_err(err, err_n, "the opening pieces did not allocate");
         return -1;
     }
-    if (sf_pieces_view(bg.data, bg.size, title.data, title.size, view, err, err_n) != 0) {
-        sf_free(view);
+    if (sf_pieces_layers(bg.data, bg.size, title.data, title.size, sketch_px, slogan_px, err, err_n) != 0) {
+        sf_free(sketch_px);
+        sf_free(slogan_px);
         fsClose(&bg);
         fsClose(&title);
         return -1;
     }
     fsClose(&bg);
     fsClose(&title);
-    *rgba = view;
+    *sketch = sketch_px;
+    *slogan = slogan_px;
     return 0;
 }

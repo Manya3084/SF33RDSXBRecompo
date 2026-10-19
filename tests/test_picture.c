@@ -551,6 +551,30 @@ static void test_pieces(void)
         expect(red[0] == 255 && red[1] == 0 && red[2] == 0 && red[3] == 255, "slogan pixel 2,117 is red");
         expect(ink[0] == 222 && ink[1] == 239 && ink[2] == 231 && ink[3] == 255, "sketch pixel 200,40 is pale green");
     }
+    {
+        size_t n = (size_t)SF_PIECE_W * (size_t)SF_PIECE_H * 4u;
+        uint8_t *sketch = sf_alloc(n);
+        uint8_t *slogan = sf_alloc(n);
+        uint8_t *moved = sf_alloc(n);
+        expect(sketch && slogan && moved && sf_pieces_layers(bg.data, bg.size, colors.data, colors.size, sketch, slogan, err, sizeof err) == 0, "opening pieces split into layers");
+        if (sketch && slogan && moved && view) {
+            const uint8_t *gone;
+            sf_pieces_compose(sketch, slogan, 0, moved);
+            expect(memcmp(view, moved, n) == 0, "shift 0 matches the hold");
+            expect(sf_slogan_shift(0x01FF0000) == 0, "the hold camera shift is 0");
+            expect(sf_slogan_shift(0x01F80000) == 7, "timer 11 shifts the slogan by 7");
+            sf_pieces_compose(sketch, slogan, sf_slogan_shift(0x01F80000), moved);
+            red = moved + ((size_t)117 * (size_t)SF_PIECE_W + 9u) * 4u;
+            ink = moved + ((size_t)40 * (size_t)SF_PIECE_W + 200u) * 4u;
+            gone = sketch + ((size_t)117 * (size_t)SF_PIECE_W + 2u) * 4u;
+            expect(red[0] == 255 && red[1] == 0 && red[2] == 0 && red[3] == 255, "slogan pixel 9,117 is red after seven steps");
+            expect(ink[0] == 222 && ink[1] == 239 && ink[2] == 231 && ink[3] == 255, "the sketch stays at pixel 200,40");
+            expect(memcmp(moved + ((size_t)117 * (size_t)SF_PIECE_W + 2u) * 4u, gone, 4) == 0, "pixel 2,117 is the sketch after the slogan moves");
+        }
+        sf_free(sketch);
+        sf_free(slogan);
+        sf_free(moved);
+    }
     sf_free(view);
     fsClose(&bg);
     fsClose(&colors);
