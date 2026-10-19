@@ -63,6 +63,28 @@ static void screenshot(int frame)
     fprintf(stderr, "video: frame %d written to %s\n", frame, colon + 1);
 }
 
+/* The game steps once per frame and was made for 60 of them a second
+ * (NTSC Xbox). The window's vsync follows the monitor, which may be
+ * faster, so frames are also paced to 1/60 s here. */
+static void pace(void)
+{
+    static Uint64 next;
+    const Uint64 step = SDL_NS_PER_SECOND / 60;
+    Uint64 now = SDL_GetTicksNS();
+    if (next == 0 || now > next + step * 4) {
+        next = now; /* first frame, or far behind (a load): start again */
+    }
+    if (next > now) {
+        Uint64 wait = next - now;
+        if (wait > 2000000) {
+            SDL_DelayNS(wait - 1000000); /* sleep most of it, then spin */
+        }
+        while (SDL_GetTicksNS() < next) {
+        }
+    }
+    next += step;
+}
+
 void sf_video_present(void)
 {
     static int frame;
@@ -113,6 +135,7 @@ void sf_video_present(void)
             fclose(f);
         }
     }
+    pace();
     screenshot(frame++);
     sf_gfx_frame_done();
 }
