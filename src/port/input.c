@@ -522,3 +522,40 @@ void keyConvert(void)
     p3sw_buff = (u16)io_w.sw[2];
     p4sw_buff = (u16)io_w.sw[3];
 }
+
+/* retail's xb_GetJoiningPlayer: the player who just pressed Start (or the
+ * button the game counts with it), player 1 first; -1 for none */
+extern u16 p1sw_0, p1sw_1, p2sw_0, p2sw_1;
+
+s32 xb_GetJoiningPlayer(void)
+{
+    s32 r = -1;
+    if ((p2sw_0 & 0x4100) & ~p2sw_1) {
+        r = 1;
+    }
+    if ((p1sw_0 & 0x4100) & ~p1sw_1) {
+        r = 0;
+    }
+    return r;
+}
+
+/* retail's xb_GetStartBackPress: 1 when the player's port just pressed
+ * Start, 0 for Back, -1 for neither */
+s32 xb_GetStartBackPress(s32 pl_id)
+{
+    s32 port;
+    if (pl_id < 0 || pl_id >= 4) {
+        return -1;
+    }
+    port = mpp_w.xb_player_port[pl_id];
+    if (port < 0 || port >= 4) {
+        return -1;
+    }
+    switch (flpad_adr[0][port].sw_new & 0x30) {
+    case 0x10:
+        return 1;
+    case 0x20:
+        return 0;
+    }
+    return -1;
+}
