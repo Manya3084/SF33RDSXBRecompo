@@ -360,6 +360,8 @@ static int desc_differs(const plContext *a, const plContext *b)
            memcmp(&a->pixelformat, &b->pixelformat, sizeof a->pixelformat) != 0;
 }
 
+static uint32_t s_tex_serial;
+
 /* The texture's pixels into its renderer copy. */
 static void tex_publish(u32 h)
 {
@@ -391,7 +393,10 @@ static void tex_publish(u32 h)
             }
         }
     }
-    o->version++;
+    /* Never a number the handle had before: a texture released and a new
+     * one made on its handle within a frame looks, by size, like the old
+     * one, and the renderer would keep showing the old pixels. */
+    o->version = ++s_tex_serial;
 }
 
 s32 flCreateTextureHandle(void *bits, u32 attribute)
