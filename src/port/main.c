@@ -7,6 +7,7 @@
 #include <execinfo.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -53,6 +54,10 @@ int main(int argc, char **argv)
     (void)argv;
     crash_handler();
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    if (getenv("SF_HEADLESS") && getenv("SF_RENDERER") && strcmp(getenv("SF_RENDERER"), "opengl") == 0) {
+        /* a test of the OpenGL screen: nothing on the desktop */
+        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
+    }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;

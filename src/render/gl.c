@@ -37,6 +37,7 @@ void sf_gl_destroy(SfRenderer *renderer)
     if (!renderer) {
         return;
     }
+    sf_gl_scene_destroy(renderer);
     if (renderer->gl) {
         SDL_GL_MakeCurrent(renderer->window, renderer->gl);
         if (renderer->gl_tex) {

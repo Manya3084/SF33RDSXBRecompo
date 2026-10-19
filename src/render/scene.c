@@ -1379,12 +1379,15 @@ void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, fl
     VkRect2D scissor;
     float frame_w;
     float frame_h;
-    static const float src[4] = { 0.f, 0.f, 1.f, 1.f };
+    /* the output's game area, 640x448 at line 16 (record_copy puts it
+     * there): the bands above and below are black on every screen, and a
+     * 4:3 TV showed the 448 lines from top to bottom */
+    static const float src[4] = { 0.f, 16.f / SF_SCREEN_H, 1.f, 464.f / SF_SCREEN_H };
     (void)l;
     if (!s->show_pipe) {
         return;
     }
-    /* the 640x480 output in the asked shape, centred in the window */
+    /* the game area in the asked shape, centred in the window */
     frame_w = (float)extent.width;
     frame_h = (float)extent.height;
     if (aspect > 0.f) {

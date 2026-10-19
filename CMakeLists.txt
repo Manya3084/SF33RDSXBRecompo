@@ -43,6 +43,7 @@ add_library(sf_render STATIC
     src/render/renderer.c
     src/render/vulkan.c
     src/render/gl.c
+    src/render/glscene.c
     src/render/scene.c
     ${SF_SHADER_HEADERS}
 )

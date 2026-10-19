@@ -9,14 +9,50 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static SDL_Window *s_window;
 static SfRenderer *s_renderer;
+
+/* SF_RENDERER=opengl asks for the OpenGL screen even where Vulkan works. */
+static int want_gl(void)
+{
+    const char *r = getenv("SF_RENDERER");
+    return r && strcmp(r, "opengl") == 0;
+}
+
+/* The window with OpenGL 3.3, where Vulkan is missing or not wanted. */
+static void open_gl(int w)
+{
+    char err[512];
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    s_window = SDL_CreateWindow("Street Fighter III: 3rd Strike", w * 2, 480 * 2,
+                                SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_OPENGL);
+    if (!s_window) {
+        fprintf(stderr, "video: window: %s\n", SDL_GetError());
+        exit(1);
+    }
+    if (sf_render_create(&s_renderer, s_window, SF_RENDER_OPENGL, err, sizeof err) != 0) {
+        fprintf(stderr, "video: OpenGL: %s\n", err);
+        exit(1);
+    }
+    fprintf(stderr, "video: OpenGL\n");
+}
 
 void sf_video_init(int w, int h)
 {
     char err[512];
     (void)h;
+    if (getenv("SF_HEADLESS") && want_gl()) {
+        /* tests of the OpenGL screen: SDL's offscreen driver (main.c) */
+        open_gl(w);
+        sf_gfx_init();
+        sf_display_init();
+        return;
+    }
     if (getenv("SF_HEADLESS")) {
         /* tests: nothing on the desktop, the screen only read back */
         if (sf_render_create_headless(&s_renderer, err, sizeof err) != 0) {
@@ -27,16 +63,21 @@ void sf_video_init(int w, int h)
         sf_display_init();
         return;
     }
-    s_window = SDL_CreateWindow("Street Fighter III: 3rd Strike", w * 2, 480 * 2,
-                                SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_VULKAN);
-    if (!s_window) {
-        fprintf(stderr, "video: window: %s\n", SDL_GetError());
-        exit(1);
+    if (!want_gl()) {
+        s_window = SDL_CreateWindow("Street Fighter III: 3rd Strike", w * 2, 480 * 2,
+                                    SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_VULKAN);
+        if (s_window && sf_render_create(&s_renderer, s_window, SF_RENDER_VULKAN, err, sizeof err) == 0) {
+            sf_gfx_init();
+            sf_display_init();
+            return;
+        }
+        fprintf(stderr, "video: Vulkan: %s; trying OpenGL\n", s_window ? err : SDL_GetError());
+        if (s_window) {
+            SDL_DestroyWindow(s_window);
+            s_window = NULL;
+        }
     }
-    if (sf_render_create(&s_renderer, s_window, SF_RENDER_VULKAN, err, sizeof err) != 0) {
-        fprintf(stderr, "video: Vulkan: %s\n", err);
-        exit(1);
-    }
+    open_gl(w);
     sf_gfx_init();
     sf_display_init();
 }
@@ -70,7 +111,18 @@ static void screenshot(int frame)
         long n = strtol(every, &colon, 10);
         const char *from = getenv("SF_SHOT_FROM");
         const char *to = getenv("SF_SHOT_TO");
-        if (*colon != ':' || n <= 0 || frame % n != 0 || (from && frame < atoi(from)) || (to && frame > atoi(to))) {
+        if (*colon != ':' || n <= 0 || (from && frame + 1 < atoi(from)) || (to && frame > atoi(to))) {
+            return;
+        }
+        if ((frame + 1) % n == 0) {
+            /* a read asks for the next frame's picture; it comes the frame
+             * after. A picture already waiting is an old one: ask again. */
+            if (sf_render_read_screen(s_renderer, &rgba, &w, &h) == 0) {
+                sf_render_read_screen(s_renderer, &rgba, &w, &h);
+            }
+            return;
+        }
+        if (frame == 0 || frame % n != 0) {
             return;
         }
         snprintf(path, sizeof path, "%s/%06d.ppm", colon + 1, frame);

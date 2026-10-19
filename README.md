@@ -2,7 +2,7 @@
 
 Native x86-64 port of Street Fighter III: 3rd Strike, built from the Xbox version.
 
-The game logic is the C of [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb), compiled for x86-64. Everything the Xbox provided under it is written natively here: SDL3 for the window, input and timing, a Vulkan renderer for the game's draws, OpenAL for sound, and plain files for the disc archive and the saves. No Xbox code is built. There is no Xbox heap, XDK, xboxkrnl, D3D8, CRI middleware, XACT or XOnline dependency. The XBE is read once, at import, for the sound effects' cue tables; nothing from the disc is in this repository. [docs/porting.md](docs/porting.md) describes how the pieces fit.
+The game logic is the C of [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb), compiled for x86-64. Everything the Xbox provided under it is written natively here: SDL3 for the window, input and timing, a Vulkan renderer for the game's draws (OpenGL 3.3 where Vulkan is missing), OpenAL for sound, and plain files for the disc archive and the saves. No Xbox code is built. There is no Xbox heap, XDK, xboxkrnl, D3D8, CRI middleware, XACT or XOnline dependency. The XBE is read once, at import, for the sound effects' cue tables; nothing from the disc is in this repository. [docs/porting.md](docs/porting.md) describes how the pieces fit.
 
 ## Status
 
@@ -14,12 +14,12 @@ Working:
 - sound effects and voices: the game's XACT cue banks played on OpenAL (PCM and Xbox ADPCM waves, loops, envelopes, fades, panning, the pitch LFO's vibrato)
 - saves (system settings and button directions) in `data/save/`, and replays in ten slots (`replay01.sav` to `replay10.sav`), picked on the game's REPLAY screens
 - the keyboard and SDL3 gamepads, with retail's join-by-Start, and a keyboard page in BUTTON CONFIG for rebinding the keys
-- windowed, borderless or fullscreen, the resolution and the aspect ratio, set in SCREEN ADJUST, paced to 60 frames a second
+- windowed, borderless or fullscreen, the resolution and the aspect ratio, set in SCREEN ADJUST, paced to 60 frames a second; the 448-line game area fills the window's height
+- Vulkan, or OpenGL 3.3 when Vulkan is missing (`SF_RENDERER=opengl` picks it)
 - EXIT GAME in the mode menu (retail's SELECT GAME), which quits cleanly
 
 Not done yet:
 
-- the OpenGL fallback for the game screen (Vulkan is required for now)
 - online play (the game runs offline; Xbox Live is greyed out in the mode menu)
 
 ## Getting the data

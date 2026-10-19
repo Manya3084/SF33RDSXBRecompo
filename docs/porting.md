@@ -38,6 +38,7 @@ These are fixed in the decomp itself, and each fix must leave the i386 code and 
 ## What src/port holds
 
 - `gfx.c`: texture and palette handles, the render state call, the quads, the PS2-sized picture's copy. `render/scene.c` draws them on Vulkan at a whole multiple of 640x480 (the window's, or `SF_SCALE`), shown 4:3. Each quad's edges move to the 640x480 pixels D3D would cover, with its texture coordinates recomputed at the moved corners, and each sample is taken at its 640x480 pixel's centre within the quad's texture rectangle: a larger screen shows exactly the pixels 640x480 does, without the seams a finer grid opens between the game's tiles.
+- `render/glscene.c`: the same screen on OpenGL 3.3, where Vulkan is missing or `SF_RENDERER=opengl` asks for it: scene.c's passes and shaders (GLSL 330, the texture bound per batch), each framebuffer's rows top first so the numbers match Vulkan's, and the window draw turned over. It gives the same pixels as Vulkan. `SF_HEADLESS=1 SF_RENDERER=opengl` runs it on SDL's offscreen driver for tests.
 - `system.c`: the start-up (`njUserInit`), the task loop, the work pool.
 - `files.c`: CRI's file calls over `data/afs/SF33RDXB.AFS`.
 - `input.c`: the keyboard (port 0) and SDL3 gamepads (ports 1 to 3) through retail's pad conversion and `keyConvert`.

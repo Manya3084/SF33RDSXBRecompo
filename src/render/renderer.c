@@ -46,8 +46,7 @@ int sf_render_present_list(SfRenderer *renderer, const SfDrawList *list, char *e
         return -1;
     }
     if (renderer->kind == SF_RENDER_OPENGL) {
-        sf_set_err(err, err_n, "the OpenGL renderer does not draw the game's screen yet");
-        return -1;
+        return sf_gl_present_list(renderer, list, err, err_n);
     }
     return sf_vk_present_list(renderer, list, err, err_n);
 }
@@ -61,8 +60,11 @@ void sf_render_set_aspect(SfRenderer *renderer, float aspect)
 
 int sf_render_read_screen(SfRenderer *renderer, const uint8_t **rgba, int *w, int *h)
 {
-    if (!renderer || renderer->kind == SF_RENDER_OPENGL) {
+    if (!renderer) {
         return -1;
+    }
+    if (renderer->kind == SF_RENDER_OPENGL) {
+        return sf_gl_read_screen(renderer, rgba, w, h);
     }
     return sf_vk_read_screen(renderer, rgba, w, h);
 }

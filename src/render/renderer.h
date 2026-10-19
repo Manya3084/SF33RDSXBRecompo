@@ -24,7 +24,7 @@ int sf_render_create_headless(SfRenderer **out, char *err, size_t err_n);
 SfRendererKind sf_render_kind(const SfRenderer *renderer);
 int sf_render_present(SfRenderer *renderer, const SfCanvas *canvas, char *err, size_t err_n);
 
-/* The game's screen (render/draw.h). Vulkan only for now. */
+/* The game's screen (render/draw.h), on Vulkan or OpenGL 3.3. */
 int sf_render_present_list(SfRenderer *renderer, const SfDrawList *list, char *err, size_t err_n);
 
 /* The shape the game's screen is shown in, width over height (4/3 is

@@ -50,6 +50,7 @@ struct SfRenderer {
     int shot_pending;
     SDL_GLContext gl;
     GLuint gl_tex;
+    void *glscene; /* the game's screen on OpenGL (glscene.c) */
 };
 
 int sf_vk_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n);
@@ -62,5 +63,8 @@ int sf_vk_create_headless(SfRenderer **out, char *err, size_t err_n);
 int sf_gl_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n);
 void sf_gl_destroy(SfRenderer *renderer);
 int sf_gl_present(SfRenderer *renderer, const SfCanvas *canvas, char *err, size_t err_n);
+int sf_gl_present_list(SfRenderer *renderer, const SfDrawList *list, char *err, size_t err_n);
+int sf_gl_read_screen(SfRenderer *renderer, const uint8_t **rgba, int *w, int *h);
+void sf_gl_scene_destroy(SfRenderer *renderer);
 
 #endif
