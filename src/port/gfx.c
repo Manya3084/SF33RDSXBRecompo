@@ -1018,6 +1018,28 @@ static void snap_quad(SfVertex *q)
     }
 }
 
+/* A mirrored sprite's texture rectangle back on its cell. The game biases
+ * a mirrored chip's coordinates by -0.68 texel (-0.34 past 1.5 times its
+ * size; MTRANS.c's chip setup), so its rectangle starts 0.68 into the cell
+ * before it. Retail samples the bias, and drawn 1:1 no sample leaves the
+ * cell; zoomed in, the edge pixels sample that texel of the next cell, and
+ * a column or row of it shows through the sprite. Only that bias moves:
+ * other fractions (a scroll) are texels the quad really covers. */
+static void cell_rect(float *lo, float *hi, float size, int mirrored)
+{
+    float a = *lo * size;
+    float b = *hi * size;
+    float f = a - floorf(a);
+    float w = floorf(b - a + 0.5f);
+    float start;
+    if (!mirrored || w < 1.0f || (fabsf(f - 0.32f) > 0.002f && fabsf(f - 0.66f) > 0.002f)) {
+        return;
+    }
+    start = ceilf(a);
+    *lo = start / size;
+    *hi = (start + w) / size;
+}
+
 static void push_quad(const SfVertex v[4])
 {
     SfDrawList *l = &g.list;
@@ -1041,6 +1063,19 @@ static void push_quad(const SfVertex v[4])
             u1 = q[i].u > u1 ? q[i].u : u1;
             v0 = q[i].v < v0 ? q[i].v : v0;
             v1 = q[i].v > v1 ? q[i].v : v1;
+        }
+        if (ss.tex) {
+            /* mirrored: the coordinate falls as the screen position rises */
+            float su = ss.texel_uv ? 1.0f : (float)l->tex[ss.tex].w;
+            float sv = ss.texel_uv ? 1.0f : (float)l->tex[ss.tex].h;
+            float du = fabsf(q[1].x - q[0].x) > fabsf(q[2].x - q[0].x) ? (q[1].u - q[0].u) / (q[1].x - q[0].x)
+                                                                      : (q[2].u - q[0].u) / (q[2].x - q[0].x);
+            float dv = fabsf(q[1].y - q[0].y) > fabsf(q[2].y - q[0].y) ? (q[1].v - q[0].v) / (q[1].y - q[0].y)
+                                                                      : (q[2].v - q[0].v) / (q[2].y - q[0].y);
+            if (su > 0.0f && sv > 0.0f) {
+                cell_rect(&u0, &u1, su, du < 0.0f);
+                cell_rect(&v0, &v1, sv, dv < 0.0f);
+            }
         }
         for (i = 0; i < 4; i++) {
             q[i].u0 = u0;
