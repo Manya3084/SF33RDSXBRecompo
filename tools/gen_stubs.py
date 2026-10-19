@@ -27,7 +27,7 @@ import re
 import subprocess
 import sys
 
-HOST_LIBS = ["libc.so.6", "libm.so.6", "libz.so.1", "libSDL3.so.0", "libvulkan.so.1", "libGL.so.1"]
+HOST_LIBS = ["libc.so.6", "libm.so.6", "libz.so.1", "libSDL3.so.0", "libvulkan.so.1", "libGL.so.1", "libopenal.so.1"]
 
 
 def syms(path: str, dynamic: bool = False) -> tuple[set[str], set[str]]:
