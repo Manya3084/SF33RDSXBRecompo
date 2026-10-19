@@ -6,6 +6,8 @@
 
 #define SF_MISSING_MAX 1024
 
+int sf_port_frame;
+
 static const char *s_seen[SF_MISSING_MAX];
 static int s_seen_n;
 
@@ -20,7 +22,7 @@ void sf_port_missing(const char *name)
     if (s_seen_n < SF_MISSING_MAX) {
         s_seen[s_seen_n++] = name;
     }
-    fprintf(stderr, "port: no shim for %s\n", name);
+    fprintf(stderr, "port: no shim for %s (frame %d)\n", name, sf_port_frame);
     if (getenv("SF_PORT_STRICT")) {
         abort();
     }

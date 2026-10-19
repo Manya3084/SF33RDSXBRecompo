@@ -26,15 +26,22 @@ void sf_scene_destroy(SfScene *s);
  * textures and palettes the game changed, the vertices, the descriptors. */
 int sf_scene_prepare(SfScene *s, const SfDrawList *list, char *err, size_t err_n);
 
-/* Outside a render pass: the uploads and the screen. */
+/* The screen and the output render at 640x480 times scale (1 and up).
+ * Changing it waits for the device and remakes both. */
+int sf_scene_scale(const SfScene *s);
+int sf_scene_set_scale(SfScene *s, int scale, char *err, size_t err_n);
+
+/* Outside a render pass: the uploads, the screen, and the output it is
+ * copied onto. */
 void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *list);
 
-/* Inside the window's render pass: the screen's game area, kept 4:3. */
+/* Inside the window's render pass: the output, kept 4:3. */
 void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, const SfDrawList *list);
 
-/* The screen back to the host (the tests): record the copy, then read it
- * once the commands have finished. rgba is 640x480x4. */
-void sf_scene_record_readback(SfScene *s, VkCommandBuffer cmd);
-void sf_scene_read(SfScene *s, uint8_t *rgba);
+/* The screen (output 0) or the output (1) back to the host: record the
+ * copy, then read it once the commands have finished. The pixels are RGBA
+ * at the scale, and stay valid until the next readback. */
+void sf_scene_record_readback(SfScene *s, VkCommandBuffer cmd, int output);
+const uint8_t *sf_scene_read(SfScene *s, int *w, int *h);
 
 #endif

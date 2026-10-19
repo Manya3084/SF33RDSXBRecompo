@@ -5,6 +5,9 @@
 
 #include "port/port.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "types.h"
 #include "structs.h"
 
@@ -64,6 +67,7 @@ void sf_game_frame(void)
 {
     u16 sw;
 
+    sf_port_frame++;
     njdp2d_init();
     initRenderState(0);
     mpp_w.vprm.x0 = 0.0f;
@@ -101,6 +105,10 @@ void sf_game_frame(void)
         }
     }
 
+    if (getenv("SF_INPUT_DEBUG") && (p1sw_0 | p2sw_0)) {
+        fprintf(stderr, "frame: p1sw %04X p2sw %04X; entry task condition %u r_no %u %u %u\n", p1sw_0, p2sw_0,
+                task[1].condition, task[1].r_no[0], task[1].r_no[1], task[1].r_no[2]);
+    }
     render_start();
     mpp_w.inGame = 0;
     njUserMain();

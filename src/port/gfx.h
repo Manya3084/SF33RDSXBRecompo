@@ -15,4 +15,7 @@ void sf_gfx_frame_ready(void);
 /* After the backend drew the list: the next frame starts empty. */
 void sf_gfx_frame_done(void);
 
+/* What is drawn so far goes from the screen's rect onto the output. */
+void sf_gfx_copy_screen(int x0, int y0, int x1, int y1);
+
 #endif

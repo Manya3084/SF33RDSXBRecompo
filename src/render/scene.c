@@ -1,6 +1,7 @@
 #include "render/scene.h"
 
 #include "common.h"
+#include "render/copy_frag_spv.h"
 #include "render/scene_frag_spv.h"
 #include "render/scene_vert_spv.h"
 #include "render/show_frag_spv.h"
@@ -46,10 +47,15 @@ struct SfScene {
     VkPhysicalDevice physical;
     VkDevice device;
     VkFormat depth_format;
+    int scale; /* the screen and the output are 640x480 times this */
     SceneImage color;
     SceneImage depth;
+    SceneImage back; /* the output: retail's back buffer */
     VkRenderPass pass;
     VkFramebuffer frame;
+    VkRenderPass back_clear;
+    VkRenderPass back_load;
+    VkFramebuffer back_frame;
     VkDescriptorSetLayout set_layout;
     VkPipelineLayout layout;
     VkDescriptorPool desc_pool;
@@ -86,8 +92,12 @@ struct SfScene {
     VkRenderPass show_pass;
     VkDescriptorSetLayout show_set_layout;
     VkPipelineLayout show_layout;
-    VkDescriptorSet show_set;
+    VkDescriptorSet show_set;  /* the output, for the window */
+    VkDescriptorSet copy_set;  /* the screen, for the output */
     VkPipeline show_pipe;
+    VkPipeline copy_opaque;
+    VkPipeline copy_blend;
+    VkDeviceSize readback_size;
 };
 
 static uint32_t mem_index(VkPhysicalDevice physical, uint32_t bits, VkMemoryPropertyFlags flags)
@@ -296,10 +306,12 @@ static int make_pass(SfScene *s)
     memset(dep, 0, sizeof dep);
     dep[0].srcSubpass = VK_SUBPASS_EXTERNAL;
     dep[0].dstSubpass = 0;
-    dep[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dep[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT |
+                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dep[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dep[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
-    dep[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dep[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dep[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     dep[1].srcSubpass = 0;
     dep[1].dstSubpass = VK_SUBPASS_EXTERNAL;
     dep[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -317,6 +329,59 @@ static int make_pass(SfScene *s)
     if (vkCreateRenderPass(s->device, &info, NULL, &s->pass) != VK_SUCCESS) {
         return -1;
     }
+    /* the output's passes: one clears it, one draws over what it holds */
+    info.attachmentCount = 1;
+    sub.pDepthStencilAttachment = NULL;
+    att[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateRenderPass(s->device, &info, NULL, &s->back_clear) != VK_SUCCESS) {
+        return -1;
+    }
+    att[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    att[0].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    if (vkCreateRenderPass(s->device, &info, NULL, &s->back_load) != VK_SUCCESS) {
+        return -1;
+    }
+    (void)views;
+    (void)fb;
+    return 0;
+}
+
+static void write_copy_sets(SfScene *s);
+
+static void free_targets(SfScene *s)
+{
+    if (s->frame) {
+        vkDestroyFramebuffer(s->device, s->frame, NULL);
+        s->frame = VK_NULL_HANDLE;
+    }
+    if (s->back_frame) {
+        vkDestroyFramebuffer(s->device, s->back_frame, NULL);
+        s->back_frame = VK_NULL_HANDLE;
+    }
+    free_image(s, &s->color);
+    free_image(s, &s->depth);
+    free_image(s, &s->back);
+}
+
+/* The screen (colour and depth) and the output, at the scale. */
+static int make_targets(SfScene *s, int scale)
+{
+    int w = SF_SCREEN_W * scale;
+    int h = SF_SCREEN_H * scale;
+    VkImageView views[2];
+    VkFramebufferCreateInfo fb;
+    s->scale = scale;
+    if (make_image(s, &s->color, w, h, VK_FORMAT_R8G8B8A8_UNORM,
+                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                   VK_IMAGE_ASPECT_COLOR_BIT) != 0 ||
+        make_image(s, &s->depth, w, h, s->depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                   s->depth_format == VK_FORMAT_D24_UNORM_S8_UINT ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
+                                                                  : VK_IMAGE_ASPECT_DEPTH_BIT) != 0 ||
+        make_image(s, &s->back, w, h, VK_FORMAT_R8G8B8A8_UNORM,
+                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                   VK_IMAGE_ASPECT_COLOR_BIT) != 0) {
+        return -1;
+    }
     views[0] = s->color.view;
     views[1] = s->depth.view;
     memset(&fb, 0, sizeof fb);
@@ -324,10 +389,22 @@ static int make_pass(SfScene *s)
     fb.renderPass = s->pass;
     fb.attachmentCount = 2;
     fb.pAttachments = views;
-    fb.width = SF_SCREEN_W;
-    fb.height = SF_SCREEN_H;
+    fb.width = (uint32_t)w;
+    fb.height = (uint32_t)h;
     fb.layers = 1;
-    return vkCreateFramebuffer(s->device, &fb, NULL, &s->frame) == VK_SUCCESS ? 0 : -1;
+    if (vkCreateFramebuffer(s->device, &fb, NULL, &s->frame) != VK_SUCCESS) {
+        return -1;
+    }
+    fb.renderPass = s->back_clear;
+    fb.attachmentCount = 1;
+    fb.pAttachments = &s->back.view;
+    if (vkCreateFramebuffer(s->device, &fb, NULL, &s->back_frame) != VK_SUCCESS) {
+        return -1;
+    }
+    if (s->copy_set) {
+        write_copy_sets(s);
+    }
+    return 0;
 }
 
 static int make_layouts(SfScene *s)
@@ -376,10 +453,10 @@ static int make_layouts(SfScene *s)
     sizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
     sizes[1].descriptorCount = 1;
     sizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sizes[2].descriptorCount = 1;
+    sizes[2].descriptorCount = 2;
     memset(&pool, 0, sizeof pool);
     pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool.maxSets = 2;
+    pool.maxSets = 3;
     pool.poolSizeCount = 3;
     pool.pPoolSizes = sizes;
     if (vkCreateDescriptorPool(s->device, &pool, NULL, &s->desc_pool) != VK_SUCCESS) {
@@ -544,17 +621,10 @@ static VkPipeline pipe_for(SfScene *s, const SfBlendKey *k)
     return s->pipes[s->pipe_n++].pipe;
 }
 
-static int make_show(SfScene *s, VkRenderPass show_pass)
+/* A full-viewport quad sampling one image (show.vert): the window's view
+ * of the output, and the screen's copies onto the output. */
+static VkPipeline make_quad_pipe(SfScene *s, VkShaderModule vert, VkShaderModule frag, VkRenderPass pass, int blend_on)
 {
-    VkDescriptorSetLayoutBinding b;
-    VkDescriptorSetLayoutCreateInfo set_info;
-    VkPushConstantRange push;
-    VkPipelineLayoutCreateInfo layout_info;
-    VkDescriptorSetAllocateInfo alloc;
-    VkDescriptorImageInfo image;
-    VkWriteDescriptorSet write;
-    VkShaderModule vert;
-    VkShaderModule frag;
     VkPipelineShaderStageCreateInfo stages[2];
     VkPipelineVertexInputStateCreateInfo vertex;
     VkPipelineInputAssemblyStateCreateInfo assembly;
@@ -566,53 +636,7 @@ static int make_show(SfScene *s, VkRenderPass show_pass)
     VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
     VkPipelineDynamicStateCreateInfo dynamic;
     VkGraphicsPipelineCreateInfo info;
-    VkResult res;
-    s->show_pass = show_pass;
-    memset(&b, 0, sizeof b);
-    b.binding = 0;
-    b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    b.descriptorCount = 1;
-    b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    memset(&set_info, 0, sizeof set_info);
-    set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    set_info.bindingCount = 1;
-    set_info.pBindings = &b;
-    if (vkCreateDescriptorSetLayout(s->device, &set_info, NULL, &s->show_set_layout) != VK_SUCCESS) {
-        return -1;
-    }
-    memset(&push, 0, sizeof push);
-    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    push.size = 16;
-    memset(&layout_info, 0, sizeof layout_info);
-    layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layout_info.setLayoutCount = 1;
-    layout_info.pSetLayouts = &s->show_set_layout;
-    layout_info.pushConstantRangeCount = 1;
-    layout_info.pPushConstantRanges = &push;
-    if (vkCreatePipelineLayout(s->device, &layout_info, NULL, &s->show_layout) != VK_SUCCESS) {
-        return -1;
-    }
-    memset(&alloc, 0, sizeof alloc);
-    alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    alloc.descriptorPool = s->desc_pool;
-    alloc.descriptorSetCount = 1;
-    alloc.pSetLayouts = &s->show_set_layout;
-    if (vkAllocateDescriptorSets(s->device, &alloc, &s->show_set) != VK_SUCCESS) {
-        return -1;
-    }
-    image.sampler = s->linear;
-    image.imageView = s->color.view;
-    image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    memset(&write, 0, sizeof write);
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = s->show_set;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo = &image;
-    vkUpdateDescriptorSets(s->device, 1, &write, 0, NULL);
-
-    vert = make_shader(s->device, sf_show_vert_spv, sf_show_vert_spv_size);
-    frag = make_shader(s->device, sf_show_frag_spv, sf_show_frag_spv_size);
+    VkPipeline pipe = VK_NULL_HANDLE;
     memset(stages, 0, sizeof stages);
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -640,6 +664,13 @@ static int make_show(SfScene *s, VkRenderPass show_pass)
     multi.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     memset(&blend, 0, sizeof blend);
+    blend.blendEnable = blend_on ? VK_TRUE : VK_FALSE;
+    blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend.colorBlendOp = VK_BLEND_OP_ADD;
+    blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend.alphaBlendOp = VK_BLEND_OP_ADD;
     blend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     memset(&blending, 0, sizeof blending);
@@ -662,16 +693,111 @@ static int make_show(SfScene *s, VkRenderPass show_pass)
     info.pColorBlendState = &blending;
     info.pDynamicState = &dynamic;
     info.layout = s->show_layout;
-    info.renderPass = show_pass;
-    res = vert && frag ? vkCreateGraphicsPipelines(s->device, VK_NULL_HANDLE, 1, &info, NULL, &s->show_pipe)
-                       : VK_ERROR_INITIALIZATION_FAILED;
+    info.renderPass = pass;
+    if (vkCreateGraphicsPipelines(s->device, VK_NULL_HANDLE, 1, &info, NULL, &pipe) != VK_SUCCESS) {
+        return VK_NULL_HANDLE;
+    }
+    return pipe;
+}
+
+static void write_set(SfScene *s, VkDescriptorSet set, VkImageView view, VkSampler smp)
+{
+    VkDescriptorImageInfo image;
+    VkWriteDescriptorSet write;
+    image.sampler = smp;
+    image.imageView = view;
+    image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    memset(&write, 0, sizeof write);
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = set;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &image;
+    vkUpdateDescriptorSets(s->device, 1, &write, 0, NULL);
+}
+
+/* Retail copies the screen with point sampling unless its filter option
+ * is on; the window scales the output smoothly. */
+static void write_copy_sets(SfScene *s)
+{
+    write_set(s, s->copy_set, s->color.view, s->nearest);
+    write_set(s, s->show_set, s->back.view, s->linear);
+}
+
+static int make_copies(SfScene *s, VkRenderPass show_pass)
+{
+    VkDescriptorSetLayoutBinding b;
+    VkDescriptorSetLayoutCreateInfo set_info;
+    VkPushConstantRange push;
+    VkPipelineLayoutCreateInfo layout_info;
+    VkDescriptorSetAllocateInfo alloc;
+    VkDescriptorSetLayout layouts[2];
+    VkDescriptorSet sets[2];
+    VkShaderModule vert;
+    VkShaderModule show_frag;
+    VkShaderModule copy_frag;
+    int ok;
+    s->show_pass = show_pass;
+    memset(&b, 0, sizeof b);
+    b.binding = 0;
+    b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    b.descriptorCount = 1;
+    b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    memset(&set_info, 0, sizeof set_info);
+    set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    set_info.bindingCount = 1;
+    set_info.pBindings = &b;
+    if (vkCreateDescriptorSetLayout(s->device, &set_info, NULL, &s->show_set_layout) != VK_SUCCESS) {
+        return -1;
+    }
+    memset(&push, 0, sizeof push);
+    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    push.size = 16;
+    memset(&layout_info, 0, sizeof layout_info);
+    layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.setLayoutCount = 1;
+    layout_info.pSetLayouts = &s->show_set_layout;
+    layout_info.pushConstantRangeCount = 1;
+    layout_info.pPushConstantRanges = &push;
+    if (vkCreatePipelineLayout(s->device, &layout_info, NULL, &s->show_layout) != VK_SUCCESS) {
+        return -1;
+    }
+    layouts[0] = s->show_set_layout;
+    layouts[1] = s->show_set_layout;
+    memset(&alloc, 0, sizeof alloc);
+    alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc.descriptorPool = s->desc_pool;
+    alloc.descriptorSetCount = 2;
+    alloc.pSetLayouts = layouts;
+    if (vkAllocateDescriptorSets(s->device, &alloc, sets) != VK_SUCCESS) {
+        return -1;
+    }
+    s->show_set = sets[0];
+    s->copy_set = sets[1];
+    write_copy_sets(s);
+
+    vert = make_shader(s->device, sf_show_vert_spv, sf_show_vert_spv_size);
+    show_frag = make_shader(s->device, sf_show_frag_spv, sf_show_frag_spv_size);
+    copy_frag = make_shader(s->device, sf_copy_frag_spv, sf_copy_frag_spv_size);
+    ok = vert && show_frag && copy_frag;
+    if (ok) {
+        s->copy_opaque = make_quad_pipe(s, vert, copy_frag, s->back_clear, 0);
+        s->copy_blend = make_quad_pipe(s, vert, copy_frag, s->back_clear, 1);
+        if (show_pass) {
+            s->show_pipe = make_quad_pipe(s, vert, show_frag, show_pass, 0);
+        }
+        ok = s->copy_opaque && s->copy_blend && (!show_pass || s->show_pipe);
+    }
     if (vert) {
         vkDestroyShaderModule(s->device, vert, NULL);
     }
-    if (frag) {
-        vkDestroyShaderModule(s->device, frag, NULL);
+    if (show_frag) {
+        vkDestroyShaderModule(s->device, show_frag, NULL);
     }
-    return res == VK_SUCCESS ? 0 : -1;
+    if (copy_frag) {
+        vkDestroyShaderModule(s->device, copy_frag, NULL);
+    }
+    return ok ? 0 : -1;
 }
 
 static void write_texture_descriptor(SfScene *s, int h)
@@ -712,14 +838,7 @@ int sf_scene_create(SfScene **out, VkPhysicalDevice physical, VkDevice device, V
         sf_scene_destroy(s);
         return -1;
     }
-    if (make_image(s, &s->color, SF_SCREEN_W, SF_SCREEN_H, VK_FORMAT_R8G8B8A8_UNORM,
-                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                   VK_IMAGE_ASPECT_COLOR_BIT) != 0 ||
-        make_image(s, &s->depth, SF_SCREEN_W, SF_SCREEN_H, s->depth_format,
-                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                   s->depth_format == VK_FORMAT_D24_UNORM_S8_UINT ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
-                                                                  : VK_IMAGE_ASPECT_DEPTH_BIT) != 0 ||
-        make_image(s, &s->dummy, 1, 1, VK_FORMAT_R8G8B8A8_UNORM,
+    if (make_image(s, &s->dummy, 1, 1, VK_FORMAT_R8G8B8A8_UNORM,
                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT) != 0 ||
         make_image(s, &s->pal, SF_PAL_ENTRIES, SF_PAL_MAX, VK_FORMAT_R8G8B8A8_UNORM,
                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT) != 0) {
@@ -727,7 +846,7 @@ int sf_scene_create(SfScene **out, VkPhysicalDevice physical, VkDevice device, V
         sf_scene_destroy(s);
         return -1;
     }
-    if (make_pass(s) != 0 || make_layouts(s) != 0) {
+    if (make_pass(s) != 0 || make_layouts(s) != 0 || make_targets(s, 1) != 0) {
         sf_set_err(err, err_n, "Vulkan scene pass failed");
         sf_scene_destroy(s);
         return -1;
@@ -762,8 +881,8 @@ int sf_scene_create(SfScene **out, VkPhysicalDevice physical, VkDevice device, V
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     writes[1].pImageInfo = &images[1];
     vkUpdateDescriptorSets(device, 2, writes, 0, NULL);
-    if (show_pass && make_show(s, show_pass) != 0) {
-        sf_set_err(err, err_n, "Vulkan show pipeline failed");
+    if (make_copies(s, show_pass) != 0) {
+        sf_set_err(err, err_n, "Vulkan copy pipelines failed");
         sf_scene_destroy(s);
         return -1;
     }
@@ -785,6 +904,12 @@ void sf_scene_destroy(SfScene *s)
     }
     if (s->show_pipe) {
         vkDestroyPipeline(s->device, s->show_pipe, NULL);
+    }
+    if (s->copy_opaque) {
+        vkDestroyPipeline(s->device, s->copy_opaque, NULL);
+    }
+    if (s->copy_blend) {
+        vkDestroyPipeline(s->device, s->copy_blend, NULL);
     }
     if (s->show_layout) {
         vkDestroyPipelineLayout(s->device, s->show_layout, NULL);
@@ -813,19 +938,21 @@ void sf_scene_destroy(SfScene *s)
     if (s->set_layout) {
         vkDestroyDescriptorSetLayout(s->device, s->set_layout, NULL);
     }
-    if (s->frame) {
-        vkDestroyFramebuffer(s->device, s->frame, NULL);
-    }
+    free_targets(s);
     if (s->pass) {
         vkDestroyRenderPass(s->device, s->pass, NULL);
+    }
+    if (s->back_clear) {
+        vkDestroyRenderPass(s->device, s->back_clear, NULL);
+    }
+    if (s->back_load) {
+        vkDestroyRenderPass(s->device, s->back_load, NULL);
     }
     for (i = 0; i < SF_TEX_MAX; i++) {
         free_image(s, &s->tex[i]);
     }
     free_image(s, &s->dummy);
     free_image(s, &s->pal);
-    free_image(s, &s->color);
-    free_image(s, &s->depth);
     free_buffer(s, &s->staging, &s->staging_mem);
     free_buffer(s, &s->vbuf, &s->vbuf_mem);
     free_buffer(s, &s->ibuf, &s->ibuf_mem);
@@ -1056,43 +1183,79 @@ static void record_uploads(SfScene *s, VkCommandBuffer cmd)
     s->copy_n = 0;
 }
 
-void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l)
+int sf_scene_scale(const SfScene *s)
+{
+    return s->scale;
+}
+
+int sf_scene_set_scale(SfScene *s, int scale, char *err, size_t err_n)
+{
+    if (scale < 1) {
+        scale = 1;
+    }
+    if (scale == s->scale) {
+        return 0;
+    }
+    vkDeviceWaitIdle(s->device);
+    free_targets(s);
+    free_buffer(s, &s->readback, &s->readback_mem);
+    s->readback_map = NULL;
+    if (make_targets(s, scale) != 0) {
+        sf_set_err(err, err_n, "Vulkan screen at %dx failed", scale);
+        return -1;
+    }
+    return 0;
+}
+
+static VkClearValue clear_of(uint32_t c)
+{
+    VkClearValue v;
+    memset(&v, 0, sizeof v);
+    v.color.float32[0] = (float)((c >> 16) & 0xFF) / 255.f;
+    v.color.float32[1] = (float)((c >> 8) & 0xFF) / 255.f;
+    v.color.float32[2] = (float)(c & 0xFF) / 255.f;
+    v.color.float32[3] = (float)(c >> 24) / 255.f;
+    return v;
+}
+
+/* Batches [from, to) onto the screen, which starts as clear. Positions
+ * are in 640x480 screen pixels at any scale: the vertex shader maps them,
+ * and the scissor scales. */
+static void record_screen(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l, uint32_t from, uint32_t to,
+                          uint32_t clear)
 {
     VkRenderPassBeginInfo rp;
-    VkClearValue clear[2];
+    VkClearValue clears[2];
     VkViewport viewport;
     VkDeviceSize zero = 0;
     VkPipeline bound = VK_NULL_HANDLE;
+    int k = s->scale;
     uint32_t i;
-    record_uploads(s, cmd);
-    memset(clear, 0, sizeof clear);
-    clear[0].color.float32[0] = (float)((l->clear >> 16) & 0xFF) / 255.f;
-    clear[0].color.float32[1] = (float)((l->clear >> 8) & 0xFF) / 255.f;
-    clear[0].color.float32[2] = (float)(l->clear & 0xFF) / 255.f;
-    clear[0].color.float32[3] = (float)(l->clear >> 24) / 255.f;
-    clear[1].depthStencil.depth = 1.f;
+    clears[0] = clear_of(clear);
+    memset(&clears[1], 0, sizeof clears[1]);
+    clears[1].depthStencil.depth = 1.f;
     memset(&rp, 0, sizeof rp);
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp.renderPass = s->pass;
     rp.framebuffer = s->frame;
-    rp.renderArea.extent.width = SF_SCREEN_W;
-    rp.renderArea.extent.height = SF_SCREEN_H;
+    rp.renderArea.extent.width = (uint32_t)(SF_SCREEN_W * k);
+    rp.renderArea.extent.height = (uint32_t)(SF_SCREEN_H * k);
     rp.clearValueCount = 2;
-    rp.pClearValues = clear;
+    rp.pClearValues = clears;
     vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
     viewport.x = 0.f;
     viewport.y = 0.f;
-    viewport.width = SF_SCREEN_W;
-    viewport.height = SF_SCREEN_H;
+    viewport.width = (float)(SF_SCREEN_W * k);
+    viewport.height = (float)(SF_SCREEN_H * k);
     viewport.minDepth = 0.f;
     viewport.maxDepth = 1.f;
     vkCmdSetViewport(cmd, 0, 1, &viewport);
-    if (l->b_n) {
+    if (to > from) {
         vkCmdBindVertexBuffers(cmd, 0, 1, &s->vbuf, &zero);
         vkCmdBindIndexBuffer(cmd, s->ibuf, 0, VK_INDEX_TYPE_UINT32);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s->layout, 0, 1, &s->set, 0, NULL);
     }
-    for (i = 0; i < l->b_n; i++) {
+    for (i = from; i < to; i++) {
         const SfBatch *b = &l->b[i];
         const SfShadeState *st = &b->shade;
         VkPipeline p = pipe_for(s, &b->blend);
@@ -1109,10 +1272,10 @@ void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l)
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
             bound = p;
         }
-        scissor.offset.x = x0;
-        scissor.offset.y = y0;
-        scissor.extent.width = (uint32_t)(x1 - x0);
-        scissor.extent.height = (uint32_t)(y1 - y0);
+        scissor.offset.x = x0 * k;
+        scissor.offset.y = y0 * k;
+        scissor.extent.width = (uint32_t)((x1 - x0) * k);
+        scissor.extent.height = (uint32_t)((y1 - y0) * k);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
         memset(&push, 0, sizeof push);
         push.tex = st->tex;
@@ -1131,42 +1294,92 @@ void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l)
     vkCmdEndRenderPass(cmd);
 }
 
+/* The screen's rect (in 640x480 pixels) onto the output's 640x448 game
+ * area at the display offset, 16 lines down, as retail's frame end draws
+ * it: opaque, or blended by the screen's alpha. */
+static void record_copy(SfScene *s, VkCommandBuffer cmd, int clear_out, uint32_t clear, VkPipeline pipe,
+                        const int rect[4], const int at[2])
+{
+    VkRenderPassBeginInfo rp;
+    VkClearValue cv = clear_of(clear);
+    VkViewport viewport;
+    VkRect2D scissor;
+    float src[4];
+    int k = s->scale;
+    memset(&rp, 0, sizeof rp);
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = clear_out ? s->back_clear : s->back_load;
+    rp.framebuffer = s->back_frame;
+    rp.renderArea.extent.width = (uint32_t)(SF_SCREEN_W * k);
+    rp.renderArea.extent.height = (uint32_t)(SF_SCREEN_H * k);
+    rp.clearValueCount = 1;
+    rp.pClearValues = &cv;
+    vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    viewport.x = (float)(at[0] * k);
+    viewport.y = (float)((at[1] + 16) * k);
+    viewport.width = (float)(640 * k);
+    viewport.height = (float)(448 * k);
+    viewport.minDepth = 0.f;
+    viewport.maxDepth = 1.f;
+    scissor.offset.x = 0;
+    scissor.offset.y = 0;
+    scissor.extent = rp.renderArea.extent;
+    src[0] = (float)rect[0] / SF_SCREEN_W;
+    src[1] = (float)rect[1] / SF_SCREEN_H;
+    src[2] = (float)rect[2] / SF_SCREEN_W;
+    src[3] = (float)rect[3] / SF_SCREEN_H;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s->show_layout, 0, 1, &s->copy_set, 0, NULL);
+    vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof src, src);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRenderPass(cmd);
+}
+
+void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l)
+{
+    record_uploads(s, cmd);
+    if (l->cp3) {
+        uint32_t at = l->cp3_at < l->b_n ? l->cp3_at : l->b_n;
+        record_screen(s, cmd, l, 0, at, l->clear);
+        record_copy(s, cmd, 1, l->clear, s->copy_opaque, l->cp3_rect, l->show_at);
+        record_screen(s, cmd, l, at, l->b_n, 0);
+        record_copy(s, cmd, 0, 0, s->copy_blend, l->show, l->show_at);
+    } else {
+        record_screen(s, cmd, l, 0, l->b_n, l->clear);
+        record_copy(s, cmd, 1, 0xFF000000, s->copy_blend, l->show, l->show_at);
+    }
+}
+
 void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, const SfDrawList *l)
 {
     VkViewport viewport;
     VkRect2D scissor;
     float frame_w;
     float frame_h;
-    float frame_x;
-    float frame_y;
-    float src[4];
+    static const float src[4] = { 0.f, 0.f, 1.f, 1.f };
+    (void)l;
     if (!s->show_pipe) {
         return;
     }
-    /* the 640x480 output, kept 4:3 in the window */
+    /* the 640x480 output, kept 4:3 and centred in the window */
     frame_w = (float)extent.width;
     frame_h = frame_w * 3.f / 4.f;
     if (frame_h > (float)extent.height) {
         frame_h = (float)extent.height;
         frame_w = frame_h * 4.f / 3.f;
     }
-    frame_x = ((float)extent.width - frame_w) / 2.f;
-    frame_y = ((float)extent.height - frame_h) / 2.f;
-    /* the screen's game area lands 640x448 at the display offset, 16 down */
-    viewport.x = frame_x + (float)l->show_at[0] * frame_w / 640.f;
-    viewport.y = frame_y + (float)(l->show_at[1] + 16) * frame_h / 480.f;
+    viewport.x = ((float)extent.width - frame_w) / 2.f;
+    viewport.y = ((float)extent.height - frame_h) / 2.f;
     viewport.width = frame_w;
-    viewport.height = 448.f * frame_h / 480.f;
+    viewport.height = frame_h;
     viewport.minDepth = 0.f;
     viewport.maxDepth = 1.f;
-    scissor.offset.x = (int32_t)frame_x;
-    scissor.offset.y = (int32_t)frame_y;
+    scissor.offset.x = (int32_t)viewport.x;
+    scissor.offset.y = (int32_t)viewport.y;
     scissor.extent.width = (uint32_t)frame_w;
     scissor.extent.height = (uint32_t)frame_h;
-    src[0] = (float)l->show[0] / SF_SCREEN_W;
-    src[1] = (float)l->show[1] / SF_SCREEN_H;
-    src[2] = (float)l->show[2] / SF_SCREEN_W;
-    src[3] = (float)l->show[3] / SF_SCREEN_H;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s->show_pipe);
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
@@ -1175,33 +1388,38 @@ void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, co
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
-void sf_scene_record_readback(SfScene *s, VkCommandBuffer cmd)
+void sf_scene_record_readback(SfScene *s, VkCommandBuffer cmd, int output)
 {
     VkBufferImageCopy region;
-    if (!s->readback) {
-        if (make_buffer(s, (VkDeviceSize)SF_SCREEN_W * SF_SCREEN_H * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                        &s->readback, &s->readback_mem, &s->readback_map) != 0) {
+    VkImage image = output ? s->back.image : s->color.image;
+    VkDeviceSize size = (VkDeviceSize)SF_SCREEN_W * SF_SCREEN_H * 4 * (VkDeviceSize)(s->scale * s->scale);
+    if (!s->readback || s->readback_size != size) {
+        free_buffer(s, &s->readback, &s->readback_mem);
+        if (make_buffer(s, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &s->readback, &s->readback_mem,
+                        &s->readback_map) != 0) {
+            s->readback_map = NULL;
             return;
         }
+        s->readback_size = size;
     }
-    barrier(cmd, s->color.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    barrier(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
     memset(&region, 0, sizeof region);
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
-    region.imageExtent.width = SF_SCREEN_W;
-    region.imageExtent.height = SF_SCREEN_H;
+    region.imageExtent.width = (uint32_t)(SF_SCREEN_W * s->scale);
+    region.imageExtent.height = (uint32_t)(SF_SCREEN_H * s->scale);
     region.imageExtent.depth = 1;
-    vkCmdCopyImageToBuffer(cmd, s->color.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s->readback, 1, &region);
-    barrier(cmd, s->color.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s->readback, 1, &region);
+    barrier(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 }
 
-void sf_scene_read(SfScene *s, uint8_t *rgba)
+const uint8_t *sf_scene_read(SfScene *s, int *w, int *h)
 {
-    if (s->readback_map) {
-        memcpy(rgba, s->readback_map, (size_t)SF_SCREEN_W * SF_SCREEN_H * 4);
-    }
+    *w = SF_SCREEN_W * s->scale;
+    *h = SF_SCREEN_H * s->scale;
+    return s->readback_map;
 }

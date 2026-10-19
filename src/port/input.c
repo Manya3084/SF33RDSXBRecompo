@@ -183,11 +183,35 @@ static KeyBinding s_keys[] = {
     { SDL_SCANCODE_W, BIND_ANALOG | XB_LTRIG }, { SDL_SCANCODE_R, BIND_ANALOG | XB_RTRIG },
 };
 
+/* SF_AUTOPRESS=F1,F2,...: Start held on the keyboard port for six frames
+ * from each of those frames (for driving the game in tests). */
+static int auto_start(void)
+{
+    static int frame;
+    const char *env = getenv("SF_AUTOPRESS");
+    int now = frame++;
+    while (env && *env) {
+        char *end;
+        long f = strtol(env, &end, 10);
+        if (end == env) {
+            break;
+        }
+        if (now >= f && now < f + 6) {
+            return 1;
+        }
+        env = *end == ',' ? end + 1 : end;
+    }
+    return 0;
+}
+
 static void read_keyboard(XbGamepad *x)
 {
     const bool *k = SDL_GetKeyboardState(NULL);
     size_t i;
     x->connected = 1;
+    if (auto_start()) {
+        x->buttons |= XB_START;
+    }
     for (i = 0; i < sizeof s_keys / sizeof s_keys[0]; i++) {
         if (!k[s_keys[i].key]) {
             continue;
@@ -372,7 +396,7 @@ void keyConvert(void)
                 mpp_w.xb_port_player[port] = (s8)mpp_w.xb_pad_count;
                 mpp_w.xb_player_port[mpp_w.xb_pad_count] = (s8)port;
                 mpp_w.xb_pad_count++;
-                fprintf(stderr, "input: port %d joins as player %d (sw %08X, tarpad sw %08X kind %d, sticks %d,%d %d,%d)\n", (int)port, (int)mpp_w.xb_pad_count, flpad_adr[0][port].sw, tarpad_root[port].sw, tarpad_root[port].kind, tarpad_root[port].stick[0].x, tarpad_root[port].stick[0].y, tarpad_root[port].stick[1].x, tarpad_root[port].stick[1].y);
+                fprintf(stderr, "input: port %d joins as player %d\n", (int)port, (int)mpp_w.xb_pad_count);
             }
         }
     }

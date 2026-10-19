@@ -52,10 +52,10 @@ int sf_render_present_list(SfRenderer *renderer, const SfDrawList *list, char *e
     return sf_vk_present_list(renderer, list, err, err_n);
 }
 
-int sf_render_read_screen(SfRenderer *renderer, uint8_t *rgba)
+int sf_render_read_screen(SfRenderer *renderer, const uint8_t **rgba, int *w, int *h)
 {
     if (!renderer || renderer->kind == SF_RENDER_OPENGL) {
         return -1;
     }
-    return sf_vk_read_screen(renderer, rgba);
+    return sf_vk_read_screen(renderer, rgba, w, h);
 }

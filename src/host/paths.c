@@ -10,17 +10,15 @@
 
 int sf_exe_dir(char *out, size_t n)
 {
-    char *base = (char *)SDL_GetBasePath();
+    /* SDL3 owns and caches this string; it is not freed */
+    const char *base = SDL_GetBasePath();
     size_t len;
     if (!base || !out || n == 0) {
-        SDL_free(base);
         return -1;
     }
     if (snprintf(out, n, "%s", base) >= (int)n) {
-        SDL_free(base);
         return -1;
     }
-    SDL_free(base);
     len = strlen(out);
     while (len > 1 && out[len - 1] == '/') {
         out[--len] = 0;

@@ -129,6 +129,9 @@ add_library(sf_port STATIC
     src/port/zlib.c
     src/port/files.c
     src/port/input.c
+    src/port/save.c
+    src/port/banks.c
+    src/port/math.c
     src/host/paths.c
     src/game/memman.c
     src/mem/heap.c

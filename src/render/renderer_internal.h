@@ -54,7 +54,7 @@ int sf_vk_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n);
 void sf_vk_destroy(SfRenderer *renderer);
 int sf_vk_present(SfRenderer *renderer, const SfCanvas *canvas, char *err, size_t err_n);
 int sf_vk_present_list(SfRenderer *renderer, const SfDrawList *list, char *err, size_t err_n);
-int sf_vk_read_screen(SfRenderer *renderer, uint8_t *rgba);
+int sf_vk_read_screen(SfRenderer *renderer, const uint8_t **rgba, int *w, int *h);
 
 int sf_gl_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n);
 void sf_gl_destroy(SfRenderer *renderer);

@@ -94,8 +94,15 @@ typedef struct SfDrawList {
     uint32_t b_n;
     uint32_t b_cap;
     uint32_t clear;   /* D3DCOLOR the screen starts each frame with */
-    int show[4];      /* the screen's x0, y0, x1, y1 the window shows */
+    int show[4];      /* the screen's x0, y0, x1, y1 blended onto the output */
     int show_at[2];   /* where that lands on the 640x480 output (y adds 16) */
+    /* The game's PS2-sized picture: once the batches before cp3_at are
+     * drawn, the screen's cp3_rect is copied, stretched and opaque, onto
+     * the output, and the screen starts again from clear (retail's
+     * CP3toPS2Draw). */
+    int cp3;
+    uint32_t cp3_at;
+    int cp3_rect[4];
 } SfDrawList;
 
 #endif

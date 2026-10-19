@@ -11,6 +11,7 @@
  * xb_011000.c (the pool). */
 
 #include "game/memman.h"
+#include "port/gfx.h"
 #include "port/port.h"
 
 #include "types.h"
@@ -295,3 +296,42 @@ s32 njUserMain(void)
     }
     return sys_w.gd_error;
 }
+
+/* ---- the PS2-sized picture (retail's CP3toPS2Draw, xb_0F4537.c) ---- */
+
+static int s_cp3_on;
+
+extern struct _SAVE_W save_w[6];
+extern u8 Disp_Size_H;
+extern u8 Disp_Size_V;
+void dspwhUnpack(u8 src, u8 *xdsp, u8 *ydsp);
+
+void CP3toPS2DrawOn(void)
+{
+    s_cp3_on = 1;
+}
+
+void CP3toPS2DrawOff(void)
+{
+    s_cp3_on = 0;
+}
+
+s32 getCP3toFullScreenDrawFlag(void)
+{
+    return s_cp3_on;
+}
+
+/* With the copy on and the game not stopped: the screen's corner the
+ * screen-size option leaves (383x223 at 100%) goes onto the output, and
+ * what is drawn after it is blended over from the 638x447 area. */
+void CP3toPS2Draw(void)
+{
+    if (mpp_w.sysStop == 2 || !s_cp3_on) {
+        return;
+    }
+    dspwhUnpack(save_w[1].Screen_Size, &Disp_Size_H, &Disp_Size_V);
+    sf_gfx_copy_screen(0, 0, 0x247 - Disp_Size_H * 2, 0x1A7 - Disp_Size_V * 2);
+    xb_SetViewportRect(0, 0, 0x27E - (s32)((100.0f - Disp_Size_H) * -3.3333333f), 0x34F - Disp_Size_V * 4);
+}
+
+

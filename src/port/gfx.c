@@ -1161,6 +1161,21 @@ s32 flLogOut(const char *fmt, ...)
     return 1;
 }
 
+/* The viewport matrix: scale by w/2 and -h/2, offset to the centre, depth
+ * zmin..zmax (retail's xb_SetViewportRect4; the centre is w / 2 in
+ * integers, as retail has it). */
+void flmatMakeViewport(f32 *m, s32 x, s32 y, s32 w, s32 h, f32 zmin, f32 zmax)
+{
+    memset(m, 0, 16 * sizeof *m);
+    m[0] = (f32)w / 2.0f;
+    m[5] = (f32)-h / 2.0f;
+    m[10] = zmax - zmin;
+    m[12] = (f32)(w / 2) + (f32)x;
+    m[13] = (f32)(h / 2) + (f32)y;
+    m[14] = zmin;
+    m[15] = 1.0f;
+}
+
 void xb_MatrixIdentity(f32 *m)
 {
     int i;
@@ -1219,6 +1234,20 @@ void sf_gfx_frame_done(void)
 {
     g.list.v_n = 0;
     g.list.b_n = 0;
+    g.list.cp3 = 0;
+}
+
+/* The PS2-sized picture: what is drawn so far is copied from the screen's
+ * rect onto the output (src/port/system.c decides when, as retail's
+ * CP3toPS2Draw). */
+void sf_gfx_copy_screen(int x0, int y0, int x1, int y1)
+{
+    g.list.cp3 = 1;
+    g.list.cp3_at = g.list.b_n;
+    g.list.cp3_rect[0] = x0;
+    g.list.cp3_rect[1] = y0;
+    g.list.cp3_rect[2] = x1;
+    g.list.cp3_rect[3] = y1;
 }
 
 void sf_gfx_frame_ready(void)

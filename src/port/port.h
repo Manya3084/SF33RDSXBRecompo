@@ -11,6 +11,9 @@
 /* Reports a call to a name that has no shim yet, once per name. */
 void sf_port_missing(const char *name);
 
+/* The game frame running, for messages. */
+extern int sf_port_frame;
+
 /* Allocation below 4 GB, for memory whose address the game keeps in a u32. */
 void *sf_low_alloc(size_t size, size_t align);
 void sf_low_free(void *p);

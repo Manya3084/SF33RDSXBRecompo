@@ -963,6 +963,26 @@ int sf_vk_present(SfRenderer *r, const SfCanvas *canvas, char *err, size_t err_n
     return 0;
 }
 
+/* The scale the game's screen renders at: SF_SCALE when it is set, or the
+ * largest whole multiple of 640x480 the window holds, up to 8. The window
+ * shows the result at 4:3 either way. */
+static int render_scale(const SfRenderer *r)
+{
+    const char *env = getenv("SF_SCALE");
+    int k;
+    if (env && atoi(env) > 0) {
+        k = atoi(env);
+    } else {
+        int kw = (int)r->extent.width / 640;
+        int kh = (int)r->extent.height / 480;
+        k = kw < kh ? kw : kh;
+    }
+    if (k < 1) {
+        k = 1;
+    }
+    return k > 8 ? 8 : k;
+}
+
 /* The game's screen: the scene draws the list offscreen, then shows it in
  * the window's pass. The scene is made on the first call. */
 static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *list)
@@ -977,7 +997,7 @@ static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *li
     }
     sf_scene_record(r->scene, r->cmd, list);
     if (r->shot_pending) {
-        sf_scene_record_readback(r->scene, r->cmd);
+        sf_scene_record_readback(r->scene, r->cmd, 1);
     }
     memset(&clear, 0, sizeof clear);
     clear.color.float32[3] = 1.f;
@@ -1012,6 +1032,9 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
     }
     if (vkWaitForFences(r->device, 1, &r->fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
         sf_set_err(err, err_n, "Vulkan fence wait failed");
+        return -1;
+    }
+    if (sf_scene_set_scale(r->scene, render_scale(r), err, err_n) != 0) {
         return -1;
     }
     if (sf_scene_prepare(r->scene, list, err, err_n) != 0) {
@@ -1066,7 +1089,7 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
     return 0;
 }
 
-int sf_vk_read_screen(SfRenderer *r, uint8_t *rgba)
+int sf_vk_read_screen(SfRenderer *r, const uint8_t **rgba, int *w, int *h)
 {
     if (!r->scene) {
         return -1;
@@ -1076,7 +1099,7 @@ int sf_vk_read_screen(SfRenderer *r, uint8_t *rgba)
         return 1;
     }
     vkWaitForFences(r->device, 1, &r->fence, VK_TRUE, UINT64_MAX);
-    sf_scene_read(r->scene, rgba);
+    *rgba = sf_scene_read(r->scene, w, h);
     r->shot_pending = 0;
-    return 0;
+    return *rgba ? 0 : -1;
 }

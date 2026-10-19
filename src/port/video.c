@@ -33,7 +33,9 @@ void sf_video_init(int w, int h)
 /* SF_SHOT=FRAME:PATH writes the screen after that frame as a PPM. */
 static void screenshot(int frame)
 {
-    static uint8_t rgba[SF_SCREEN_W * SF_SCREEN_H * 4];
+    const uint8_t *rgba;
+    int w;
+    int h;
     const char *env = getenv("SF_SHOT");
     char *colon;
     long want;
@@ -46,15 +48,15 @@ static void screenshot(int frame)
     if (*colon != ':' || (frame != want && frame != want + 1)) {
         return;
     }
-    if (sf_render_read_screen(s_renderer, rgba) != 0) {
+    if (sf_render_read_screen(s_renderer, &rgba, &w, &h) != 0) {
         return;
     }
     f = fopen(colon + 1, "wb");
     if (!f) {
         return;
     }
-    fprintf(f, "P6\n%d %d\n255\n", SF_SCREEN_W, SF_SCREEN_H);
-    for (i = 0; i < SF_SCREEN_W * SF_SCREEN_H; i++) {
+    fprintf(f, "P6\n%d %d\n255\n", w, h);
+    for (i = 0; i < w * h; i++) {
         fwrite(&rgba[i * 4], 1, 3, f);
     }
     fclose(f);

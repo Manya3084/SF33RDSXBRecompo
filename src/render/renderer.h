@@ -23,9 +23,9 @@ int sf_render_present(SfRenderer *renderer, const SfCanvas *canvas, char *err, s
 /* The game's screen (render/draw.h). Vulkan only for now. */
 int sf_render_present_list(SfRenderer *renderer, const SfDrawList *list, char *err, size_t err_n);
 
-/* The game's 640x480 screen, RGBA. The first call asks for it with the
- * next frame and returns 1; the call after that frame fills rgba and
- * returns 0. -1 when there is no screen. */
-int sf_render_read_screen(SfRenderer *renderer, uint8_t *rgba);
+/* The game's output, RGBA at the render scale. The first call asks for
+ * it with the next frame and returns 1; the call after that frame points
+ * rgba at it and returns 0. -1 when there is none. */
+int sf_render_read_screen(SfRenderer *renderer, const uint8_t **rgba, int *w, int *h);
 
 #endif

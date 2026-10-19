@@ -31,7 +31,7 @@ static VkQueue s_queue;
 static VkCommandPool s_pool;
 static VkCommandBuffer s_cmd;
 static VkFence s_fence;
-static uint8_t s_screen[SF_SCREEN_W * SF_SCREEN_H * 4];
+static const uint8_t *s_screen;
 static int s_fail;
 
 static int open_device(void)
@@ -119,7 +119,7 @@ static int draw(SfScene *scene)
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(s_cmd, &bi);
     sf_scene_record(scene, s_cmd, l);
-    sf_scene_record_readback(scene, s_cmd);
+    sf_scene_record_readback(scene, s_cmd, 0);
     vkEndCommandBuffer(s_cmd);
     memset(&si, 0, sizeof si);
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -128,7 +128,11 @@ static int draw(SfScene *scene)
     vkResetFences(s_device, 1, &s_fence);
     vkQueueSubmit(s_queue, 1, &si, s_fence);
     vkWaitForFences(s_device, 1, &s_fence, VK_TRUE, UINT64_MAX);
-    sf_scene_read(scene, s_screen);
+    {
+        int w;
+        int h;
+        s_screen = sf_scene_read(scene, &w, &h);
+    }
     sf_gfx_frame_done();
     return 0;
 }

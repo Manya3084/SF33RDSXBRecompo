@@ -27,7 +27,7 @@ find_program(GLSLC glslc REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(SF_GEN "${CMAKE_BINARY_DIR}/gen")
 set(SF_SHADER_HEADERS "")
-foreach(sh scene.vert scene.frag show.vert show.frag)
+foreach(sh scene.vert scene.frag show.vert show.frag copy.frag)
     string(REPLACE "." "_" n "${sh}")
     add_custom_command(OUTPUT "${SF_GEN}/render/${n}_spv.h"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${SF_GEN}/render"
