@@ -13,6 +13,8 @@
 
 #include "types.h"
 
+#include <SDL3/SDL.h>
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -74,6 +76,19 @@ s32 ADXF_LoadPartitionNw(s32 ptid, const char *fname, void *dir, void *ptinfo)
     s_afs_size = lseek(s_fd, 0, SEEK_END);
     s_pt_stat = ADXF_STAT_READEND;
     return 0;
+}
+
+/* Retail's disc-error screen, which waits for the disc to come back. The
+ * archive does not come back: say so and stop. */
+void xb_ShowDiskReadError(void)
+{
+    static const char msg[] = "The game data cannot be read (data/afs/SF33RDXB.AFS next to the program).\n"
+                              "Delete the data folder and start the game again to import the Xbox disc.";
+    fprintf(stderr, "files: %s\n", msg);
+    if (!getenv("SF_HEADLESS")) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Street Fighter III: 3rd Strike", msg, sf_video_window());
+    }
+    exit(1);
 }
 
 s32 ADXF_GetPtStat(s32 ptid)

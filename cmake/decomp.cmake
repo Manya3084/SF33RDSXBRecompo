@@ -182,6 +182,18 @@ if(WIN32)
         list(APPEND _stub_win --host "${SF_WIN_SYSROOT}/lib/${_l}")
     endforeach()
 endif()
+# Linux: the shared libraries the program links, where CMake found them
+# (SDL3 built into a prefix, say), as well as the system's own
+if(NOT WIN32)
+    if(TARGET SDL3::SDL3-shared)
+        list(APPEND _stub_win --host-so $<TARGET_FILE:SDL3::SDL3-shared>)
+    endif()
+    foreach(_l ${OPENAL_LIBRARY} ${Vulkan_LIBRARY} ${ZLIB_LIBRARIES} ${LIBARCHIVE_LINK_LIBRARIES})
+        if(_l MATCHES "\\.so")
+            list(APPEND _stub_win --host-so "${_l}")
+        endif()
+    endforeach()
+endif()
 
 # The aliases for calls to the bodies retail's linker folded, from the
 # port's own archives and the decomp's symbol lists (no Xbox build needed)

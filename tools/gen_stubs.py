@@ -102,6 +102,7 @@ def main() -> int:
     aliases: dict[str, str] = {}
     coff = False
     hosts: list[str] = []
+    host_so: list[str] = []
     while args and args[0].startswith("--"):
         if args[0] == "--aliases":
             for line in open(args[1]):
@@ -114,6 +115,8 @@ def main() -> int:
             OBJDUMP = args[1]
         elif args[0] == "--host":
             hosts.append(args[1])
+        elif args[0] == "--host-so":
+            host_so.append(args[1])
         elif args[0] == "--coff":
             coff = True
             args = args[1:]
@@ -132,10 +135,10 @@ def main() -> int:
             # an import library defines NAME and __imp_NAME
             host |= d | {n[6:] for n in d if n.startswith("__imp_")}
     else:
-        for lib in HOST_LIBS:
-            p = host_lib(lib)
-            if p:
-                host |= syms(p, dynamic=True)[0]
+        # the libraries the build links (wherever they are installed), then
+        # the system's
+        for p in host_so + [q for q in map(host_lib, HOST_LIBS) if q]:
+            host |= syms(p, dynamic=True)[0]
     # names the linker itself provides: the section bounds the game-state
     # snapshot reads (src/port/state.c)
     linker = {"__data_start", "_edata", "__bss_start", "_end"}
@@ -144,6 +147,12 @@ def main() -> int:
         for n in undef - defined - host - linker
         if not n.startswith(("_GLOBAL_OFFSET_TABLE_", "__start_", "__stop_"))
     )
+    # a library's own function stubbed means the library was not found:
+    # the program would run with it missing
+    lost = [n for n in need if re.match(r"(SDL_|vk[A-Z]|al[A-Z]|alc[A-Z]|gl[A-Z]|archive_)", n)]
+    if lost:
+        print(f"gen_stubs: library functions not found in any host library: {' '.join(lost[:12])}", file=sys.stderr)
+        return 1
     # an alias whose body is not built yet needs a stub of its own
     need += sorted({aliases[n] for n in need if n in aliases} - defined - set(need))
     lines = [

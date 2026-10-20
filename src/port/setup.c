@@ -91,6 +91,11 @@ int sf_setup_run(const char *install)
 {
     SDL_Window *win = sf_video_window();
     int done = 0;
+    if (!win) {
+        /* headless: no window to ask in */
+        fprintf(stderr, "setup: no game data in %s/data: sf33rdsxb --extract SOURCE --data %s\n", install, install);
+        return -1;
+    }
     if (sf_canvas_open(&s.canvas, 960, 540) != 0) {
         return -1;
     }
