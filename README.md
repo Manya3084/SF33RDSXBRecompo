@@ -24,6 +24,26 @@ Not done yet:
 
 - online play (the game runs offline; Xbox Live is greyed out in the mode menu)
 
+## Download
+
+The [releases](https://github.com/Manya3084/SF33RDSXBRecompo/releases) have a Windows and a Linux package. Neither has any game data: the game imports your own Xbox disc the first time it starts (see [Running](#running)).
+
+**Windows** (64-bit Windows 10 or 11):
+
+1. Download `sf33rdsxb-windows-x86_64.zip` and unzip the whole folder somewhere you can write to, such as Documents or the Desktop. Not Program Files: the game keeps its data and saves next to `sf33rdsxb.exe`.
+2. Run `sf33rdsxb.exe`. The program is not signed, so Windows may say "Windows protected your PC": click More info, then Run anyway.
+3. Pick your Xbox disc image, zip or 7z in the window that opens.
+
+It needs a graphics driver with Vulkan or OpenGL 3.3. The DLLs it uses are in the folder.
+
+**Linux** (glibc 2.39 or newer: Ubuntu 24.04, Debian 13, Fedora 40 or later):
+
+1. Install OpenAL, libarchive and the Vulkan loader:
+   - Ubuntu/Debian: `sudo apt install libopenal1 libarchive13t64 libvulkan1`
+   - Fedora: `sudo dnf install openal-soft libarchive vulkan-loader`
+   - Arch: `sudo pacman -S openal libarchive vulkan-icd-loader`
+2. Unpack `sf33rdsxb-linux-x86_64.tar.gz` and run `./sf33rdsxb` in it. SDL3 is included (`lib/`).
+
 ## Getting the data
 
 The game data comes from your own copy of the Xbox disc. `sf33rdsxb` imports it, either on first launch or with:
@@ -130,6 +150,18 @@ Requirements:
 - SDL3, Vulkan, OpenAL, OpenGL, zlib and libarchive;
 - `glslc`, to compile the shaders;
 - Python 3, for the build's code generators.
+
+For Windows, cross-built with MinGW-w64 from Linux:
+
+```
+cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake \
+    -DSF_WIN_SYSROOT=/path/to/mingw64 -DSF_DECOMP_DIR=/path/to/3s-decomp-ogxb
+cmake --build build-win
+```
+
+`SF_WIN_SYSROOT` is a MinGW-w64 root with SDL3, OpenAL, libarchive, zlib and the Vulkan loader (the MSYS2 `mingw-w64-x86_64-*` packages, unpacked). The DLLs the exe needs go next to it.
+
+The Linux release package is built by [.github/workflows/linux.yml](.github/workflows/linux.yml) on Ubuntu 24.04.
 
 `SF_DECOMP_DIR` is a checkout of 3s-decomp-ogxb (default `../3s-decomp-ogxb`). Until it is merged, that checkout must be on its `xbox-port-data` branch. The port is 64-bit-only and links non-PIE (see [docs/porting.md](docs/porting.md#x86-64)).
 

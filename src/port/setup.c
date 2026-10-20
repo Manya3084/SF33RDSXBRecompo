@@ -24,6 +24,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 static const SDL_DialogFileFilter k_filters[] = {
     { "Xbox disc or archive", "iso;zip;7z" },
@@ -185,6 +188,11 @@ int sf_setup_cli(int argc, char **argv)
         } else if (strcmp(argv[i], "--data") == 0 && i + 1 < argc) {
             dir = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
+#ifdef _WIN32
+            if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+                freopen("CONOUT$", "w", stderr);
+            }
+#endif
             fprintf(stderr, "usage: sf33rdsxb                         play (the first time, import the disc)\n"
                             "       sf33rdsxb --extract SOURCE --data DIR\n"
                             "       sf33rdsxb --sound-banks sf33rd.xbe --data DIR\n");
@@ -194,6 +202,13 @@ int sf_setup_cli(int argc, char **argv)
     if (!source && !dir && !xbe) {
         return -1;
     }
+#ifdef _WIN32
+    /* a GUI program: the messages go to the command prompt it was run from */
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+    }
+#endif
     if (xbe) {
         char out[4096];
         char err[256];

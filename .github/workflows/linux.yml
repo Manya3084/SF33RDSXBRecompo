@@ -1,0 +1,68 @@
+# The Linux package: built on Ubuntu 24.04 so it runs on any distribution
+# with glibc 2.39 or newer, with SDL3 built here and shipped next to the
+# program (lib/). No game data: the game imports the disc the first time it
+# starts.
+name: Linux package
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: SF33RDSXBRecompo
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Manya3084/3s-decomp-ogxb
+          ref: xbox-port-data
+          path: 3s-decomp-ogxb
+
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build python3 glslc patchelf \
+            libopenal-dev libvulkan-dev libarchive-dev zlib1g-dev libgl-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libjack-dev libsndio-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev \
+            libdrm-dev libgbm-dev libdbus-1-dev libibus-1.0-dev libudev-dev
+
+      - name: SDL3
+        run: |
+          git clone --depth 1 --branch release-3.4.18 https://github.com/libsdl-org/SDL.git sdl
+          cmake -S sdl -B sdl/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/sdl-root \
+            -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_STATIC=OFF
+          cmake --build sdl/build
+          cmake --install sdl/build
+
+      - name: Build
+        run: |
+          cmake -S SF33RDSXBRecompo -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=$PWD/sdl-root -DSF_DECOMP_DIR=$PWD/3s-decomp-ogxb
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          name=sf33rdsxb-linux-x86_64
+          mkdir -p $name/lib
+          cp build/sf33rdsxb $name/
+          cp -L sdl-root/lib/libSDL3.so.0 $name/lib/
+          patchelf --set-rpath '$ORIGIN/lib' $name/sf33rdsxb
+          cp SF33RDSXBRecompo/LICENSE $name/
+          cp SF33RDSXBRecompo/packaging/README-linux.txt $name/README.txt
+          echo "decomp $(git -C 3s-decomp-ogxb rev-parse HEAD)" > $name/BUILD.txt
+          echo "port $(git -C SF33RDSXBRecompo rev-parse HEAD)" >> $name/BUILD.txt
+          objdump -T $name/sf33rdsxb $name/lib/libSDL3.so.0 | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+          tar czf $name.tar.gz $name
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sf33rdsxb-linux-x86_64
+          path: sf33rdsxb-linux-x86_64.tar.gz
