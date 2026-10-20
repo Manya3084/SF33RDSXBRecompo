@@ -46,7 +46,8 @@ jobs:
           cmake -S SF33RDSXBRecompo -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH=$PWD/sdl-root -DSF_DECOMP_DIR=$PWD/3s-decomp-ogxb
           cmake --build build
-          ctest --test-dir build --output-on-failure
+          # the shaders test opens a window on a GPU: the runner has neither
+          ctest --test-dir build --output-on-failure -E shaders
 
       - name: Package
         run: |
@@ -56,6 +57,7 @@ jobs:
           cp -L sdl-root/lib/libSDL3.so.0 $name/lib/
           patchelf --set-rpath '$ORIGIN/lib' $name/sf33rdsxb
           cp SF33RDSXBRecompo/LICENSE $name/
+          cp sdl/LICENSE.txt $name/lib/LICENSE-SDL3.txt
           cp SF33RDSXBRecompo/packaging/README-linux.txt $name/README.txt
           echo "decomp $(git -C 3s-decomp-ogxb rev-parse HEAD)" > $name/BUILD.txt
           echo "port $(git -C SF33RDSXBRecompo rev-parse HEAD)" >> $name/BUILD.txt
