@@ -32,7 +32,8 @@ int sf_render_present_list(SfRenderer *renderer, const SfDrawList *list, char *e
  * window. Starts at 4/3. */
 void sf_render_set_aspect(SfRenderer *renderer, float aspect);
 
-/* How the game area is drawn into the window: 0 sharp, 1 smooth, 2 CRT.
+/* How the game area is drawn into the window: 0 sharp, 1 smooth, 2 curved
+ * CRT, 3 the same CRT with square corners.
  * SCREEN ADJUST's FILTER row (src/port/save.c). */
 void sf_render_set_filter(SfRenderer *renderer, int filter);
 

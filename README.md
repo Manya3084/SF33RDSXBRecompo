@@ -113,11 +113,12 @@ The keyboard is port 0. Gamepads take ports 1 to 3 in the order SDL3 reports the
 
 ## Display
 
-OPTION → SCREEN ADJUST's FILTER row cycles three pictures. Left steps back and right steps on:
+OPTION → SCREEN ADJUST's FILTER row cycles four pictures. Left steps back and right steps on:
 
 - OFF: each game pixel stays a hard edge.
 - SMOOTH: the picture is filtered as it is scaled into the window.
 - CRT: scanlines on the 448 game lines, a faint shadow mask, a light curve and a little glow.
+- FLAT: that same CRT, with the corners left square.
 
 Three rows follow FILTER:
 

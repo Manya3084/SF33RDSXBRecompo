@@ -1419,7 +1419,7 @@ void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, fl
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s->show_layout, 0, 1, &s->show_set, 0, NULL);
     memset(block, 0, sizeof block);
     memcpy(block, src, sizeof src);
-    block[4] = (float)(filter < 0 ? 0 : (filter > 2 ? 2 : filter));
+    block[4] = (float)(filter < 0 ? 0 : (filter > 3 ? 3 : filter));
     vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, block);
     vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 16, 16, block + 4);
     vkCmdDraw(cmd, 3, 1, 0, 0);

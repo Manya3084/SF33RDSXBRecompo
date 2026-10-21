@@ -1,7 +1,7 @@
 #version 450
 // The game area in the window. mode 0 keeps each texel whole, mode 1
-// filters the scale, mode 2 draws a CRT over that filtered picture.
-// src is the same rectangle the vertex shader maps onto the viewport.
+// filters the scale, mode 2 is a curved CRT and mode 3 is that CRT with
+// square corners. src is the rectangle the vertex shader maps.
 layout(set = 0, binding = 0) uniform sampler2D screen;
 layout(push_constant) uniform Push {
     layout(offset = 0) vec4 src;
@@ -22,23 +22,29 @@ vec3 taken(vec2 uv, int sharp)
 void main()
 {
     int mode = int(pc.mode + 0.5);
-    if (mode != 2) {
+    vec2 span;
+    vec2 p;
+    vec2 uv;
+    vec3 col;
+    if (mode < 2) {
         o = vec4(taken(v_uv, mode == 0 ? 1 : 0), 1.0);
         return;
     }
 
-    vec2 span = pc.src.zw - pc.src.xy;
-    vec2 p = (v_uv - pc.src.xy) / span;
-    vec2 c = p * 2.0 - 1.0;
-    c *= 1.0 + dot(c, c) * 0.08;
-    p = c * 0.5 + 0.5;
-    if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) {
-        o = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
+    span = pc.src.zw - pc.src.xy;
+    p = (v_uv - pc.src.xy) / span;
+    if (mode == 2) {
+        vec2 c = p * 2.0 - 1.0;
+        c *= 1.0 + dot(c, c) * 0.08;
+        p = c * 0.5 + 0.5;
+        if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) {
+            o = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
     }
 
-    vec2 uv = pc.src.xy + span * p;
-    vec3 col = taken(uv, 0);
+    uv = pc.src.xy + span * p;
+    col = taken(uv, 0);
     float scan = sin(fract(p.y * 448.0) * 3.14159265);
     col *= mix(0.68, 1.0, scan * scan);
     float mask_x = mod(gl_FragCoord.x, 3.0);

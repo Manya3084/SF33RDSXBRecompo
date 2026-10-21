@@ -12,7 +12,7 @@ lowaddr src/sf33rd/Source/Game/bg_data.c
 # ADJUST's WINDOW MODE, RESOLUTION and ASPECT RATIO rows. menu.c runs ten
 # rows, EFF61.c has their labels, EFF63.c asks src/port/display.c for their
 # values, and Sel_Data.c places the ten rows closer together. FILTER cycles
-# OFF, SMOOTH and CRT. The mode
+# OFF, SMOOTH, CRT and FLAT. The mode
 # menu's Xbox Live is greyed and skipped, as VERSUS is without a second
 # player (menu.c's cursor, EFF61.c's label): the port has no online play.
 patch src/sf33rd/Source/Game/menu.c

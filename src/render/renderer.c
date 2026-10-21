@@ -61,7 +61,7 @@ void sf_render_set_aspect(SfRenderer *renderer, float aspect)
 void sf_render_set_filter(SfRenderer *renderer, int filter)
 {
     if (renderer) {
-        renderer->filter = filter < 0 ? 0 : (filter > 2 ? 2 : filter);
+        renderer->filter = filter < 0 ? 0 : (filter > 3 ? 3 : filter);
     }
 }
 

@@ -77,8 +77,8 @@
 
          case 4:
 -            sys_w.screen_mode = (sys_w.screen_mode + 1) & 1;
-+            /* Port: OFF, SMOOTH, CRT. Left steps back. */
-+            sys_w.screen_mode = (u8)((sys_w.screen_mode + 2) % 3);
++            /* Port: OFF, SMOOTH, CRT, FLAT. Left steps back. */
++            sys_w.screen_mode = (u8)((sys_w.screen_mode + 3) % 4);
              flag = 1;
              break;
          }
@@ -87,8 +87,8 @@
 
          case 4:
 -            sys_w.screen_mode = (sys_w.screen_mode + 1) & 1;
-+            /* Port: OFF, SMOOTH, CRT. Right steps on. */
-+            sys_w.screen_mode = (u8)((sys_w.screen_mode + 1) % 3);
++            /* Port: OFF, SMOOTH, CRT, FLAT. Right steps on. */
++            sys_w.screen_mode = (u8)((sys_w.screen_mode + 1) % 4);
              flag = 1;
              break;
          }

@@ -82,12 +82,12 @@ s32 xb_Get7A1808(void)
 }
 
 /* SCREEN ADJUST's FILTER, as the menu left it (sys_w.screen_mode):
- * 0 OFF, 1 SMOOTH, 2 CRT. A save from before CRT still reads 0 or 1. */
+ * 0 OFF, 1 SMOOTH, 2 CRT, 3 FLAT. Older saves still read 0 or 1. */
 extern struct _SYSTEM_W sys_w;
 
 int sf_save_screen_filter(void)
 {
-    return sys_w.screen_mode > 2 ? 0 : sys_w.screen_mode;
+    return sys_w.screen_mode > 3 ? 0 : sys_w.screen_mode;
 }
 
 /* data/save/NAME; kind 0 and 1 have their names, a replay is replayNN.sav */
@@ -209,7 +209,7 @@ static void apply_system(const struct _SAVE_W *in)
     sf_video_set_offset(Correct_X[0] + X_Adjust, Correct_Y[0] + Y_Adjust);
     dspwhUnpack(sw->Screen_Size, &Disp_Size_H, &Disp_Size_V);
     Setup_Disp_Size(0);
-    sys_w.screen_mode = sw->Screen_Mode > 2 ? 0 : sw->Screen_Mode;
+    sys_w.screen_mode = sw->Screen_Mode > 3 ? 0 : sw->Screen_Mode;
     fill_directions();
 }
 

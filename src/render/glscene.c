@@ -214,7 +214,8 @@ static const char k_quad_vert[] =
     "}\n";
 
 /* shaders/copy.frag when opaque is 0. The window (opaque) is show.frag:
- * filter_mode 0 keeps each texel, 1 filters the scale, 2 draws a CRT. */
+ * filter_mode 0 keeps each texel, 1 filters the scale, 2 is a curved CRT
+ * and 3 is that CRT with square corners. */
 static const char k_quad_frag[] =
     "#version 330 core\n"
     "uniform sampler2D screen;\n"
@@ -250,18 +251,20 @@ static const char k_quad_frag[] =
     "        return;\n"
     "    }\n"
     "    mode = int(filter_mode + 0.5);\n"
-    "    if (mode != 2) {\n"
+    "    if (mode < 2) {\n"
     "        o = vec4(taken(v_uv, mode == 0 ? 1 : 0), 1.0);\n"
     "        return;\n"
     "    }\n"
     "    span = src.zw - src.xy;\n"
     "    p = (v_uv - src.xy) / span;\n"
-    "    c = p * 2.0 - 1.0;\n"
-    "    c *= 1.0 + dot(c, c) * 0.08;\n"
-    "    p = c * 0.5 + 0.5;\n"
-    "    if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) {\n"
-    "        o = vec4(0.0, 0.0, 0.0, 1.0);\n"
-    "        return;\n"
+    "    if (mode == 2) {\n"
+    "        c = p * 2.0 - 1.0;\n"
+    "        c *= 1.0 + dot(c, c) * 0.08;\n"
+    "        p = c * 0.5 + 0.5;\n"
+    "        if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) {\n"
+    "            o = vec4(0.0, 0.0, 0.0, 1.0);\n"
+    "            return;\n"
+    "        }\n"
     "    }\n"
     "    uv = src.xy + span * p;\n"
     "    col = taken(uv, 0);\n"
@@ -727,7 +730,7 @@ static void show(GlScene *s, int w, int h, float aspect, int filter)
     /* the game area, 448 lines from line 16, as scene.c shows it */
     p_glUniform4f(s->q_src, 0.f, 464.f / SF_SCREEN_H, 1.f, 16.f / SF_SCREEN_H);
     p_glUniform1i(s->q_opaque, 1);
-    p_glUniform1f(s->q_filter, (float)(filter < 0 ? 0 : (filter > 2 ? 2 : filter)));
+    p_glUniform1f(s->q_filter, (float)(filter < 0 ? 0 : (filter > 3 ? 3 : filter)));
     p_glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, s->back);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter == 0 ? GL_NEAREST : GL_LINEAR);
