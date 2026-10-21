@@ -72,7 +72,27 @@
          X_Adjust_Buff[2] = 0;
          Y_Adjust_Buff[2] = 0;
          Disp_Size_H = 100;
-@@ -2991,6 +3002,11 @@
+@@ -2936,7 +2947,8 @@
+             break;
+
+         case 4:
+-            sys_w.screen_mode = (sys_w.screen_mode + 1) & 1;
++            /* Port: OFF, SMOOTH, CRT. Left steps back. */
++            sys_w.screen_mode = (u8)((sys_w.screen_mode + 2) % 3);
+             flag = 1;
+             break;
+         }
+@@ -2989,7 +3001,8 @@
+             break;
+
+         case 4:
+-            sys_w.screen_mode = (sys_w.screen_mode + 1) & 1;
++            /* Port: OFF, SMOOTH, CRT. Right steps on. */
++            sys_w.screen_mode = (u8)((sys_w.screen_mode + 1) % 3);
+             flag = 1;
+             break;
+         }
+@@ -2991,6 +3004,11 @@
          }
      }
  

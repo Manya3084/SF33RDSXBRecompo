@@ -41,6 +41,9 @@ const char *sf_display_text(int row);
 int sf_display_step(int row, int dir);
 void sf_display_default(void);
 
+/* SCREEN ADJUST's FILTER, live: 0 OFF, 1 SMOOTH, 2 CRT. */
+int sf_save_screen_filter(void);
+
 /* A whole member of the imported archive, malloc'd. */
 int sf_afs_read(int32_t fid, uint8_t **data, uint32_t *size);
 

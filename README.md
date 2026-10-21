@@ -16,7 +16,7 @@ Working:
 - sound effects and voices: the game's XACT cue banks played on OpenAL (PCM and Xbox ADPCM waves, loops, envelopes, fades, panning, the pitch LFO's vibrato)
 - saves (system settings and button directions) in `data/save/`, and replays in ten slots (`replay01.sav` to `replay10.sav`), picked on the game's REPLAY screens
 - the keyboard and SDL3 gamepads, with retail's join-by-Start, and a keyboard page in BUTTON CONFIG for rebinding the keys
-- windowed, borderless or fullscreen, the resolution and the aspect ratio, set in SCREEN ADJUST, paced to 60 frames a second; the 448-line game area fills the window's height
+- windowed, borderless or fullscreen, the resolution, the aspect ratio and the picture filter, set in SCREEN ADJUST, paced to 60 frames a second; the 448-line game area fills the window's height
 - Vulkan, or OpenGL 3.3 when Vulkan is missing (`SF_RENDERER=opengl` picks it)
 - EXIT GAME in the mode menu (retail's SELECT GAME), which quits cleanly
 
@@ -113,13 +113,19 @@ The keyboard is port 0. Gamepads take ports 1 to 3 in the order SDL3 reports the
 
 ## Display
 
-OPTION → SCREEN ADJUST has three rows after FILTER:
+OPTION → SCREEN ADJUST's FILTER row cycles three pictures. Left steps back and right steps on:
+
+- OFF: each game pixel stays a hard edge.
+- SMOOTH: the picture is filtered as it is scaled into the window.
+- CRT: scanlines on the 448 game lines, a faint shadow mask, a light curve and a little glow.
+
+Three rows follow FILTER:
 
 - WINDOW MODE: WINDOWED, BORDERLESS (the desktop's size) or FULLSCREEN (a mode of the display).
 - RESOLUTION: the window's size, or the fullscreen mode. The list is the display's modes and the 4:3 sizes that fit it. Borderless always uses the desktop.
 - ASPECT RATIO: 4:3 (the original, with bars at the sides), 16:9 (widened), or FULL (the whole window).
 
-DEFAULT SETTING puts them back to a 1280×960 window at 4:3.
+DEFAULT SETTING puts them back to SMOOTH in a 1280×960 window at 4:3. The choice is kept in the system save, with the window's own settings.
 
 ## Layout
 
@@ -130,7 +136,7 @@ data/afs/files/           the members, unpacked under their stored names
 data/audio/ST3_3_OP.aix   the opening theme
 data/audio/sdbk/          the sound effects' cue tables, 00.sdbk to 20.sdbk
 data/fonts/
-data/save/                system.sav, directions.sav
+data/save/                system.sav (includes FILTER), directions.sav
 data/last_session.input   the last session's inputs, for replaying a bug
 data/crash.log            the backtrace of the last crash
 config/keyboard.txt       the keyboard's bindings

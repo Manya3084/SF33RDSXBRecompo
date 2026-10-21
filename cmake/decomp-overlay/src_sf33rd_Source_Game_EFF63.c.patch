@@ -9,7 +9,10 @@
  
  const s8* Letter_Data_63[3][21] = { { "-10", "-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1", "0",
                                        "1",   "2",  "3",  "4",  "5",  "6",  "7",  "8",  "9",  "10" },
-@@ -213,6 +215,13 @@
+@@ -63,1 +65,1 @@
+-                                    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++                                    { "OFF", "SMOOTH", "CRT", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+@@ -213,6 +215,14 @@
          disp_index >>= 1;
          break;
  
@@ -21,7 +24,9 @@
 +        return;
 +
      default:
-         disp_index = sys_w.screen_mode;
+-        disp_index = sys_w.screen_mode;
++        /* Port: 0 OFF, 1 SMOOTH, 2 CRT. */
++        disp_index = sys_w.screen_mode > 2 ? 0 : sys_w.screen_mode;
          break;
 @@ -222,7 +231,10 @@
  }

@@ -1015,7 +1015,7 @@ static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *li
     rp.clearValueCount = 1;
     rp.pClearValues = &clear;
     vkCmdBeginRenderPass(r->cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
-    sf_scene_record_show(r->scene, r->cmd, r->extent, r->aspect, list);
+    sf_scene_record_show(r->scene, r->cmd, r->extent, r->aspect, list, r->filter);
     vkCmdEndRenderPass(r->cmd);
     return vkEndCommandBuffer(r->cmd) == VK_SUCCESS ? 0 : -1;
 }

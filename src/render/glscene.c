@@ -213,17 +213,71 @@ static const char k_quad_vert[] =
     "    v_uv = mix(src.xy, src.zw, p);\n"
     "}\n";
 
-/* shaders/copy.frag, and show.frag (opaque) when opaque is set */
+/* shaders/copy.frag when opaque is 0. The window (opaque) is show.frag:
+ * filter_mode 0 keeps each texel, 1 filters the scale, 2 draws a CRT. */
 static const char k_quad_frag[] =
     "#version 330 core\n"
     "uniform sampler2D screen;\n"
+    "uniform vec4 src;\n"
     "uniform int opaque;\n"
+    "uniform float filter_mode;\n"
     "in vec2 v_uv;\n"
     "out vec4 o;\n"
+    "vec3 taken(vec2 uv, int sharp)\n"
+    "{\n"
+    "    if (sharp != 0) {\n"
+    "        vec2 size = vec2(textureSize(screen, 0));\n"
+    "        uv = (floor(uv * size) + 0.5) / size;\n"
+    "    }\n"
+    "    return texture(screen, uv).rgb;\n"
+    "}\n"
     "void main()\n"
     "{\n"
-    "    vec4 c = texture(screen, v_uv);\n"
-    "    o = opaque != 0 ? vec4(c.rgb, 1.0) : c;\n"
+    "    int mode;\n"
+    "    vec2 span;\n"
+    "    vec2 p;\n"
+    "    vec2 c;\n"
+    "    vec2 uv;\n"
+    "    vec2 px;\n"
+    "    vec3 col;\n"
+    "    vec3 glow;\n"
+    "    vec3 mask;\n"
+    "    float scan;\n"
+    "    float mask_x;\n"
+    "    float vig;\n"
+    "    if (opaque == 0) {\n"
+    "        o = texture(screen, v_uv);\n"
+    "        return;\n"
+    "    }\n"
+    "    mode = int(filter_mode + 0.5);\n"
+    "    if (mode != 2) {\n"
+    "        o = vec4(taken(v_uv, mode == 0 ? 1 : 0), 1.0);\n"
+    "        return;\n"
+    "    }\n"
+    "    span = src.zw - src.xy;\n"
+    "    p = (v_uv - src.xy) / span;\n"
+    "    c = p * 2.0 - 1.0;\n"
+    "    c *= 1.0 + dot(c, c) * 0.08;\n"
+    "    p = c * 0.5 + 0.5;\n"
+    "    if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) {\n"
+    "        o = vec4(0.0, 0.0, 0.0, 1.0);\n"
+    "        return;\n"
+    "    }\n"
+    "    uv = src.xy + span * p;\n"
+    "    col = taken(uv, 0);\n"
+    "    scan = sin(fract(p.y * 448.0) * 3.14159265);\n"
+    "    col *= mix(0.68, 1.0, scan * scan);\n"
+    "    mask_x = mod(gl_FragCoord.x, 3.0);\n"
+    "    mask = mask_x < 1.0 ? vec3(1.0, 0.80, 0.80)\n"
+    "         : mask_x < 2.0 ? vec3(0.80, 1.0, 0.80)\n"
+    "                        : vec3(0.80, 0.80, 1.0);\n"
+    "    col *= mask;\n"
+    "    vig = smoothstep(1.15, 0.35, length((p - 0.5) * vec2(1.12, 1.0)));\n"
+    "    col *= mix(0.78, 1.0, vig);\n"
+    "    px = span / vec2(640.0, 448.0);\n"
+    "    glow = taken(uv + vec2(px.x, 0.0), 0) + taken(uv - vec2(px.x, 0.0), 0) +\n"
+    "           taken(uv + vec2(0.0, px.y), 0) + taken(uv - vec2(0.0, px.y), 0);\n"
+    "    o = vec4(col + glow * 0.03, 1.0);\n"
     "}\n";
 
 /* ---- the scene ---- */
@@ -238,6 +292,7 @@ typedef struct GlScene {
     GLuint quad;
     GLint q_src;
     GLint q_opaque;
+    GLint q_filter;
     GLuint vao;
     GLuint vbuf;
     GLuint ibuf;
@@ -431,6 +486,7 @@ static GlScene *scene_create(char *err, size_t err_n)
     p_glUniform1i(p_glGetUniformLocation(s->quad, "screen"), 0);
     s->q_src = p_glGetUniformLocation(s->quad, "src");
     s->q_opaque = p_glGetUniformLocation(s->quad, "opaque");
+    s->q_filter = p_glGetUniformLocation(s->quad, "filter_mode");
     p_glGenVertexArrays(1, &s->vao);
     p_glBindVertexArray(s->vao);
     p_glGenBuffers(1, &s->vbuf);
@@ -651,7 +707,7 @@ static void draw_frame(GlScene *s, const SfDrawList *l)
 
 /* The output into the window at the asked shape, turned over: GL's rows
  * count from the bottom. */
-static void show(GlScene *s, int w, int h, float aspect)
+static void show(GlScene *s, int w, int h, float aspect, int filter)
 {
     float fw = (float)w;
     float fh = (float)h;
@@ -671,10 +727,11 @@ static void show(GlScene *s, int w, int h, float aspect)
     /* the game area, 448 lines from line 16, as scene.c shows it */
     p_glUniform4f(s->q_src, 0.f, 464.f / SF_SCREEN_H, 1.f, 16.f / SF_SCREEN_H);
     p_glUniform1i(s->q_opaque, 1);
+    p_glUniform1f(s->q_filter, (float)(filter < 0 ? 0 : (filter > 2 ? 2 : filter)));
     p_glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, s->back);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter == 0 ? GL_NEAREST : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter == 0 ? GL_NEAREST : GL_LINEAR);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -741,7 +798,7 @@ int sf_gl_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
         r->shot_pending = 2;
     }
     if (w > 0 && h > 0) {
-        show(s, w, h, r->aspect);
+        show(s, w, h, r->aspect, r->filter);
         SDL_GL_SwapWindow(r->window);
     }
     return 0;

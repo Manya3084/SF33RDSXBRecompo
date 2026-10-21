@@ -736,7 +736,7 @@ static int make_copies(SfScene *s, VkRenderPass show_pass)
 {
     VkDescriptorSetLayoutBinding b;
     VkDescriptorSetLayoutCreateInfo set_info;
-    VkPushConstantRange push;
+    VkPushConstantRange push[2];
     VkPipelineLayoutCreateInfo layout_info;
     VkDescriptorSetAllocateInfo alloc;
     VkDescriptorSetLayout layouts[2];
@@ -758,15 +758,19 @@ static int make_copies(SfScene *s, VkRenderPass show_pass)
     if (vkCreateDescriptorSetLayout(s->device, &set_info, NULL, &s->show_set_layout) != VK_SUCCESS) {
         return -1;
     }
-    memset(&push, 0, sizeof push);
-    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    push.size = 16;
+    memset(push, 0, sizeof push);
+    /* src at 0 for both stages; the window filter's mode follows it */
+    push[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    push[0].size = 16;
+    push[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push[1].offset = 16;
+    push[1].size = 16;
     memset(&layout_info, 0, sizeof layout_info);
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.setLayoutCount = 1;
     layout_info.pSetLayouts = &s->show_set_layout;
-    layout_info.pushConstantRangeCount = 1;
-    layout_info.pPushConstantRanges = &push;
+    layout_info.pushConstantRangeCount = 2;
+    layout_info.pPushConstantRanges = push;
     if (vkCreatePipelineLayout(s->device, &layout_info, NULL, &s->show_layout) != VK_SUCCESS) {
         return -1;
     }
@@ -1373,10 +1377,12 @@ void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l)
     s->back_valid = 1;
 }
 
-void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, float aspect, const SfDrawList *l)
+void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, float aspect, const SfDrawList *l,
+                          int filter)
 {
     VkViewport viewport;
     VkRect2D scissor;
+    float block[8];
     float frame_w;
     float frame_h;
     /* the output's game area, 640x448 at line 16 (record_copy puts it
@@ -1411,7 +1417,11 @@ void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, fl
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s->show_layout, 0, 1, &s->show_set, 0, NULL);
-    vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof src, src);
+    memset(block, 0, sizeof block);
+    memcpy(block, src, sizeof src);
+    block[4] = (float)(filter < 0 ? 0 : (filter > 2 ? 2 : filter));
+    vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, block);
+    vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 16, 16, block + 4);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 

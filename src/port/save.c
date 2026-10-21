@@ -72,7 +72,6 @@ u8 D_007AA5EF SF_GAME;
 static int s_kind;
 static int s_mode;
 static int s_pending;
-static u8 s_screen_filter;
 static s32 s_boot_loaded;
 
 /* Whether the load at boot has run: the title takes Start only after it
@@ -82,10 +81,13 @@ s32 xb_Get7A1808(void)
     return s_boot_loaded;
 }
 
-/* Retail's screen-filter option (save_w's Screen_Mode): smooth when set. */
+/* SCREEN ADJUST's FILTER, as the menu left it (sys_w.screen_mode):
+ * 0 OFF, 1 SMOOTH, 2 CRT. A save from before CRT still reads 0 or 1. */
+extern struct _SYSTEM_W sys_w;
+
 int sf_save_screen_filter(void)
 {
-    return s_screen_filter;
+    return sys_w.screen_mode > 2 ? 0 : sys_w.screen_mode;
 }
 
 /* data/save/NAME; kind 0 and 1 have their names, a replay is replayNN.sav */
@@ -207,7 +209,7 @@ static void apply_system(const struct _SAVE_W *in)
     sf_video_set_offset(Correct_X[0] + X_Adjust, Correct_Y[0] + Y_Adjust);
     dspwhUnpack(sw->Screen_Size, &Disp_Size_H, &Disp_Size_V);
     Setup_Disp_Size(0);
-    s_screen_filter = sw->Screen_Mode;
+    sys_w.screen_mode = sw->Screen_Mode > 2 ? 0 : sw->Screen_Mode;
     fill_directions();
 }
 

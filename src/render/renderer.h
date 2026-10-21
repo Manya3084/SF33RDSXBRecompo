@@ -32,6 +32,10 @@ int sf_render_present_list(SfRenderer *renderer, const SfDrawList *list, char *e
  * window. Starts at 4/3. */
 void sf_render_set_aspect(SfRenderer *renderer, float aspect);
 
+/* How the game area is drawn into the window: 0 sharp, 1 smooth, 2 CRT.
+ * SCREEN ADJUST's FILTER row (src/port/save.c). */
+void sf_render_set_filter(SfRenderer *renderer, int filter);
+
 /* The game's output, RGBA at the render scale. The first call asks for
  * it with the next frame and returns 1; the call after that frame points
  * rgba at it and returns 0. -1 when there is none. */

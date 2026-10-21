@@ -200,6 +200,7 @@ void sf_video_present(void)
     static int frame;
     char err[512];
     sf_gfx_frame_ready();
+    sf_render_set_filter(s_renderer, sf_save_screen_filter());
     if (sf_render_present_list(s_renderer, sf_gfx_list(), err, sizeof err) != 0) {
         fprintf(stderr, "video: %s\n", err);
         exit(1);
