@@ -34,8 +34,9 @@ void sf_video_present_canvas(const struct SfCanvas *canvas);
 int sf_setup_run(const char *install);
 int sf_setup_cli(int argc, char **argv);
 
-/* The window's mode, size and aspect, kept in config/display.txt; SCREEN
- * ADJUST's rows 5 to 7 (src/port/display.c). */
+/* The window's mode, size and aspect, kept in config/display.ini; SCREEN
+ * ADJUST's rows 5 to 7 (src/port/display.c). An older display.txt is read
+ * once and kept as display.txt.bak. */
 void sf_display_init(void);
 const char *sf_display_text(int row);
 int sf_display_step(int row, int dir);
@@ -65,7 +66,8 @@ void sf_video_shutdown(void);
 void sf_sound_shutdown(void);
 
 /* The keyboard's bindings (src/port/input.c): 14 rows, each an SDL
- * scancode for an Xbox button, kept in config/keyboard.txt. */
+ * scancode for an Xbox button, kept in config/keyboard.ini. An older
+ * keyboard.txt is read once and kept as keyboard.txt.bak. */
 int sf_keys_count(void);
 const char *sf_keys_label(int i);
 int sf_keys_get(int i);
@@ -82,8 +84,9 @@ void sf_input_tape_mark(void);
 void sf_input_tape_rewind(void);
 void sf_input_tape_off(void);
 
-/* Replays (src/port/save.c): ten slots in data/save. sf_replay_slot says
- * what a slot holds (1 a replay, 0 none, -1 damaged). */
+/* Replays (src/port/save.c): ten slots in data/save, replay01.ini to
+ * replay10.ini. sf_replay_slot says what a slot holds (1 a replay, 0 none,
+ * -1 damaged). */
 #define SF_REPLAY_SLOTS 10
 int sf_replay_slot(int slot, int chars[2], long long *when);
 int sf_replay_save(int slot);

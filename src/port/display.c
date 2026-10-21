@@ -2,18 +2,20 @@
  * fullscreen (a mode of the display), its size, and the shape the game's
  * 4:3 screen is shown in. SCREEN ADJUST's WINDOW MODE, RESOLUTION and
  * ASPECT RATIO rows step them (sf_display_step) and show them
- * (sf_display_text); config/display.txt keeps them. */
+ * (sf_display_text); config/display.ini keeps them. An older display.txt
+ * is read once and kept as display.txt.bak. */
 
 #include "host/paths.h"
 #include "host/compat.h"
 #include "port/port.h"
+#include "port/store.h"
 
 #include <SDL3/SDL.h>
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 enum { MODE_WINDOWED, MODE_BORDERLESS, MODE_FULLSCREEN, MODES };
 enum { ASPECT_4_3, ASPECT_16_9, ASPECT_FULL, ASPECTS };
@@ -110,70 +112,129 @@ static int res_index(void)
     return -1;
 }
 
-static int path_of(char *path, size_t n)
+static int config_path(char *path, size_t n, const char *name)
 {
     char base[4096];
     if (sf_exe_dir(base, sizeof base) != 0) {
         return -1;
     }
-    return snprintf(path, n, "%s/config/display.txt", base) < (int)n ? 0 : -1;
+    return snprintf(path, n, "%s/config/%s", base, name) < (int)n ? 0 : -1;
+}
+
+/* A number in range replaces *out. Anything else leaves it, as the older
+ * text file did when a line was not a size. */
+static void take_dim(const char *text, int min, int *out)
+{
+    char *end;
+    long n;
+    errno = 0;
+    n = strtol(text, &end, 10);
+    if (end != text && *end == 0 && errno != ERANGE && n >= min && n <= 100000) {
+        *out = (int)n;
+    }
+}
+
+/* versioned: the [window] section of display.ini, which must say version=1.
+ * Otherwise the bare keys of an older display.txt. */
+static int take(const SfIni *ini, const char *sec, int versioned)
+{
+    const char *v;
+    int i;
+    if (versioned && (sf_ini_find(ini, sec, "version", &v) != 0 || strcmp(v, "1") != 0)) {
+        return -1;
+    }
+    if (sf_ini_find(ini, sec, "mode", &v) == 0) {
+        for (i = 0; i < MODES; i++) {
+            if (strcmp(v, k_mode_name[i]) == 0) {
+                s_mode = i;
+            }
+        }
+    }
+    if (sf_ini_find(ini, sec, "aspect", &v) == 0) {
+        for (i = 0; i < ASPECTS; i++) {
+            if (strcmp(v, k_aspect_name[i]) == 0) {
+                s_aspect = i;
+            }
+        }
+    }
+    if (sf_ini_find(ini, sec, "width", &v) == 0) {
+        take_dim(v, 320, &s_w);
+    }
+    if (sf_ini_find(ini, sec, "height", &v) == 0) {
+        take_dim(v, 240, &s_h);
+    }
+    return 0;
+}
+
+static int save(void)
+{
+    char path[4200];
+    SfIni *ini;
+    int rc;
+    if (config_path(path, sizeof path, "display.ini") != 0) {
+        return -1;
+    }
+    ini = sf_ini_new();
+    if (!ini) {
+        fprintf(stderr, "display: cannot write %s\n", path);
+        return -1;
+    }
+    sf_ini_set_note(ini, "Window settings. version 1.");
+    if (sf_ini_set(ini, "window", "version", "1") != 0 || sf_ini_set(ini, "window", "mode", k_mode_name[s_mode]) != 0 ||
+        sf_ini_set_int(ini, "window", "width", s_w) != 0 || sf_ini_set_int(ini, "window", "height", s_h) != 0 ||
+        sf_ini_set(ini, "window", "aspect", k_aspect_name[s_aspect]) != 0) {
+        sf_ini_free(ini);
+        fprintf(stderr, "display: cannot write %s\n", path);
+        return -1;
+    }
+    rc = sf_ini_save(ini, path);
+    sf_ini_free(ini);
+    return rc;
 }
 
 static void load(void)
 {
-    char path[4200];
-    char line[128];
-    FILE *f;
-    if (path_of(path, sizeof path) != 0 || !(f = fopen(path, "r"))) {
+    char ini_path[4200];
+    char txt_path[4200];
+    SfIni *doc;
+    int r;
+    if (config_path(ini_path, sizeof ini_path, "display.ini") != 0) {
         return;
     }
-    while (fgets(line, sizeof line, f)) {
-        char *eq = strchr(line, '=');
-        int i;
-        if (!eq) {
-            continue;
+    doc = sf_ini_new();
+    if (!doc) {
+        return;
+    }
+    r = sf_ini_load(doc, ini_path);
+    if (r == 0) {
+        if (take(doc, "window", 1) != 0) {
+            fprintf(stderr, "display: %s is damaged; not loaded\n", ini_path);
         }
-        *eq++ = 0;
-        eq[strcspn(eq, "\r\n")] = 0;
-        if (!strcmp(line, "mode")) {
-            for (i = 0; i < MODES; i++) {
-                if (!strcmp(eq, k_mode_name[i])) {
-                    s_mode = i;
-                }
-            }
-        } else if (!strcmp(line, "aspect")) {
-            for (i = 0; i < ASPECTS; i++) {
-                if (!strcmp(eq, k_aspect_name[i])) {
-                    s_aspect = i;
-                }
-            }
-        } else if (!strcmp(line, "width") && atoi(eq) >= 320) {
-            s_w = atoi(eq);
-        } else if (!strcmp(line, "height") && atoi(eq) >= 240) {
-            s_h = atoi(eq);
-        }
-    }
-    fclose(f);
-}
-
-static void save(void)
-{
-    char path[4200];
-    char dir[4200];
-    FILE *f;
-    if (path_of(path, sizeof path) != 0) {
+        sf_ini_free(doc);
         return;
     }
-    snprintf(dir, sizeof dir, "%s", path);
-    *strrchr(dir, '/') = 0;
-    mkdir(dir, 0755); /* EEXIST is fine */
-    f = fopen(path, "w");
-    if (!f) {
-        fprintf(stderr, "display: cannot write %s\n", path);
+    sf_ini_free(doc);
+    if (r < 0) {
+        fprintf(stderr, "display: %s is damaged; not loaded\n", ini_path);
         return;
     }
-    fprintf(f, "mode=%s\nwidth=%d\nheight=%d\naspect=%s\n", k_mode_name[s_mode], s_w, s_h, k_aspect_name[s_aspect]);
-    fclose(f);
+    if (config_path(txt_path, sizeof txt_path, "display.txt") != 0) {
+        return;
+    }
+    doc = sf_ini_new();
+    if (!doc) {
+        return;
+    }
+    r = sf_ini_load(doc, txt_path);
+    if (r != 0) {
+        sf_ini_free(doc);
+        return;
+    }
+    take(doc, "", 0);
+    sf_ini_free(doc);
+    if (save() == 0) {
+        sf_file_retire(txt_path);
+    }
 }
 
 /* The settings onto the window. */

@@ -2,7 +2,7 @@
 #define SF_HOST_COMPAT_H
 
 /* The few POSIX calls the runtime uses that Windows (MinGW-w64) spells
- * differently or lacks. On Linux this is empty. */
+ * differently. On Linux this is the fsync wrapper. */
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -42,6 +42,19 @@ static inline struct tm *sf_localtime_r(const time_t *t, struct tm *out)
     return localtime_s(out, t) == 0 ? out : NULL;
 }
 #define localtime_r(t, tm) sf_localtime_r((t), (tm))
+
+/* Flush a file to disk. Windows names the call differently. */
+static inline int sf_file_sync(int fd)
+{
+    return _commit(fd);
+}
+#else
+#include <unistd.h>
+
+static inline int sf_file_sync(int fd)
+{
+    return fsync(fd);
+}
 #endif
 
 #endif

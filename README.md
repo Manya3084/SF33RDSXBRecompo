@@ -14,7 +14,7 @@ Working:
 - Arcade, character select, and fights, including the attract-loop fights
 - music: the ADX and AIX tracks, decoded natively and streamed through OpenAL
 - sound effects and voices: the game's XACT cue banks played on OpenAL (PCM and Xbox ADPCM waves, loops, envelopes, fades, panning, the pitch LFO's vibrato)
-- saves (system settings and button directions) in `data/save/`, and replays in ten slots (`replay01.sav` to `replay10.sav`), picked on the game's REPLAY screens
+- saves (system settings and button directions) in `data/save/`, and replays in ten slots (`replay01.ini` to `replay10.ini`), picked on the game's REPLAY screens
 - the keyboard and SDL3 gamepads, with retail's join-by-Start, and a keyboard page in BUTTON CONFIG for rebinding the keys
 - windowed, borderless or fullscreen, the resolution, the aspect ratio and the picture filter, set in SCREEN ADJUST, paced to 60 frames a second; the 448-line game area fills the window's height
 - Vulkan, or OpenGL 3.3 when Vulkan is missing (`SF_RENDERER=opengl` picks it)
@@ -137,12 +137,14 @@ data/afs/files/           the members, unpacked under their stored names
 data/audio/ST3_3_OP.aix   the opening theme
 data/audio/sdbk/          the sound effects' cue tables, 00.sdbk to 20.sdbk
 data/fonts/
-data/save/                system.sav (includes FILTER), directions.sav
+data/save/                system.ini (includes FILTER), directions.ini, replay01.ini to replay10.ini
 data/last_session.input   the last session's inputs, for replaying a bug
 data/crash.log            the backtrace of the last crash
-config/keyboard.txt       the keyboard's bindings
-config/display.txt        the window mode, resolution and aspect ratio
+config/keyboard.ini       the keyboard's bindings
+config/display.ini        the window mode, resolution and aspect ratio
 ```
+
+An older `system.sav`, `directions.sav`, `replayNN.sav`, `display.txt` or `keyboard.txt` is read once and kept beside the new file as `.bak`.
 
 ## Build
 

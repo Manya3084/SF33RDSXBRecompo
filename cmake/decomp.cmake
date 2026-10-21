@@ -131,6 +131,7 @@ add_library(sf_port STATIC
     src/port/zlib.c
     src/port/files.c
     src/port/input.c
+    src/port/store.c
     src/port/save.c
     src/port/banks.c
     src/port/math.c
@@ -243,6 +244,11 @@ add_executable(test_scene tests/test_scene.c)
 target_link_libraries(test_scene PRIVATE sf_gfx sf_render)
 target_link_options(test_scene PRIVATE -no-pie)
 add_test(NAME scene COMMAND test_scene)
+
+add_executable(test_store tests/test_store.c src/port/store.c)
+target_include_directories(test_store PRIVATE src "${SF_DECOMP_GEN}/include")
+target_link_options(test_store PRIVATE -no-pie)
+add_test(NAME store COMMAND test_store)
 set(_lvp "")
 foreach(f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json /usr/share/vulkan/icd.d/lvp_icd.json)
     if(EXISTS "${f}" AND _lvp STREQUAL "")
