@@ -6,10 +6,8 @@
 # as it is, apart from the few listed in cmake/decomp-overlay.txt, which
 # compile from a patched copy.
 #
-# The game code keeps some addresses in u32 words (PS2 habit). The program
-# is linked non-PIE, so every function and global sits below 2 GB and such
-# a word holds it exactly; src/port/ keeps the game heap low for the same
-# reason.
+# Every address the game keeps is pointer-sized, so the program is an
+# ordinary PIE with ASLR, and its memory can be anywhere.
 
 set(SF_DECOMP_DIR "${CMAKE_SOURCE_DIR}/../3s-decomp-ogxb" CACHE PATH "3s-decomp-ogxb checkout")
 get_filename_component(SF_DECOMP_DIR "${SF_DECOMP_DIR}" ABSOLUTE)
@@ -55,9 +53,8 @@ list(REMOVE_ITEM _src "src/sf33rd/Source/Compress/zlibApp.c")
 list(REMOVE_ITEM _src "src/sf33rd/Source/Common/MemMan.c")
 
 # A file listed in cmake/decomp-overlay.txt compiles from a copy in the
-# build tree: "patch PATH" applies cmake/decomp-overlay/<PATH with _>.patch,
-# "lowaddr PATH" runs tools/lowaddr_init.py over it. The copy keeps the
-# original's directory on its include path.
+# build tree: "patch PATH" applies cmake/decomp-overlay/<PATH with _>.patch.
+# The copy keeps the original's directory on its include path.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(_overlay_dir "${CMAKE_SOURCE_DIR}/cmake/decomp-overlay")
 file(STRINGS "${CMAKE_SOURCE_DIR}/cmake/decomp-overlay.txt" _overlay REGEX "^[a-z]+ ")
@@ -85,12 +82,6 @@ foreach(s IN LISTS _src)
             COMMAND patch --quiet --forward "${_out}" "${_overlay_dir}/${_p}.patch"
             DEPENDS "${_in}" "${_overlay_dir}/${_p}.patch"
             COMMENT "Overlay ${s}")
-    elseif(_how STREQUAL "lowaddr")
-        add_custom_command(OUTPUT "${_out}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${_odir}"
-            COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/lowaddr_init.py" "${_in}" "${_out}"
-            DEPENDS "${_in}" "${CMAKE_SOURCE_DIR}/tools/lowaddr_init.py"
-            COMMENT "Low-address words ${s}")
     else()
         message(FATAL_ERROR "cmake/decomp-overlay.txt: unknown kind ${_how} for ${s}")
     endif()
@@ -99,30 +90,29 @@ foreach(s IN LISTS _src)
 endforeach()
 
 add_library(sf_decomp STATIC ${SF_DECOMP_SOURCES})
-set_target_properties(sf_decomp PROPERTIES C_STANDARD 17 C_EXTENSIONS ON POSITION_INDEPENDENT_CODE OFF)
+set_target_properties(sf_decomp PROPERTIES C_STANDARD 17 C_EXTENSIONS ON POSITION_INDEPENDENT_CODE ON)
 target_include_directories(sf_decomp PUBLIC "${SF_DECOMP_GEN}/include")
 # The decomp is C written to match retail code, not to pass -Wall; the
 # runtime's warnings stay on its own files.
 target_compile_options(sf_decomp PRIVATE -g
-    -w -Wno-error -fcommon -fno-strict-aliasing -fwrapv -fno-pie
+    -w -Wno-error -fcommon -fno-strict-aliasing -fwrapv
     -Wno-incompatible-pointer-types -Wno-int-conversion -Wno-implicit-function-declaration
     -Wno-implicit-int -Wno-return-mismatch)
 
 # The game: the decomp's game logic on the native platform layer in
 # src/port. stubs.c is generated: one logging stub for each name the game
 # logic calls that src/port does not define yet, so the list of stubs is
-# the native work left. Linked non-PIE so addresses fit u32 words.
+# the native work left.
 # The native platform the game logic runs on. sf_gfx is the graphics
 # calls (tested on their own, tests/test_scene.c); sf_port the game's
 # frame and window.
 add_library(sf_gfx STATIC
     src/port/missing.c
-    src/port/lowmem.c
+    src/port/arena.c
     src/port/gfx.c
 )
 target_include_directories(sf_gfx PUBLIC src "${SF_DECOMP_GEN}/include")
-set_target_properties(sf_gfx PROPERTIES POSITION_INDEPENDENT_CODE OFF)
-target_compile_options(sf_gfx PRIVATE -fno-pie)
+set_target_properties(sf_gfx PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # SQLite is compiled in (public domain amalgamation) so the packages do
 # not gain a DLL. Its globals are renamed with the port's, and a rollback
@@ -140,7 +130,7 @@ target_include_directories(sf_sqlite PUBLIC "${SF_SQLITE_SRC}")
 target_compile_definitions(sf_sqlite PRIVATE SQLITE_OMIT_LOAD_EXTENSION SQLITE_DQS=0)
 target_compile_options(sf_sqlite PRIVATE -w -fno-strict-aliasing)
 target_link_libraries(sf_sqlite PUBLIC Threads::Threads m)
-set_target_properties(sf_sqlite PROPERTIES C_EXTENSIONS ON POSITION_INDEPENDENT_CODE OFF)
+set_target_properties(sf_sqlite PROPERTIES C_EXTENSIONS ON POSITION_INDEPENDENT_CODE ON)
 
 add_library(sf_port STATIC
     src/port/frame.c
@@ -170,8 +160,7 @@ add_library(sf_port STATIC
 )
 target_link_libraries(sf_port PUBLIC ZLIB::ZLIB OpenAL::OpenAL sf_sqlite)
 target_link_libraries(sf_port PUBLIC sf_gfx sf_render sf_import)
-set_target_properties(sf_port PROPERTIES POSITION_INDEPENDENT_CODE OFF)
-target_compile_options(sf_port PRIVATE -fno-pie)
+set_target_properties(sf_port PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The port's own variables (the window, textures, sound, input devices)
 # are not the game's state: their sections are renamed so the linker marks
@@ -241,18 +230,14 @@ add_executable(sf33rdsxb_game src/port/main.c src/host/paths.c "${SF_DECOMP_GEN}
 target_include_directories(sf33rdsxb_game PRIVATE src)
 # one program: the game, which imports the disc the first time it starts
 set_target_properties(sf33rdsxb_game PROPERTIES OUTPUT_NAME sf33rdsxb)
-target_compile_options(sf33rdsxb_game PRIVATE -fno-pie)
+set_target_properties(sf33rdsxb_game PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_source_files_properties("${SF_DECOMP_GEN}/stubs.c" PROPERTIES COMPILE_OPTIONS "-Wno-error;-w;-fno-builtin")
 if(WIN32)
-    # The game keeps addresses in 32-bit words: the image at 4 MB, not
-    # moved (no ASLR, no high-entropy addresses), so its code and globals
-    # sit low as on Linux; the heap is the low arena (src/port/lowmem.c).
     # A Windows program with no console.
-    target_link_options(sf33rdsxb_game PRIVATE -mwindows -static-libgcc -Wl,--image-base=0x400000
-        -Wl,--disable-dynamicbase -Wl,--disable-high-entropy-va -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
+    target_link_options(sf33rdsxb_game PRIVATE -mwindows -static-libgcc -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
     target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB)
 else()
-    target_link_options(sf33rdsxb_game PRIVATE -no-pie -rdynamic -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
+    target_link_options(sf33rdsxb_game PRIVATE -pie -rdynamic -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
     # the port libraries twice: the decomp calls into them, and they into it
     target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB m)
 endif()
@@ -260,13 +245,11 @@ endif()
 if(NOT WIN32)
 add_executable(test_scene tests/test_scene.c)
 target_link_libraries(test_scene PRIVATE sf_gfx sf_render)
-target_link_options(test_scene PRIVATE -no-pie)
 add_test(NAME scene COMMAND test_scene)
 
 add_executable(test_store tests/test_store.c src/port/store.c)
 target_include_directories(test_store PRIVATE src "${SF_DECOMP_GEN}/include")
 target_link_libraries(test_store PRIVATE sf_sqlite)
-target_link_options(test_store PRIVATE -no-pie)
 add_test(NAME store COMMAND test_store)
 set(_lvp "")
 foreach(f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json /usr/share/vulkan/icd.d/lvp_icd.json)

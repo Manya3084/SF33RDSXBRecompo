@@ -711,12 +711,12 @@ void AIXP_SetOutVolDolbyDigital(void *aixp, s32 ch, s32 vol)
 }
 
 /* Retail's physical memory, for the AIX player's work area: from the
- * low arena, since the game keeps the address in a u32. */
+ * arena, so a rollback snapshot keeps it. */
 void *XPhysicalAlloc(u32 size, u32 addr, u32 align, u32 protect)
 {
     (void)addr;
     (void)protect;
-    return sf_low_alloc(size, align ? align : 16);
+    return sf_arena_alloc(size, align ? align : 16);
 }
 
 /* ---- rollback: the streams' place in the game's time ---- */

@@ -5,7 +5,7 @@
  * globals, and the generated stubs' blocks) less the port's own sections
  * (sfport_data and sfport_bss: the window, renderer, textures, sound and
  * input devices, renamed at build in cmake/decomp.cmake), and the used
- * part of the low arena (the game's heaps). Saving copies them, restoring
+ * part of the arena (the game's heaps). Saving copies them, restoring
  * copies them back.
  *
  * SF_ROLLBACK_TEST=FRAME:K tests that the game runs frames again exactly:
@@ -38,7 +38,7 @@ extern char __start_sfkeep[];
 extern char __stop_sfkeep[];
 #endif
 
-void sf_low_extent(uint8_t **base, size_t *used);
+void sf_arena_extent(uint8_t **base, size_t *used);
 
 #define REGIONS 32
 #define PAGE 4096
@@ -131,7 +131,7 @@ static void regions(void)
             }
         }
     }
-    sf_low_extent(&arena, &used);
+    sf_arena_extent(&arena, &used);
     add_region(arena, arena + used);
 }
 

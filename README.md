@@ -171,6 +171,6 @@ cmake --build build-win
 
 The Linux release package is built by [.github/workflows/linux.yml](.github/workflows/linux.yml) on Ubuntu 24.04.
 
-`SF_DECOMP_DIR` is a checkout of 3s-decomp-ogxb (default `../3s-decomp-ogxb`). Until it is merged, that checkout must be on its `xbox-port-data` branch. The port is 64-bit-only and links non-PIE (see [docs/porting.md](docs/porting.md#x86-64)).
+`SF_DECOMP_DIR` is a checkout of 3s-decomp-ogxb (default `../3s-decomp-ogxb`). Until it is merged, that checkout must be on its `xbox-port-data` branch. The port is 64-bit only, an ordinary position-independent program with ASLR (see [docs/porting.md](docs/porting.md#x86-64)).
 
 `SF_SCALE=N` fixes the render scale, and `SF_COUNTRY=1..4` picks the region. The debugging switches (headless runs, input replay, frame captures) are listed in [docs/porting.md](docs/porting.md#debugging).

@@ -1,12 +1,6 @@
 # Decomp files that compile from a changed copy for x86-64 (see cmake/decomp.cmake).
 # Each change keeps the MSVC relink as it is and belongs upstream in time.
 #   patch PATH    apply cmake/decomp-overlay/<PATH with / as _>.patch
-#   lowaddr PATH  tools/lowaddr_init.py: address words in static tables
-
-# edrw/gedrw/cedrw_data_tbl hold the rewrite tables' addresses.
-lowaddr src/sf33rd/Source/Game/end_data.c
-# bgrw_data_tbl holds the background rewrite tables' addresses.
-lowaddr src/sf33rd/Source/Game/bg_data.c
 
 # The port's own changes, which stay here (not for the decomp): SCREEN
 # ADJUST's WINDOW MODE, RESOLUTION and ASPECT RATIO rows. menu.c runs ten

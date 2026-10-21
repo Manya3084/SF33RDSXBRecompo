@@ -80,8 +80,7 @@ void Check_Replay_Status(s16 PL_id, u8 Status);
 
 /* ---- the work pool (retail's xb_PoolInit and xb_PoolAllocAligned) ----
  *
- * 14 MB, aligned to 0x40, taken from the front (or the back for "top").
- * Below 2 GB, because the game keeps some of these addresses in u32s. */
+ * 14 MB, aligned to 0x40, taken from the front (or the back for "top"). */
 
 #define SF_POOL_SIZE 0xE00000u
 #define SF_POOL_ALIGN 0x40u
@@ -93,7 +92,7 @@ static uintptr_t s_pool_back SF_GAME;
 
 static void pool_init(void)
 {
-    s_pool_base = sf_low_alloc(SF_POOL_SIZE, SF_POOL_ALIGN);
+    s_pool_base = sf_arena_alloc(SF_POOL_SIZE, SF_POOL_ALIGN);
     memset(s_pool_base, 0, SF_POOL_SIZE);
     s_pool_front = (uintptr_t)s_pool_base;
     s_pool_back = (uintptr_t)s_pool_base + SF_POOL_SIZE;
