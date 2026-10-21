@@ -126,7 +126,7 @@ Three rows follow FILTER:
 - RESOLUTION: the window's size, or the fullscreen mode. The list is the display's modes and the 4:3 sizes that fit it. Borderless always uses the desktop.
 - ASPECT RATIO: 4:3 (the original, with bars at the sides), 16:9 (widened), or FULL (the whole window).
 
-DEFAULT SETTING puts them back to SMOOTH in a 1280×960 window at 4:3. The choice is kept in the system save, with the window's own settings.
+DEFAULT SETTING puts them back to SMOOTH in a 1280×960 window at 4:3. FILTER and the picture size are written to the system save when they change. WINDOW MODE, RESOLUTION and ASPECT RATIO are written to the window's own file when those rows change.
 
 ## Layout
 

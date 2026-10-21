@@ -1,15 +1,16 @@
 --- a/menu.c
 +++ b/menu.c
-@@ -431,6 +431,8 @@
+@@ -431,6 +431,9 @@
  void Game_Option(struct _TASK* task_ptr);
  void Button_Config(struct _TASK* task_ptr);
  void Screen_Adjust(struct _TASK* task_ptr);
 +int sf_display_step(int row, int dir);
 +void sf_display_default(void);
++void sf_system_commit_screen(void);
  void Sound_Test(struct _TASK* task_ptr);
  void Memory_Card(struct _TASK* task_ptr);
  void Extra_Option(struct _TASK* task_ptr);
-@@ -1000,6 +1002,11 @@
+@@ -1000,6 +1003,11 @@
  
          switch (IO_Result) {
          case 0x100:
@@ -21,7 +22,7 @@
              switch (Menu_Cursor_Y[0]) {
              case 0:
                  G_No[2] += 1;
-@@ -2773,15 +2780,18 @@
+@@ -2773,15 +2781,18 @@
          Order_Dir[0x65] = 8;
          Order_Timer[0x65] = 1;
  
@@ -43,7 +44,28 @@
              Order[ix + 0x50] = 1;
              Order_Dir[ix + 0x50] = 4;
              Order_Timer[ix + 0x50] = ix + 0x14;
-@@ -2825,7 +2835,7 @@
+@@ -2809,13 +2820,16 @@
+         if (IO_Result == 0) {
+             Screen_Adjust_Sub(1);
+             Screen_Exit_Check(task_ptr, 0);
+         }
+ 
+-        Convert_Buff[0][0][0] = X_Adjust_Buff[2];
+-        Convert_Buff[0][0][1] = Y_Adjust_Buff[2];
+-        Convert_Buff[0][0][2] = save_w[1].Screen_Size = dspwhPack(Disp_Size_H, Disp_Size_V);
+-        Convert_Buff[0][0][3] = save_w[1].Screen_Mode = sys_w.screen_mode;
++        /* Port: Save_Game_Data stores the screen from page 2. Page 0 is
++           difficulty and the round counts, so the filter and the size go
++           here. The file is written when either changed. The window rows
++           write config/display.ini when they move. */
++        Convert_Buff[2][0][2] = dspwhPack(Disp_Size_H, Disp_Size_V);
++        Convert_Buff[2][0][3] = sys_w.screen_mode;
+         Save_Game_Data();
++        sf_system_commit_screen();
+         break;
+     }
+ }
+@@ -2825,7 +2839,7 @@
      u16 sw;
      sw = ~plsw_01[PL_id] & plsw_00[PL_id];
      sw = Check_Menu_Lever(PL_id, 0);
@@ -52,7 +74,7 @@
      Screen_Move_Sub_LR(sw);
  }
  
-@@ -2839,7 +2849,7 @@
+@@ -2839,7 +2853,7 @@
          return;
      }
  
@@ -61,7 +83,7 @@
          SE_selected();
          Menu_Suicide[1] = 0;
          Menu_Suicide[2] = 1;
-@@ -2867,8 +2877,9 @@
+@@ -2867,8 +2881,11 @@
          return;
      }
  
@@ -71,8 +93,10 @@
 +        sf_display_default();
          X_Adjust_Buff[2] = 0;
          Y_Adjust_Buff[2] = 0;
++        Convert_Buff[2][0][0] = 0;
++        Convert_Buff[2][0][1] = 0;
          Disp_Size_H = 100;
-@@ -2936,7 +2947,8 @@
+@@ -2936,7 +2953,8 @@
              break;
 
          case 4:
@@ -82,7 +106,7 @@
              flag = 1;
              break;
          }
-@@ -2989,7 +3001,8 @@
+@@ -2989,7 +3007,8 @@
              break;
 
          case 4:
@@ -92,7 +116,7 @@
              flag = 1;
              break;
          }
-@@ -2991,6 +3004,11 @@
+@@ -2991,6 +3010,11 @@
          }
      }
  
@@ -104,7 +128,7 @@
      if (flag) {
          SE_dir_cursor_move();
      }
-@@ -3545,7 +3561,7 @@
+@@ -3545,7 +3569,7 @@
  u16 MC_Move_Sub(u16 sw, s16 cursor_id, s16 menu_max, s16 cansel_menu) {
  #define MC_SKIP_ROW(y)                                                                                             \
      ((D_00796884 == 12 && (y) < 3) || (D_00796884 == 10 && ((y) == 3 || (y) == 7)) || (D_00796884 == 19 && (y) == 1) || \

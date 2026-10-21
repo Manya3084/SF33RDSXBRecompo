@@ -44,6 +44,10 @@ void sf_display_default(void);
 
 /* SCREEN ADJUST's FILTER, live: 0 OFF, 1 SMOOTH, 2 CRT CURVED, 3 CRT FLAT. */
 int sf_save_screen_filter(void);
+/* Writes system.ini when the filter, the picture size, or the position
+ * stored in save_w[1] differs from the file. The window rows write
+ * config/display.ini on their own step. */
+void sf_system_commit_screen(void);
 
 /* A whole member of the imported archive, malloc'd. */
 int sf_afs_read(int32_t fid, uint8_t **data, uint32_t *size);

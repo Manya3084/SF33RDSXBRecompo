@@ -93,6 +93,43 @@ int sf_save_screen_filter(void)
     return sys_w.screen_mode > 3 ? 0 : sys_w.screen_mode;
 }
 
+/* What the system file last had for the screen. A damaged file is not
+ * rewritten. Opening SCREEN ADJUST does not write; a change does. */
+static int s_system_ok;
+static int s_screen_known;
+static s8 s_screen_x;
+static s8 s_screen_y;
+static u8 s_screen_size;
+static u8 s_screen_mode;
+
+static int save_path(int kind, int legacy, char *out, size_t n);
+
+static void remember_screen(const struct _SAVE_W *sw)
+{
+    s_screen_x = sw->Adjust_X;
+    s_screen_y = sw->Adjust_Y;
+    s_screen_size = sw->Screen_Size;
+    s_screen_mode = sw->Screen_Mode;
+    s_screen_known = 1;
+}
+
+void sf_system_commit_screen(void)
+{
+    struct _SAVE_W *sw = &save_w[1];
+    char path[4096 + 64];
+    if (!s_system_ok) {
+        return;
+    }
+    if (s_screen_known && sw->Adjust_X == s_screen_x && sw->Adjust_Y == s_screen_y &&
+        sw->Screen_Size == s_screen_size && sw->Screen_Mode == s_screen_mode) {
+        return;
+    }
+    if (save_path(0, 0, path, sizeof path) != 0 || sf_store_write_system(path, sw) != 0) {
+        return;
+    }
+    remember_screen(sw);
+}
+
 /* data/save/NAME. legacy 0 is the text file, 1 the older SF3S .sav. */
 static int save_path(int kind, int legacy, char *out, size_t n)
 {
@@ -254,6 +291,7 @@ static void apply_system(const struct _SAVE_W *in)
     Setup_Disp_Size(0);
     sys_w.screen_mode = sw->Screen_Mode > 3 ? 0 : sw->Screen_Mode;
     fill_directions();
+    remember_screen(sw);
 }
 
 static void run(void)
@@ -261,16 +299,28 @@ static void run(void)
     struct _SAVE_W sw;
     SystemDir dir;
     char path[4096 + 64];
+    int loaded;
 
     switch (s_kind) {
     case 0:
         if (s_mode == 1) {
             Save_Game_Data();
-            if (save_path(0, 0, path, sizeof path) == 0) {
-                sf_store_write_system(path, &save_w[Present_Mode]);
+            if (save_path(0, 0, path, sizeof path) == 0 &&
+                sf_store_write_system(path, &save_w[Present_Mode]) == 0) {
+                s_system_ok = 1;
+                if (Present_Mode == 1) {
+                    remember_screen(&save_w[1]);
+                }
             }
-        } else if (open_system(&sw) == 0) {
-            apply_system(&sw);
+        } else {
+            loaded = open_system(&sw);
+            if (loaded == 0) {
+                s_system_ok = 1;
+                apply_system(&sw);
+            } else if (loaded > 0) {
+                /* nothing on disk yet; the first change may create it */
+                s_system_ok = 1;
+            }
         }
         break;
     case 1:
