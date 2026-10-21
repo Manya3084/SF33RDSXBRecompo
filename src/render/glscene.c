@@ -214,8 +214,8 @@ static const char k_quad_vert[] =
     "}\n";
 
 /* shaders/copy.frag when opaque is 0. The window (opaque) is show.frag:
- * filter_mode 0 keeps each texel, 1 filters the scale, 2 is a curved CRT
- * and 3 is that CRT with square corners. */
+ * filter_mode 0 keeps each texel, 1 filters the scale, 2 is CRT CURVED
+ * and 3 is CRT FLAT. */
 static const char k_quad_frag[] =
     "#version 330 core\n"
     "uniform sampler2D screen;\n"

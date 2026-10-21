@@ -117,8 +117,8 @@ OPTION → SCREEN ADJUST's FILTER row cycles four pictures. Left steps back and 
 
 - OFF: each game pixel stays a hard edge.
 - SMOOTH: the picture is filtered as it is scaled into the window.
-- CRT: scanlines on the 448 game lines, a faint shadow mask, a light curve and a little glow.
-- FLAT: that same CRT, with the corners left square.
+- CRT CURVED: scanlines on the 448 game lines, a faint shadow mask, a light curve and a little glow.
+- CRT FLAT: that same CRT, with the corners left square.
 
 Three rows follow FILTER:
 

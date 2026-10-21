@@ -1,7 +1,7 @@
 #version 450
 // The game area in the window. mode 0 keeps each texel whole, mode 1
-// filters the scale, mode 2 is a curved CRT and mode 3 is that CRT with
-// square corners. src is the rectangle the vertex shader maps.
+// filters the scale, mode 2 is CRT CURVED and mode 3 is CRT FLAT.
+// src is the rectangle the vertex shader maps.
 layout(set = 0, binding = 0) uniform sampler2D screen;
 layout(push_constant) uniform Push {
     layout(offset = 0) vec4 src;

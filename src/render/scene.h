@@ -37,8 +37,8 @@ void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *list);
 
 /* Inside the window's render pass: the output, kept 4:3. */
 /* aspect: the shown screen's width over height, centred; 0 fills. */
-/* filter: 0 each texel whole, 1 filtered as it scales, 2 a curved CRT,
- * 3 that CRT with square corners. */
+/* filter: 0 each texel whole, 1 filtered as it scales, 2 CRT CURVED,
+ * 3 CRT FLAT. */
 void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, float aspect, const SfDrawList *list,
                           int filter);
 

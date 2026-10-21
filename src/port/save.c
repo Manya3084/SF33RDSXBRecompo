@@ -82,7 +82,7 @@ s32 xb_Get7A1808(void)
 }
 
 /* SCREEN ADJUST's FILTER, as the menu left it (sys_w.screen_mode):
- * 0 OFF, 1 SMOOTH, 2 CRT, 3 FLAT. Older saves still read 0 or 1. */
+ * 0 OFF, 1 SMOOTH, 2 CRT CURVED, 3 CRT FLAT. Older saves still read 0 or 1. */
 extern struct _SYSTEM_W sys_w;
 
 int sf_save_screen_filter(void)
