@@ -1093,8 +1093,10 @@ static int write_inputs(SfIni *ini, const _REPLAY_W *w)
 
 static int read_inputs(const SfIni *ini, _REPLAY_W *w)
 {
-    const char *frames_s;
-    const char *data;
+    /* NULL until sf_ini_find writes them. Ubuntu 24.04's gcc, at -O3, otherwise
+     * says the frame count is uninitialized inside parse_i64. */
+    const char *frames_s = NULL;
+    const char *data = NULL;
     long long frames = 0;
     int has_frames;
     int has_data;
