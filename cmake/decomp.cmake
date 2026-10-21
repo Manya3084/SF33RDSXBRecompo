@@ -124,6 +124,24 @@ target_include_directories(sf_gfx PUBLIC src "${SF_DECOMP_GEN}/include")
 set_target_properties(sf_gfx PROPERTIES POSITION_INDEPENDENT_CODE OFF)
 target_compile_options(sf_gfx PRIVATE -fno-pie)
 
+# SQLite is compiled in (public domain amalgamation) so the packages do
+# not gain a DLL. Its globals are renamed with the port's, and a rollback
+# snapshot leaves them out.
+set(SF_SQLITE_ZIP "${CMAKE_BINARY_DIR}/sqlite-amalgamation-3530400.zip")
+set(SF_SQLITE_SRC "${CMAKE_BINARY_DIR}/sqlite-amalgamation-3530400")
+if(NOT EXISTS "${SF_SQLITE_SRC}/sqlite3.c")
+    file(DOWNLOAD https://sqlite.org/2026/sqlite-amalgamation-3530400.zip "${SF_SQLITE_ZIP}"
+        EXPECTED_HASH SHA256=1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d)
+    file(ARCHIVE_EXTRACT INPUT "${SF_SQLITE_ZIP}" DESTINATION "${CMAKE_BINARY_DIR}")
+endif()
+find_package(Threads REQUIRED)
+add_library(sf_sqlite STATIC "${SF_SQLITE_SRC}/sqlite3.c")
+target_include_directories(sf_sqlite PUBLIC "${SF_SQLITE_SRC}")
+target_compile_definitions(sf_sqlite PRIVATE SQLITE_OMIT_LOAD_EXTENSION SQLITE_DQS=0)
+target_compile_options(sf_sqlite PRIVATE -w -fno-strict-aliasing)
+target_link_libraries(sf_sqlite PUBLIC Threads::Threads m)
+set_target_properties(sf_sqlite PROPERTIES C_EXTENSIONS ON POSITION_INDEPENDENT_CODE OFF)
+
 add_library(sf_port STATIC
     src/port/frame.c
     src/port/video.c
@@ -150,7 +168,7 @@ add_library(sf_port STATIC
     src/game/memman.c
     src/mem/heap.c
 )
-target_link_libraries(sf_port PUBLIC ZLIB::ZLIB OpenAL::OpenAL)
+target_link_libraries(sf_port PUBLIC ZLIB::ZLIB OpenAL::OpenAL sf_sqlite)
 target_link_libraries(sf_port PUBLIC sf_gfx sf_render sf_import)
 set_target_properties(sf_port PROPERTIES POSITION_INDEPENDENT_CODE OFF)
 target_compile_options(sf_port PRIVATE -fno-pie)
@@ -164,7 +182,7 @@ if(WIN32)
 else()
     find_program(SF_OBJCOPY NAMES objcopy REQUIRED)
 endif()
-foreach(_lib sf_port sf_gfx sf_render)
+foreach(_lib sf_port sf_gfx sf_render sf_sqlite)
     add_custom_command(TARGET ${_lib} POST_BUILD
         COMMAND ${SF_OBJCOPY} --rename-section .data=sfport_data --rename-section .bss=sfport_bss $<TARGET_FILE:${_lib}>
         COMMENT "Port state sections in ${_lib}")
@@ -214,8 +232,8 @@ add_custom_command(OUTPUT "${SF_DECOMP_GEN}/stubs.c"
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" ${_stub_win}
         --aliases "${SF_DECOMP_GEN}/fold.txt" "${SF_DECOMP_GEN}/stubs.c"
         $<TARGET_FILE:sf_decomp> $<TARGET_FILE:sf_port> $<TARGET_FILE:sf_gfx> $<TARGET_FILE:sf_render>
-        $<TARGET_FILE:sf_import>
-    DEPENDS sf_decomp sf_port sf_gfx sf_render sf_import "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py"
+        $<TARGET_FILE:sf_import> $<TARGET_FILE:sf_sqlite>
+    DEPENDS sf_decomp sf_port sf_gfx sf_render sf_import sf_sqlite "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py"
         "${SF_DECOMP_GEN}/fold.txt"
     COMMENT "Port stubs")
 
@@ -247,6 +265,7 @@ add_test(NAME scene COMMAND test_scene)
 
 add_executable(test_store tests/test_store.c src/port/store.c)
 target_include_directories(test_store PRIVATE src "${SF_DECOMP_GEN}/include")
+target_link_libraries(test_store PRIVATE sf_sqlite)
 target_link_options(test_store PRIVATE -no-pie)
 add_test(NAME store COMMAND test_store)
 set(_lvp "")

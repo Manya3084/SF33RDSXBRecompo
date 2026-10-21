@@ -34,9 +34,9 @@ void sf_video_present_canvas(const struct SfCanvas *canvas);
 int sf_setup_run(const char *install);
 int sf_setup_cli(int argc, char **argv);
 
-/* The window's mode, size and aspect, kept in config/display.ini; SCREEN
- * ADJUST's rows 5 to 7 (src/port/display.c). An older display.txt is read
- * once and kept as display.txt.bak. */
+/* The window's mode, size and aspect, kept in config/host.sqlite; SCREEN
+ * ADJUST's rows 5 to 7 (src/port/display.c). A missing row is created
+ * from the original window: 1280x960, 4:3. */
 void sf_display_init(void);
 const char *sf_display_text(int row);
 int sf_display_step(int row, int dir);
@@ -44,10 +44,14 @@ void sf_display_default(void);
 
 /* SCREEN ADJUST's FILTER, live: 0 OFF, 1 SMOOTH, 2 CRT CURVED, 3 CRT FLAT. */
 int sf_save_screen_filter(void);
-/* Writes system.ini when the filter, the picture size, or the position
- * stored in save_w[1] differs from the file. The window rows write
- * config/display.ini on their own step. */
+/* Writes the system database when the filter, the picture size, or the
+ * position stored in save_w[1] differs from the file. The window rows
+ * write config/host.sqlite on their own step. */
 void sf_system_commit_screen(void);
+/* Loads data/save/game.sqlite: the system row (options, rankings, pads,
+ * screen) and the directions. A missing file is created from the original
+ * defaults. Call once the init task has written those defaults. */
+void sf_save_startup(void);
 
 /* A whole member of the imported archive, malloc'd. */
 int sf_afs_read(int32_t fid, uint8_t **data, uint32_t *size);
@@ -70,8 +74,8 @@ void sf_video_shutdown(void);
 void sf_sound_shutdown(void);
 
 /* The keyboard's bindings (src/port/input.c): 14 rows, each an SDL
- * scancode for an Xbox button, kept in config/keyboard.ini. An older
- * keyboard.txt is read once and kept as keyboard.txt.bak. */
+ * scancode for an Xbox button, kept in config/host.sqlite. A missing
+ * key table is filled from the original bindings. */
 int sf_keys_count(void);
 const char *sf_keys_label(int i);
 int sf_keys_get(int i);
@@ -88,9 +92,8 @@ void sf_input_tape_mark(void);
 void sf_input_tape_rewind(void);
 void sf_input_tape_off(void);
 
-/* Replays (src/port/save.c): ten slots in data/save, replay01.ini to
- * replay10.ini. sf_replay_slot says what a slot holds (1 a replay, 0 none,
- * -1 damaged). */
+/* Replays (src/port/save.c): ten slots in data/save/game.sqlite.
+ * sf_replay_slot says what a slot holds (1 a replay, 0 none, -1 damaged). */
 #define SF_REPLAY_SLOTS 10
 int sf_replay_slot(int slot, int chars[2], long long *when);
 int sf_replay_save(int slot);

@@ -11,9 +11,9 @@
  * (keyConvert).
  *
  * Keyboard (the defaults; BUTTON CONFIG's keyboard page changes them and
- * config/keyboard.ini keeps them): arrows are the d-pad, Z A, X B, A X,
+ * config/host.sqlite keeps them): arrows are the d-pad, Z A, X B, A X,
  * S Y, Q White, E Black, W the left trigger, R the right trigger, Enter
- * Start, Backspace Back. */
+ * Start, Backspace Back. A missing key table is filled from these. */
 
 #include "host/paths.h"
 #include "host/compat.h"
@@ -25,10 +25,12 @@
 
 #include <SDL3/SDL.h>
 
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define PORTS 4
 
@@ -178,7 +180,7 @@ static f32 axis(SDL_Gamepad *g, SDL_GamepadAxis a)
 
 /* The keyboard as a gamepad: one row per binding. A binding is a button
  * bit (XB_*) or an analog button (index | 0x100); name is its word in
- * config/keyboard.ini, label what the keyboard page shows. */
+ * config/host.sqlite, label what the keyboard page shows. */
 typedef struct KeyBinding {
     SDL_Scancode key;
     u16 target;
@@ -206,13 +208,24 @@ static const KeyBinding k_keys_default[KEY_COUNT] = {
 static KeyBinding s_keys[KEY_COUNT];
 static int s_block; /* the keyboard page is open: the game sees nothing pressed */
 
-static int keys_path(char *path, size_t n, const char *name)
+/* config/host.sqlite, the same file as the window. */
+static int host_db(char *out, size_t n)
 {
     char base[4096];
+    int wrote;
     if (sf_exe_dir(base, sizeof base) != 0) {
         return -1;
     }
-    return snprintf(path, n, "%s/config/%s", base, name) < (int)n ? 0 : -1;
+    wrote = snprintf(out, n, "%s/config", base);
+    if (wrote < 0 || (size_t)wrote >= n) {
+        return -1;
+    }
+    if (mkdir(out, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "input: %s: %s\n", out, strerror(errno));
+        return -1;
+    }
+    wrote = snprintf(out, n, "%s/config/host.sqlite", base);
+    return wrote < 0 || (size_t)wrote >= n ? -1 : 0;
 }
 
 void sf_keys_default(void)
@@ -220,104 +233,55 @@ void sf_keys_default(void)
     memcpy(s_keys, k_keys_default, sizeof s_keys);
 }
 
-/* versioned: [keyboard] in keyboard.ini, which must say version=1.
- * Otherwise the bare keys of an older keyboard.txt. SDL's name for the key. */
-static int keys_from(const SfIni *ini, const char *sec, int versioned)
+/* No key rows yet: the original bindings become the file. A name with an
+ * empty scancode keeps the binding already in memory. A damaged database
+ * is left as it is. */
+static void keys_load(void)
 {
-    const char *v;
+    char path[4096 + 64];
+    char values[KEY_COUNT][64];
+    SDL_Scancode sc;
+    int r;
     int i;
-    if (versioned && (sf_ini_find(ini, sec, "version", &v) != 0 || strcmp(v, "1") != 0)) {
-        return -1;
+    sf_keys_default();
+    if (host_db(path, sizeof path) != 0) {
+        return;
+    }
+    r = sf_store_read_keys(path, k_key_name, values, KEY_COUNT);
+    if (r == 1) {
+        sf_keys_save();
+        return;
+    }
+    if (r != 0) {
+        return;
     }
     for (i = 0; i < KEY_COUNT; i++) {
-        SDL_Scancode sc;
-        if (sf_ini_find(ini, sec, k_key_name[i], &v) != 0) {
+        if (values[i][0] == 0) {
             continue;
         }
-        sc = SDL_GetScancodeFromName(v);
+        sc = SDL_GetScancodeFromName(values[i]);
         if (sc != SDL_SCANCODE_UNKNOWN) {
             s_keys[i].key = sc;
         }
-    }
-    return 0;
-}
-
-static void keys_load(void)
-{
-    char ini_path[4200];
-    char txt_path[4200];
-    SfIni *doc;
-    int r;
-    sf_keys_default();
-    if (keys_path(ini_path, sizeof ini_path, "keyboard.ini") != 0) {
-        return;
-    }
-    doc = sf_ini_new();
-    if (!doc) {
-        return;
-    }
-    r = sf_ini_load(doc, ini_path);
-    if (r == 0) {
-        if (keys_from(doc, "keyboard", 1) != 0) {
-            fprintf(stderr, "input: %s is damaged; not loaded\n", ini_path);
-        }
-        sf_ini_free(doc);
-        return;
-    }
-    sf_ini_free(doc);
-    if (r < 0) {
-        fprintf(stderr, "input: %s is damaged; not loaded\n", ini_path);
-        return;
-    }
-    if (keys_path(txt_path, sizeof txt_path, "keyboard.txt") != 0) {
-        return;
-    }
-    doc = sf_ini_new();
-    if (!doc) {
-        return;
-    }
-    r = sf_ini_load(doc, txt_path);
-    if (r != 0) {
-        sf_ini_free(doc);
-        return;
-    }
-    keys_from(doc, "", 0);
-    sf_ini_free(doc);
-    if (sf_keys_save() == 0) {
-        sf_file_retire(txt_path);
     }
 }
 
 int sf_keys_save(void)
 {
-    char path[4200];
-    SfIni *ini;
+    char path[4096 + 64];
+    const char *values[KEY_COUNT];
     int i;
-    int rc;
-    if (keys_path(path, sizeof path, "keyboard.ini") != 0) {
-        return -1;
-    }
-    ini = sf_ini_new();
-    if (!ini) {
-        fprintf(stderr, "input: cannot write %s\n", path);
-        return -1;
-    }
-    sf_ini_set_note(ini, "Keyboard bindings. version 1.");
-    if (sf_ini_set(ini, "keyboard", "version", "1") != 0) {
-        sf_ini_free(ini);
-        fprintf(stderr, "input: cannot write %s\n", path);
+    if (host_db(path, sizeof path) != 0) {
         return -1;
     }
     for (i = 0; i < KEY_COUNT; i++) {
-        if (sf_ini_set(ini, "keyboard", k_key_name[i], SDL_GetScancodeName(s_keys[i].key)) != 0) {
-            sf_ini_free(ini);
-            fprintf(stderr, "input: cannot write %s\n", path);
-            return -1;
-        }
+        values[i] = SDL_GetScancodeName(s_keys[i].key);
     }
-    rc = sf_ini_save(ini, path);
-    sf_ini_free(ini);
-    return rc;
+    if (sf_store_write_keys(path, k_key_name, values, KEY_COUNT) != 0) {
+        fprintf(stderr, "input: cannot write %s\n", path);
+        return -1;
+    }
+    return 0;
 }
 
 int sf_keys_count(void)

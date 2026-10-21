@@ -4,7 +4,7 @@ Native x86-64 port of Street Fighter III: 3rd Strike, built from the Xbox versio
 
 ![The title screen](docs/images/title.png)
 
-The game logic is the C of [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb), compiled for x86-64. Everything the Xbox provided under it is written natively here: SDL3 for the window, input and timing, a Vulkan renderer for the game's draws (OpenGL 3.3 where Vulkan is missing), OpenAL for sound, and plain files for the disc archive and the saves. No Xbox code is built. There is no Xbox heap, XDK, xboxkrnl, D3D8, CRI middleware, XACT or XOnline dependency. The XBE is read once, at import, for the sound effects' cue tables; nothing from the disc is in this repository. [docs/porting.md](docs/porting.md) describes how the pieces fit.
+The game logic is the C of [3s-decomp-ogxb](https://github.com/Manya3084/3s-decomp-ogxb), compiled for x86-64. Everything the Xbox provided under it is written natively here: SDL3 for the window, input and timing, a Vulkan renderer for the game's draws (OpenGL 3.3 where Vulkan is missing), OpenAL for sound, plain files for the disc archive, and SQLite for the saves. No Xbox code is built. There is no Xbox heap, XDK, xboxkrnl, D3D8, CRI middleware, XACT or XOnline dependency. The XBE is read once, at import, for the sound effects' cue tables; nothing from the disc is in this repository. [docs/porting.md](docs/porting.md) describes how the pieces fit.
 
 ## Status
 
@@ -14,7 +14,7 @@ Working:
 - Arcade, character select, and fights, including the attract-loop fights
 - music: the ADX and AIX tracks, decoded natively and streamed through OpenAL
 - sound effects and voices: the game's XACT cue banks played on OpenAL (PCM and Xbox ADPCM waves, loops, envelopes, fades, panning, the pitch LFO's vibrato)
-- saves (system settings and button directions) in `data/save/`, and replays in ten slots (`replay01.ini` to `replay10.ini`), picked on the game's REPLAY screens
+- saves (system settings, button directions, and ten replay slots) in `data/save/game.sqlite`, picked on the game's REPLAY screens
 - the keyboard and SDL3 gamepads, with retail's join-by-Start, and a keyboard page in BUTTON CONFIG for rebinding the keys
 - windowed, borderless or fullscreen, the resolution, the aspect ratio and the picture filter, set in SCREEN ADJUST, paced to 60 frames a second; the 448-line game area fills the window's height
 - Vulkan, or OpenGL 3.3 when Vulkan is missing (`SF_RENDERER=opengl` picks it)
@@ -126,7 +126,7 @@ Three rows follow FILTER:
 - RESOLUTION: the window's size, or the fullscreen mode. The list is the display's modes and the 4:3 sizes that fit it. Borderless always uses the desktop.
 - ASPECT RATIO: 4:3 (the original, with bars at the sides), 16:9 (widened), or FULL (the whole window).
 
-DEFAULT SETTING puts them back to SMOOTH in a 1280×960 window at 4:3. FILTER and the picture size are written to the system save when they change. WINDOW MODE, RESOLUTION and ASPECT RATIO are written to the window's own file when those rows change.
+DEFAULT SETTING puts them back to SMOOTH in a 1280×960 window at 4:3. FILTER and the picture size are written to the system database when they change. WINDOW MODE, RESOLUTION and ASPECT RATIO are written to the host database when those rows change.
 
 ## Layout
 
@@ -137,14 +137,13 @@ data/afs/files/           the members, unpacked under their stored names
 data/audio/ST3_3_OP.aix   the opening theme
 data/audio/sdbk/          the sound effects' cue tables, 00.sdbk to 20.sdbk
 data/fonts/
-data/save/                system.ini (includes FILTER), directions.ini, replay01.ini to replay10.ini
+data/save/game.sqlite     the system row (includes FILTER), the directions, and ten replay slots
 data/last_session.input   the last session's inputs, for replaying a bug
 data/crash.log            the backtrace of the last crash
-config/keyboard.ini       the keyboard's bindings
-config/display.ini        the window mode, resolution and aspect ratio
+config/host.sqlite        the window and the keyboard
 ```
 
-An older `system.sav`, `directions.sav`, `replayNN.sav`, `display.txt` or `keyboard.txt` is read once and kept beside the new file as `.bak`.
+A new install creates those databases from the original defaults: the game's factory system and directions, a 1280×960 4:3 window, and the keyboard defaults above. An older ini or memory-card save is not read. SQLite is compiled into the program.
 
 ## Build
 

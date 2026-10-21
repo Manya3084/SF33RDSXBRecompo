@@ -1,1076 +1,616 @@
-/* Named, versioned text for the game's saves and the host's settings.
+/* SQLite for the game's saves and the host's settings.
  *
- * The game still keeps its settings in the structs it always used. A file
- * is one "key=value" per line, under [section] headings, with version=1.
- * Numbers are decimal. A list is comma-separated. An opaque block is hex.
- * Replay inputs are the two players' pad words, little-endian, from frame 0
- * through the last frame that is not all zero. game_infor.fname is an
- * address, so it is never written; a load leaves it NULL.
+ * game.sqlite: one system row, one directions row, replay slots 0 to 9.
+ * host.sqlite: one window row, one row per key. Schema version is 1.
+ * A write is a transaction with synchronous=FULL. A file that fails
+ * integrity_check is left alone.
  *
- * The write replaces the file: a temp file beside it, flushed and synced,
- * then renamed over it. */
+ * Not stored: the memory-card header, sega_reserve, free_free, the network
+ * record, lag, the pad's free bytes, and fname. A load leaves them zero. */
 
 #include "port/store.h"
 
-#include "host/compat.h"
+#include <sqlite3.h>
 
 #include <errno.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <sys/stat.h>
+#include <time.h>
 
 #define STORE_VERSION 1
 #define INPUT_FRAMES 7198
+#define REPLAY_SLOTS 10
 
 _Static_assert(sizeof(((const _REPLAY_W *)0)->io_unit.key_buff[0]) / sizeof(u16) == INPUT_FRAMES,
                "replay input frames");
 
-enum { F_U8 = 1, F_S8, F_U16, F_S16, F_U32 };
+static const char k_game_sql[] =
+    "CREATE TABLE IF NOT EXISTS system ("
+    " id INTEGER PRIMARY KEY CHECK (id = 1),"
+    " difficulty INTEGER NOT NULL, time_limit INTEGER NOT NULL,"
+    " battle0 INTEGER NOT NULL, battle1 INTEGER NOT NULL,"
+    " damage_level INTEGER NOT NULL, handicap INTEGER NOT NULL,"
+    " partner0 INTEGER NOT NULL, partner1 INTEGER NOT NULL,"
+    " adjust_x INTEGER NOT NULL, adjust_y INTEGER NOT NULL,"
+    " screen_size INTEGER NOT NULL, screen_mode INTEGER NOT NULL,"
+    " guard_check INTEGER NOT NULL, auto_save INTEGER NOT NULL,"
+    " analog_stick INTEGER NOT NULL, bgm_type INTEGER NOT NULL,"
+    " sound_mode INTEGER NOT NULL, bgm_level INTEGER NOT NULL,"
+    " se_level INTEGER NOT NULL, extra_option INTEGER NOT NULL,"
+    " sum INTEGER NOT NULL,"
+    " pad0_vibration INTEGER NOT NULL, pad1_vibration INTEGER NOT NULL,"
+    " pad0_shot BLOB NOT NULL, pad1_shot BLOB NOT NULL,"
+    " color0 BLOB NOT NULL, color1 BLOB NOT NULL,"
+    " extra BLOB NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS rank ("
+    " idx INTEGER PRIMARY KEY CHECK (idx >= 0 AND idx < 20),"
+    " name BLOB NOT NULL, player INTEGER NOT NULL, score INTEGER NOT NULL,"
+    " cpu_grade INTEGER NOT NULL, grade INTEGER NOT NULL,"
+    " wins INTEGER NOT NULL, player_color INTEGER NOT NULL,"
+    " all_clear INTEGER NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS directions ("
+    " id INTEGER PRIMARY KEY CHECK (id = 1),"
+    " rows BLOB NOT NULL, sum INTEGER NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS replay ("
+    " slot INTEGER PRIMARY KEY CHECK (slot >= 0 AND slot < 10),"
+    " saved_at INTEGER NOT NULL,"
+    " control_time INTEGER NOT NULL, difficulty INTEGER NOT NULL,"
+    " monitor_type INTEGER NOT NULL, champion INTEGER NOT NULL,"
+    " full_data INTEGER NOT NULL, sum INTEGER NOT NULL,"
+    " p0_char INTEGER NOT NULL, p0_sa INTEGER NOT NULL,"
+    " p0_color INTEGER NOT NULL, p0_type INTEGER NOT NULL,"
+    " p1_char INTEGER NOT NULL, p1_sa INTEGER NOT NULL,"
+    " p1_color INTEGER NOT NULL, p1_type INTEGER NOT NULL,"
+    " stage INTEGER NOT NULL, direction_working INTEGER NOT NULL,"
+    " vital0 INTEGER NOT NULL, vital1 INTEGER NOT NULL,"
+    " random_ix16 INTEGER NOT NULL, random_ix32 INTEGER NOT NULL,"
+    " random_ix16_ex INTEGER NOT NULL, random_ix32_ex INTEGER NOT NULL,"
+    " winner INTEGER NOT NULL, play_type INTEGER NOT NULL,"
+    " players_timer INTEGER NOT NULL,"
+    " old_mes_no2 INTEGER NOT NULL, old_mes_no3 INTEGER NOT NULL,"
+    " old_mes_no_pl INTEGER NOT NULL, mes_already INTEGER NOT NULL,"
+    " mini_time INTEGER NOT NULL,"
+    " mini_battle0 INTEGER NOT NULL, mini_battle1 INTEGER NOT NULL,"
+    " mini_damage INTEGER NOT NULL,"
+    " mini_pad0_vib INTEGER NOT NULL, mini_pad1_vib INTEGER NOT NULL,"
+    " mini_pad0_shot BLOB NOT NULL, mini_pad1_shot BLOB NOT NULL,"
+    " mini_extra BLOB NOT NULL,"
+    " directions BLOB NOT NULL, directions_sum INTEGER NOT NULL,"
+    " inputs BLOB NOT NULL);";
 
-typedef struct Field {
-    const char *sec;
-    const char *key;
-    size_t off;
-    int kind;
-} Field;
+static const char k_host_sql[] =
+    "CREATE TABLE IF NOT EXISTS window ("
+    " id INTEGER PRIMARY KEY CHECK (id = 1),"
+    " mode TEXT NOT NULL, width INTEGER NOT NULL,"
+    " height INTEGER NOT NULL, aspect TEXT NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS key ("
+    " name TEXT PRIMARY KEY, scancode TEXT NOT NULL);";
 
-typedef struct SfIniEnt {
-    char *sec;
-    char *key;
-    char *val;
-} SfIniEnt;
-
-struct SfIni {
-    char *note;
-    SfIniEnt *e;
-    int n;
-    int cap;
-};
-
-static const Field k_system[] = {
-    { "system", "difficulty", offsetof(struct _SAVE_W, Difficulty), F_U8 },
-    { "system", "time_limit", offsetof(struct _SAVE_W, Time_Limit), F_S8 },
-    { "system", "damage_level", offsetof(struct _SAVE_W, Damage_Level), F_U8 },
-    { "system", "handicap", offsetof(struct _SAVE_W, Handicap), F_U8 },
-    { "system", "adjust_x", offsetof(struct _SAVE_W, Adjust_X), F_S8 },
-    { "system", "adjust_y", offsetof(struct _SAVE_W, Adjust_Y), F_S8 },
-    { "system", "screen_size", offsetof(struct _SAVE_W, Screen_Size), F_U8 },
-    { "system", "screen_mode", offsetof(struct _SAVE_W, Screen_Mode), F_U8 },
-    { "system", "guard_check", offsetof(struct _SAVE_W, GuardCheck), F_U8 },
-    { "system", "auto_save", offsetof(struct _SAVE_W, Auto_Save), F_U8 },
-    { "system", "analog_stick", offsetof(struct _SAVE_W, AnalogStick), F_U8 },
-    { "system", "bgm_type", offsetof(struct _SAVE_W, BgmType), F_U8 },
-    { "system", "sound_mode", offsetof(struct _SAVE_W, SoundMode), F_U8 },
-    { "system", "bgm_level", offsetof(struct _SAVE_W, BGM_Level), F_U8 },
-    { "system", "se_level", offsetof(struct _SAVE_W, SE_Level), F_U8 },
-    { "system", "extra_option", offsetof(struct _SAVE_W, Extra_Option), F_U8 },
-    { "system", "sum", offsetof(struct _SAVE_W, sum), F_U32 },
-    { "pad0", "vibration", offsetof(struct _SAVE_W, Pad_Infor[0].Vibration), F_U8 },
-    { "pad1", "vibration", offsetof(struct _SAVE_W, Pad_Infor[1].Vibration), F_U8 },
-};
-
-static const Field k_replay[] = {
-    { "replay", "control_time", offsetof(_REPLAY_W, Control_Time_Buff), F_S16 },
-    { "replay", "difficulty", offsetof(_REPLAY_W, Difficulty), F_U8 },
-    { "replay", "monitor_type", offsetof(_REPLAY_W, Monitor_Type), F_U8 },
-    { "replay", "champion", offsetof(_REPLAY_W, champion), F_U8 },
-    { "replay", "full_data", offsetof(_REPLAY_W, full_data), F_U8 },
-    { "replay", "free", offsetof(_REPLAY_W, free), F_U8 },
-    { "replay", "extra_free", offsetof(_REPLAY_W, extra_free), F_U8 },
-    { "replay", "sum", offsetof(_REPLAY_W, sum), F_U32 },
-};
-
-static const Field k_match[] = {
-    { "match", "p0_char", offsetof(_REPLAY_W, game_infor.player_infor[0].my_char), F_U8 },
-    { "match", "p0_sa", offsetof(_REPLAY_W, game_infor.player_infor[0].sa), F_S8 },
-    { "match", "p0_color", offsetof(_REPLAY_W, game_infor.player_infor[0].color), F_S8 },
-    { "match", "p0_type", offsetof(_REPLAY_W, game_infor.player_infor[0].player_type), F_S8 },
-    { "match", "p1_char", offsetof(_REPLAY_W, game_infor.player_infor[1].my_char), F_U8 },
-    { "match", "p1_sa", offsetof(_REPLAY_W, game_infor.player_infor[1].sa), F_S8 },
-    { "match", "p1_color", offsetof(_REPLAY_W, game_infor.player_infor[1].color), F_S8 },
-    { "match", "p1_type", offsetof(_REPLAY_W, game_infor.player_infor[1].player_type), F_S8 },
-    { "match", "stage", offsetof(_REPLAY_W, game_infor.stage), F_S8 },
-    { "match", "direction_working", offsetof(_REPLAY_W, game_infor.Direction_Working), F_S8 },
-    { "match", "random_ix16", offsetof(_REPLAY_W, game_infor.Random_ix16), F_S16 },
-    { "match", "random_ix32", offsetof(_REPLAY_W, game_infor.Random_ix32), F_S16 },
-    { "match", "random_ix16_ex", offsetof(_REPLAY_W, game_infor.Random_ix16_ex), F_S16 },
-    { "match", "random_ix32_ex", offsetof(_REPLAY_W, game_infor.Random_ix32_ex), F_S16 },
-    { "match", "winner", offsetof(_REPLAY_W, game_infor.winner), F_U8 },
-    { "match", "play_type", offsetof(_REPLAY_W, game_infor.play_type), F_U8 },
-    { "match", "players_timer", offsetof(_REPLAY_W, game_infor.players_timer), F_U16 },
-    { "match", "old_mes_no2", offsetof(_REPLAY_W, game_infor.old_mes_no2), F_S16 },
-    { "match", "old_mes_no3", offsetof(_REPLAY_W, game_infor.old_mes_no3), F_S16 },
-    { "match", "old_mes_no_pl", offsetof(_REPLAY_W, game_infor.old_mes_no_pl), F_S16 },
-    { "match", "mes_already", offsetof(_REPLAY_W, game_infor.mes_already), F_S16 },
-};
-
-static const Field k_mini[] = {
-    { "mini", "time_limit", offsetof(_REPLAY_W, mini_save_w.Time_Limit), F_S8 },
-    { "mini", "damage_level", offsetof(_REPLAY_W, mini_save_w.Damage_Level), F_U8 },
-    { "mini", "pad0_vibration", offsetof(_REPLAY_W, mini_save_w.Pad_Infor[0].Vibration), F_U8 },
-    { "mini", "pad1_vibration", offsetof(_REPLAY_W, mini_save_w.Pad_Infor[1].Vibration), F_U8 },
-};
-
-SfIni *sf_ini_new(void)
+static int file_exists(const char *path)
 {
-    return calloc(1, sizeof(SfIni));
+    struct stat st;
+    return stat(path, &st) == 0;
 }
 
-void sf_ini_free(SfIni *ini)
+static int exec_sql(sqlite3 *db, const char *sql)
 {
-    int i;
-    if (!ini) {
-        return;
-    }
-    for (i = 0; i < ini->n; i++) {
-        free(ini->e[i].sec);
-        free(ini->e[i].key);
-        free(ini->e[i].val);
-    }
-    free(ini->e);
-    free(ini->note);
-    free(ini);
-}
-
-void sf_ini_set_note(SfIni *ini, const char *note)
-{
-    char *s;
-    if (!ini || !note || strchr(note, '\n') || strchr(note, '\r')) {
-        return;
-    }
-    s = strdup(note);
-    if (!s) {
-        return;
-    }
-    free(ini->note);
-    ini->note = s;
-}
-
-int sf_ini_find(const SfIni *ini, const char *section, const char *key, const char **value)
-{
-    int i;
-    if (!ini || !section || !key) {
-        return 1;
-    }
-    for (i = 0; i < ini->n; i++) {
-        if (strcmp(ini->e[i].sec, section) == 0 && strcmp(ini->e[i].key, key) == 0) {
-            if (value) {
-                *value = ini->e[i].val;
-            }
-            return 0;
-        }
-    }
-    return 1;
-}
-
-int sf_ini_set(SfIni *ini, const char *section, const char *key, const char *value)
-{
-    int i;
-    char *sec;
-    char *k;
-    char *v;
-    SfIniEnt *grown;
-    int cap;
-    if (!ini || !section || !key || !key[0] || !value) {
+    char *err = NULL;
+    int rc = sqlite3_exec(db, sql, NULL, NULL, &err);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "save: %s\n", err ? err : sqlite3_errmsg(db));
+        sqlite3_free(err);
         return -1;
     }
-    if (strchr(key, '=') || strchr(key, '\n') || strchr(key, '\r') || strchr(value, '\n') || strchr(value, '\r') ||
-        strchr(section, '\n') || strchr(section, '\r') || strchr(section, '[') || strchr(section, ']')) {
-        return -1;
-    }
-    for (i = 0; i < ini->n; i++) {
-        if (strcmp(ini->e[i].sec, section) == 0 && strcmp(ini->e[i].key, key) == 0) {
-            v = strdup(value);
-            if (!v) {
-                return -1;
-            }
-            free(ini->e[i].val);
-            ini->e[i].val = v;
-            return 0;
-        }
-    }
-    if (ini->n == ini->cap) {
-        cap = ini->cap ? ini->cap * 2 : 16;
-        grown = realloc(ini->e, (size_t)cap * sizeof *grown);
-        if (!grown) {
-            return -1;
-        }
-        ini->e = grown;
-        ini->cap = cap;
-    }
-    sec = strdup(section);
-    k = strdup(key);
-    v = strdup(value);
-    if (!sec || !k || !v) {
-        free(sec);
-        free(k);
-        free(v);
-        return -1;
-    }
-    ini->e[ini->n].sec = sec;
-    ini->e[ini->n].key = k;
-    ini->e[ini->n].val = v;
-    ini->n++;
     return 0;
 }
 
-int sf_ini_set_int(SfIni *ini, const char *section, const char *key, long long value)
+static int user_version(sqlite3 *db, int *ver)
 {
-    char buf[32];
-    snprintf(buf, sizeof buf, "%lld", value);
-    return sf_ini_set(ini, section, key, buf);
-}
-
-static char *trim(char *s)
-{
-    char *end;
-    while (*s == ' ' || *s == '\t') {
-        s++;
-    }
-    end = s + strlen(s);
-    while (end > s && (end[-1] == ' ' || end[-1] == '\t')) {
-        end--;
-    }
-    *end = 0;
-    return s;
-}
-
-/* 0 a line, 1 end of file, -1 a read error. */
-static int read_line(FILE *f, char **out)
-{
-    size_t cap = 128;
-    size_t n = 0;
-    char *buf;
-    int c;
-    *out = NULL;
-    buf = malloc(cap);
-    if (!buf) {
+    sqlite3_stmt *st = NULL;
+    int rc;
+    *ver = -1;
+    if (sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &st, NULL) != SQLITE_OK) {
         return -1;
     }
-    while ((c = fgetc(f)) != EOF) {
-        char *grown;
-        size_t ncap;
-        if (c == '\n') {
-            break;
-        }
-        if (c == '\r') {
-            continue;
-        }
-        if (n + 1 >= cap) {
-            if (cap > SIZE_MAX / 2) {
-                free(buf);
-                return -1;
-            }
-            ncap = cap * 2;
-            grown = realloc(buf, ncap);
-            if (!grown) {
-                free(buf);
-                return -1;
-            }
-            buf = grown;
-            cap = ncap;
-        }
-        buf[n++] = (char)c;
+    rc = sqlite3_step(st);
+    if (rc == SQLITE_ROW) {
+        *ver = sqlite3_column_int(st, 0);
     }
-    if (c == EOF && n == 0) {
-        free(buf);
-        return ferror(f) ? -1 : 1;
-    }
-    buf[n] = 0;
-    *out = buf;
-    return 0;
+    sqlite3_finalize(st);
+    return rc == SQLITE_ROW ? 0 : -1;
 }
 
-static int set_section(char **section, const char *name)
+static int integrity_ok(sqlite3 *db)
 {
-    char *s = strdup(name);
-    if (!s) {
-        return -1;
-    }
-    free(*section);
-    *section = s;
-    return 0;
-}
-
-static int take_line(SfIni *ini, char **section, char *line)
-{
-    char *eq;
-    char *key;
-    char *val;
-    char *end;
-    char *name;
-    line = trim(line);
-    if (line[0] == 0 || line[0] == ';' || line[0] == '#') {
+    sqlite3_stmt *st = NULL;
+    const char *msg;
+    int rc;
+    int ok = 0;
+    if (sqlite3_prepare_v2(db, "PRAGMA integrity_check", -1, &st, NULL) != SQLITE_OK) {
         return 0;
     }
-    if (line[0] == '[') {
-        end = strchr(line, ']');
-        if (!end || end == line + 1 || end[1] != 0) {
-            return -1;
-        }
-        *end = 0;
-        name = trim(line + 1);
-        if (name[0] == 0) {
-            return -1;
-        }
-        return set_section(section, name);
-    }
-    eq = strchr(line, '=');
-    if (!eq) {
-        return -1;
-    }
-    *eq = 0;
-    key = trim(line);
-    val = trim(eq + 1);
-    if (key[0] == 0) {
-        return -1;
-    }
-    return sf_ini_set(ini, *section, key, val);
+    rc = sqlite3_step(st);
+    msg = rc == SQLITE_ROW ? (const char *)sqlite3_column_text(st, 0) : NULL;
+    ok = msg && strcmp(msg, "ok") == 0;
+    sqlite3_finalize(st);
+    return ok;
 }
 
-int sf_ini_load(SfIni *ini, const char *path)
+/* 0 open, 1 no save yet, -1 damaged. writing creates a missing file. */
+static int open_db(const char *path, sqlite3 **out, int writing)
 {
-    FILE *f;
-    char *section;
-    int rc = 0;
-    if (!ini || !path) {
-        return -1;
-    }
-    f = fopen(path, "rb");
-    if (!f) {
-        return errno == ENOENT ? 1 : -1;
-    }
-    section = strdup("");
-    if (!section) {
-        fclose(f);
-        return -1;
-    }
-    for (;;) {
-        char *line = NULL;
-        int lr = read_line(f, &line);
-        if (lr == 1) {
-            break;
-        }
-        if (lr != 0 || take_line(ini, &section, line) != 0) {
-            free(line);
-            rc = -1;
-            break;
-        }
-        free(line);
-    }
-    free(section);
-    fclose(f);
-    return rc;
-}
-
-static int section_seen(const SfIni *ini, int i)
-{
-    int j;
-    for (j = 0; j < i; j++) {
-        if (strcmp(ini->e[j].sec, ini->e[i].sec) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static int write_doc(FILE *f, const SfIni *ini)
-{
-    int i;
-    int j;
-    int any = 0;
-    if (ini->note && fprintf(f, "; %s\n\n", ini->note) < 0) {
-        return -1;
-    }
-    for (i = 0; i < ini->n; i++) {
-        if (section_seen(ini, i)) {
-            continue;
-        }
-        if (ini->e[i].sec[0] != 0) {
-            if (any && fputc('\n', f) == EOF) {
-                return -1;
-            }
-            if (fprintf(f, "[%s]\n", ini->e[i].sec) < 0) {
-                return -1;
-            }
-        }
-        for (j = i; j < ini->n; j++) {
-            if (strcmp(ini->e[j].sec, ini->e[i].sec) != 0) {
-                continue;
-            }
-            if (fprintf(f, "%s=%s\n", ini->e[j].key, ini->e[j].val) < 0) {
-                return -1;
-            }
-        }
-        any = 1;
-    }
-    return 0;
-}
-
-static int mkdir_parent(const char *path)
-{
-    char *dir;
-    char *slash;
-    char *back;
-    size_t n;
-    int rc = 0;
-    n = strlen(path);
-    dir = malloc(n + 1);
-    if (!dir) {
-        return -1;
-    }
-    memcpy(dir, path, n + 1);
-    slash = strrchr(dir, '/');
-    back = strrchr(dir, '\\');
-    if (back && (!slash || back > slash)) {
-        slash = back;
-    }
-    if (slash && slash != dir) {
-        *slash = 0;
-        if (mkdir(dir, 0755) != 0 && errno != EEXIST) {
-            rc = -1;
-        }
-    }
-    free(dir);
-    return rc;
-}
-
-int sf_ini_save(const SfIni *ini, const char *path)
-{
-    char *tmp;
-    FILE *f;
-    size_t n;
-    int fd;
-    if (!ini || !path) {
-        return -1;
-    }
-    if (mkdir_parent(path) != 0) {
-        fprintf(stderr, "save: %s: %s\n", path, strerror(errno));
-        return -1;
-    }
-    n = strlen(path);
-    tmp = malloc(n + 5);
-    if (!tmp) {
-        fprintf(stderr, "save: writing %s failed\n", path);
-        return -1;
-    }
-    memcpy(tmp, path, n);
-    memcpy(tmp + n, ".tmp", 5);
-    f = fopen(tmp, "wb");
-    if (!f) {
-        fprintf(stderr, "save: writing %s failed\n", tmp);
-        free(tmp);
-        return -1;
-    }
-    if (write_doc(f, ini) != 0 || fflush(f) != 0) {
-        fprintf(stderr, "save: writing %s failed\n", tmp);
-        fclose(f);
-        unlink(tmp);
-        free(tmp);
-        return -1;
-    }
-    fd = fileno(f);
-    if (fd < 0 || sf_file_sync(fd) != 0) {
-        fprintf(stderr, "save: writing %s failed\n", tmp);
-        fclose(f);
-        unlink(tmp);
-        free(tmp);
-        return -1;
-    }
-    if (fclose(f) != 0) {
-        fprintf(stderr, "save: writing %s failed\n", tmp);
-        unlink(tmp);
-        free(tmp);
-        return -1;
-    }
-    if (rename(tmp, path) != 0) {
-        fprintf(stderr, "save: writing %s failed\n", path);
-        unlink(tmp);
-        free(tmp);
-        return -1;
-    }
-    free(tmp);
-    return 0;
-}
-
-int sf_file_retire(const char *path)
-{
-    size_t n;
-    char *bak;
+    int exists;
+    int flags;
+    int ver = 0;
     int rc;
-    if (!path) {
+    sqlite3 *db = NULL;
+    if (!path || !out) {
         return -1;
     }
-    n = strlen(path);
-    bak = malloc(n + 5);
-    if (!bak) {
+    exists = file_exists(path);
+    if (!exists && !writing) {
+        return 1;
+    }
+    flags = SQLITE_OPEN_READWRITE;
+    if (!exists) {
+        flags |= SQLITE_OPEN_CREATE;
+    }
+    if (sqlite3_open_v2(path, &db, flags, NULL) != SQLITE_OK) {
+        fprintf(stderr, "save: %s: %s\n", path, db ? sqlite3_errmsg(db) : "open failed");
+        sqlite3_close(db);
         return -1;
     }
-    memcpy(bak, path, n);
-    memcpy(bak + n, ".bak", 5);
-    unlink(bak);
-    rc = rename(path, bak);
-    if (rc != 0) {
-        fprintf(stderr, "save: %s: %s\n", path, strerror(errno));
+    sqlite3_busy_timeout(db, 2000);
+    if (exec_sql(db, "PRAGMA journal_mode=DELETE") != 0 || exec_sql(db, "PRAGMA synchronous=FULL") != 0) {
+        sqlite3_close(db);
+        return -1;
     }
-    free(bak);
-    return rc == 0 ? 0 : -1;
+    if (exists && !integrity_ok(db)) {
+        fprintf(stderr, "save: %s is damaged; not loaded\n", path);
+        sqlite3_close(db);
+        return -1;
+    }
+    if (user_version(db, &ver) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    if (ver != 0 && ver != STORE_VERSION) {
+        fprintf(stderr, "save: %s is damaged; not loaded\n", path);
+        sqlite3_close(db);
+        return -1;
+    }
+    if (!writing && ver == 0) {
+        sqlite3_close(db);
+        return 1;
+    }
+    if (writing && ver == 0) {
+        rc = exec_sql(db, "PRAGMA user_version=1");
+        if (rc != 0) {
+            sqlite3_close(db);
+            return -1;
+        }
+    }
+    *out = db;
+    return 0;
 }
 
-static int parse_i64(const char *s, long long min, long long max, long long *out)
+static int ensure(sqlite3 *db, const char *sql)
 {
-    char *end;
-    long long v;
-    if (!s || s[0] == 0) {
+    return exec_sql(db, sql);
+}
+
+static int begin(sqlite3 *db)
+{
+    return exec_sql(db, "BEGIN IMMEDIATE");
+}
+
+static int commit(sqlite3 *db)
+{
+    return exec_sql(db, "COMMIT");
+}
+
+static void rollback(sqlite3 *db)
+{
+    sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+}
+
+static int bind_i(sqlite3_stmt *st, int i, long long v)
+{
+    return sqlite3_bind_int64(st, i, v) == SQLITE_OK ? 0 : -1;
+}
+
+static int bind_blob(sqlite3_stmt *st, int i, const void *p, int n)
+{
+    const void *src = p ? p : "";
+    if (n < 0) {
         return -1;
     }
-    errno = 0;
-    v = strtoll(s, &end, 10);
-    if (end == s || *end != 0 || errno == ERANGE || v < min || v > max) {
+    return sqlite3_bind_blob(st, i, src, n, SQLITE_TRANSIENT) == SQLITE_OK ? 0 : -1;
+}
+
+static int col_i(sqlite3_stmt *st, int i, long long min, long long max, long long *out)
+{
+    long long v;
+    if (sqlite3_column_type(st, i) != SQLITE_INTEGER) {
+        return -1;
+    }
+    v = sqlite3_column_int64(st, i);
+    if (v < min || v > max) {
         return -1;
     }
     *out = v;
     return 0;
 }
 
-static int opt_i(const SfIni *ini, const char *sec, const char *key, long long min, long long max, long long *out)
+static int col_blob(sqlite3_stmt *st, int i, void *dest, int n)
 {
-    const char *v;
-    *out = 0;
-    if (sf_ini_find(ini, sec, key, &v) != 0) {
+    const void *p;
+    if (n < 0 || sqlite3_column_bytes(st, i) != n) {
+        return -1;
+    }
+    if (n == 0) {
         return 0;
     }
-    return parse_i64(v, min, max, out);
-}
-
-static int parse_list(const char *s, int n, long long min, long long max, long long *out)
-{
-    int i;
-    for (i = 0; i < n; i++) {
-        char *end;
-        long long v;
-        while (*s == ' ' || *s == '\t') {
-            s++;
-        }
-        errno = 0;
-        v = strtoll(s, &end, 10);
-        if (end == s || errno == ERANGE || v < min || v > max) {
-            return -1;
-        }
-        out[i] = v;
-        s = end;
-        while (*s == ' ' || *s == '\t') {
-            s++;
-        }
-        if (i + 1 < n) {
-            if (*s != ',') {
-                return -1;
-            }
-            s++;
-        }
-    }
-    while (*s == ' ' || *s == '\t') {
-        s++;
-    }
-    return *s == 0 ? 0 : -1;
-}
-
-static int opt_list(const SfIni *ini, const char *sec, const char *key, int n, long long min, long long max, long long *out)
-{
-    const char *v;
-    if (sf_ini_find(ini, sec, key, &v) != 0) {
-        return 0;
-    }
-    return parse_list(v, n, min, max, out);
-}
-
-static int put_nums(SfIni *ini, const char *sec, const char *key, const long long *v, int n)
-{
-    char buf[512];
-    int i;
-    int at = 0;
-    buf[0] = 0;
-    for (i = 0; i < n; i++) {
-        int w = snprintf(buf + at, sizeof buf - (size_t)at, "%s%lld", i ? "," : "", v[i]);
-        if (w < 0 || (size_t)w >= sizeof buf - (size_t)at) {
-            return -1;
-        }
-        at += w;
-    }
-    return sf_ini_set(ini, sec, key, buf);
-}
-
-static int put_u8s(SfIni *ini, const char *sec, const char *key, const u8 *src, int n)
-{
-    long long tmp[32];
-    int i;
-    if (n < 0 || n > 32) {
+    if (sqlite3_column_type(st, i) != SQLITE_BLOB) {
         return -1;
     }
-    for (i = 0; i < n; i++) {
-        tmp[i] = src[i];
-    }
-    return put_nums(ini, sec, key, tmp, n);
-}
-
-static int put_s8s(SfIni *ini, const char *sec, const char *key, const s8 *src, int n)
-{
-    long long tmp[32];
-    int i;
-    if (n < 0 || n > 32) {
+    p = sqlite3_column_blob(st, i);
+    if (!p) {
         return -1;
     }
-    for (i = 0; i < n; i++) {
-        tmp[i] = src[i];
-    }
-    return put_nums(ini, sec, key, tmp, n);
-}
-
-static int take_u8s(const SfIni *ini, const char *sec, const char *key, u8 *dest, int n)
-{
-    long long tmp[32];
-    int i;
-    if (n < 0 || n > 32) {
-        return -1;
-    }
-    memset(tmp, 0, sizeof tmp);
-    if (opt_list(ini, sec, key, n, 0, 255, tmp) != 0) {
-        return -1;
-    }
-    for (i = 0; i < n; i++) {
-        dest[i] = (u8)tmp[i];
-    }
+    memcpy(dest, p, (size_t)n);
     return 0;
 }
 
-static int take_s8s(const SfIni *ini, const char *sec, const char *key, s8 *dest, int n)
+static int step_row(sqlite3_stmt *st)
 {
-    long long tmp[32];
-    int i;
-    if (n < 0 || n > 32) {
-        return -1;
+    int rc = sqlite3_step(st);
+    if (rc == SQLITE_ROW) {
+        return 0;
     }
-    memset(tmp, 0, sizeof tmp);
-    if (opt_list(ini, sec, key, n, -128, 127, tmp) != 0) {
-        return -1;
-    }
-    for (i = 0; i < n; i++) {
-        dest[i] = (s8)tmp[i];
-    }
-    return 0;
-}
-
-static int hex_nibble(int c)
-{
-    if (c >= '0' && c <= '9') {
-        return c - '0';
-    }
-    if (c >= 'a' && c <= 'f') {
-        return c - 'a' + 10;
-    }
-    if (c >= 'A' && c <= 'F') {
-        return c - 'A' + 10;
+    if (rc == SQLITE_DONE) {
+        return 1;
     }
     return -1;
 }
 
-static int parse_hex(const char *s, u8 *out, int n)
+static int prepare(sqlite3 *db, const char *sql, sqlite3_stmt **st)
 {
-    int i;
-    if (n < 0 || strlen(s) != (size_t)n * 2) {
+    if (sqlite3_prepare_v2(db, sql, -1, st, NULL) != SQLITE_OK) {
+        fprintf(stderr, "save: %s\n", sqlite3_errmsg(db));
         return -1;
-    }
-    for (i = 0; i < n; i++) {
-        int hi = hex_nibble((unsigned char)s[i * 2]);
-        int lo = hex_nibble((unsigned char)s[i * 2 + 1]);
-        if (hi < 0 || lo < 0) {
-            return -1;
-        }
-        out[i] = (u8)((hi << 4) | lo);
     }
     return 0;
 }
 
-static int put_hex(SfIni *ini, const char *sec, const char *key, const void *src, int n)
+static const char k_system_ins[] =
+    "INSERT OR REPLACE INTO system ("
+    "id, difficulty, time_limit, battle0, battle1, damage_level, handicap,"
+    "partner0, partner1, adjust_x, adjust_y, screen_size, screen_mode,"
+    "guard_check, auto_save, analog_stick, bgm_type, sound_mode,"
+    "bgm_level, se_level, extra_option, sum,"
+    "pad0_vibration, pad1_vibration, pad0_shot, pad1_shot, color0, color1, extra"
+    ") VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+
+static const char k_rank_ins[] =
+    "INSERT OR REPLACE INTO rank ("
+    "idx, name, player, score, cpu_grade, grade, wins, player_color, all_clear"
+    ") VALUES (?,?,?,?,?,?,?,?,?)";
+
+static int write_system_tx(sqlite3 *db, const struct _SAVE_W *sw)
 {
-    static const char hexd[] = "0123456789abcdef";
-    const u8 *p = src;
-    char *s;
+    sqlite3_stmt *st = NULL;
     int i;
-    int rc;
-    if (n < 0 || (size_t)n > (SIZE_MAX - 1) / 2) {
+    int rc = -1;
+    if (begin(db) != 0) {
         return -1;
     }
-    s = malloc((size_t)n * 2 + 1);
-    if (!s) {
+    if (prepare(db, k_system_ins, &st) != 0) {
+        rollback(db);
         return -1;
     }
-    for (i = 0; i < n; i++) {
-        s[i * 2] = hexd[p[i] >> 4];
-        s[i * 2 + 1] = hexd[p[i] & 15];
+    if (bind_i(st, 1, sw->Difficulty) != 0 || bind_i(st, 2, sw->Time_Limit) != 0 ||
+        bind_i(st, 3, sw->Battle_Number[0]) != 0 || bind_i(st, 4, sw->Battle_Number[1]) != 0 ||
+        bind_i(st, 5, sw->Damage_Level) != 0 || bind_i(st, 6, sw->Handicap) != 0 ||
+        bind_i(st, 7, sw->Partner_Type[0]) != 0 || bind_i(st, 8, sw->Partner_Type[1]) != 0 ||
+        bind_i(st, 9, sw->Adjust_X) != 0 || bind_i(st, 10, sw->Adjust_Y) != 0 ||
+        bind_i(st, 11, sw->Screen_Size) != 0 || bind_i(st, 12, sw->Screen_Mode) != 0 ||
+        bind_i(st, 13, sw->GuardCheck) != 0 || bind_i(st, 14, sw->Auto_Save) != 0 ||
+        bind_i(st, 15, sw->AnalogStick) != 0 || bind_i(st, 16, sw->BgmType) != 0 ||
+        bind_i(st, 17, sw->SoundMode) != 0 || bind_i(st, 18, sw->BGM_Level) != 0 ||
+        bind_i(st, 19, sw->SE_Level) != 0 || bind_i(st, 20, sw->Extra_Option) != 0 ||
+        bind_i(st, 21, sw->sum) != 0 || bind_i(st, 22, sw->Pad_Infor[0].Vibration) != 0 ||
+        bind_i(st, 23, sw->Pad_Infor[1].Vibration) != 0 ||
+        bind_blob(st, 24, sw->Pad_Infor[0].Shot, 8) != 0 || bind_blob(st, 25, sw->Pad_Infor[1].Shot, 8) != 0 ||
+        bind_blob(st, 26, sw->PL_Color[0], 20) != 0 || bind_blob(st, 27, sw->PL_Color[1], 20) != 0 ||
+        bind_blob(st, 28, sw->extra_option.contents, 32) != 0 || sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        rollback(db);
+        return -1;
     }
-    s[n * 2] = 0;
-    rc = sf_ini_set(ini, sec, key, s);
-    free(s);
+    sqlite3_finalize(st);
+    st = NULL;
+    if (prepare(db, k_rank_ins, &st) != 0) {
+        rollback(db);
+        return -1;
+    }
+    for (i = 0; i < 20; i++) {
+        const RANK_DATA *r = &sw->Ranking[i];
+        sqlite3_reset(st);
+        sqlite3_clear_bindings(st);
+        if (bind_i(st, 1, i) != 0 || bind_blob(st, 2, r->name, 3) != 0 || bind_i(st, 3, r->player) != 0 ||
+            bind_i(st, 4, r->score) != 0 || bind_i(st, 5, r->cpu_grade) != 0 || bind_i(st, 6, r->grade) != 0 ||
+            bind_i(st, 7, r->wins) != 0 || bind_i(st, 8, r->player_color) != 0 || bind_i(st, 9, r->all_clear) != 0 ||
+            sqlite3_step(st) != SQLITE_DONE) {
+            sqlite3_finalize(st);
+            rollback(db);
+            return -1;
+        }
+    }
+    sqlite3_finalize(st);
+    rc = commit(db);
+    if (rc != 0) {
+        rollback(db);
+    }
     return rc;
 }
 
-static int take_hex(const SfIni *ini, const char *sec, const char *key, void *dest, int n)
+static int read_ranks(sqlite3 *db, struct _SAVE_W *sw)
 {
-    const char *v;
-    if (sf_ini_find(ini, sec, key, &v) != 0) {
-        return 0;
-    }
-    return parse_hex(v, dest, n);
-}
-
-static void limits(int kind, long long *min, long long *max)
-{
-    switch (kind) {
-    case F_S8:
-        *min = -128;
-        *max = 127;
-        break;
-    case F_U8:
-        *min = 0;
-        *max = 255;
-        break;
-    case F_S16:
-        *min = -32768;
-        *max = 32767;
-        break;
-    case F_U16:
-        *min = 0;
-        *max = 65535;
-        break;
-    default:
-        *min = 0;
-        *max = 4294967295LL;
-        break;
-    }
-}
-
-static long long load_num(const void *base, size_t off, int kind)
-{
-    const char *p = (const char *)base + off;
-    s8 s8v;
-    u8 u8v;
-    s16 s16v;
-    u16 u16v;
-    u32 u32v;
-    switch (kind) {
-    case F_S8:
-        memcpy(&s8v, p, sizeof s8v);
-        return s8v;
-    case F_U8:
-        memcpy(&u8v, p, sizeof u8v);
-        return u8v;
-    case F_S16:
-        memcpy(&s16v, p, sizeof s16v);
-        return s16v;
-    case F_U16:
-        memcpy(&u16v, p, sizeof u16v);
-        return u16v;
-    default:
-        memcpy(&u32v, p, sizeof u32v);
-        return u32v;
-    }
-}
-
-static void store_num(void *base, size_t off, int kind, long long v)
-{
-    char *p = (char *)base + off;
-    s8 s8v;
-    u8 u8v;
-    s16 s16v;
-    u16 u16v;
-    u32 u32v;
-    switch (kind) {
-    case F_S8:
-        s8v = (s8)v;
-        memcpy(p, &s8v, sizeof s8v);
-        break;
-    case F_U8:
-        u8v = (u8)v;
-        memcpy(p, &u8v, sizeof u8v);
-        break;
-    case F_S16:
-        s16v = (s16)v;
-        memcpy(p, &s16v, sizeof s16v);
-        break;
-    case F_U16:
-        u16v = (u16)v;
-        memcpy(p, &u16v, sizeof u16v);
-        break;
-    default:
-        u32v = (u32)v;
-        memcpy(p, &u32v, sizeof u32v);
-        break;
-    }
-}
-
-static int write_fields(SfIni *ini, const void *base, const Field *f, int n)
-{
-    int i;
-    for (i = 0; i < n; i++) {
-        if (sf_ini_set_int(ini, f[i].sec, f[i].key, load_num(base, f[i].off, f[i].kind)) != 0) {
-            return -1;
-        }
-    }
-    return 0;
-}
-
-static int read_fields(const SfIni *ini, void *base, const Field *f, int n)
-{
-    int i;
-    for (i = 0; i < n; i++) {
-        long long min;
-        long long max;
-        long long v;
-        limits(f[i].kind, &min, &max);
-        if (opt_i(ini, f[i].sec, f[i].key, min, max, &v) != 0) {
-            return -1;
-        }
-        store_num(base, f[i].off, f[i].kind, v);
-    }
-    return 0;
-}
-
-static int need_version(const SfIni *ini, const char *sec)
-{
-    const char *v;
-    long long n = 0;
-    if (sf_ini_find(ini, sec, "version", &v) != 0) {
+    sqlite3_stmt *st = NULL;
+    int n = 0;
+    int rc;
+    if (prepare(db, "SELECT idx, name, player, score, cpu_grade, grade, wins, player_color, all_clear "
+                    "FROM rank ORDER BY idx",
+                &st) != 0) {
         return -1;
     }
-    return parse_i64(v, STORE_VERSION, STORE_VERSION, &n);
+    for (;;) {
+        long long idx;
+        long long player;
+        long long score;
+        long long cpu;
+        long long grade;
+        long long wins;
+        long long color;
+        long long clear;
+        RANK_DATA *r;
+        rc = step_row(st);
+        if (rc == 1) {
+            break;
+        }
+        if (rc != 0 || n >= 20) {
+            sqlite3_finalize(st);
+            return -1;
+        }
+        if (col_i(st, 0, 0, 19, &idx) != 0 || idx != n || col_blob(st, 1, sw->Ranking[n].name, 3) != 0 ||
+            col_i(st, 2, 0, 65535, &player) != 0 || col_i(st, 3, 0, 4294967295LL, &score) != 0 ||
+            col_i(st, 4, -128, 127, &cpu) != 0 || col_i(st, 5, -128, 127, &grade) != 0 ||
+            col_i(st, 6, 0, 65535, &wins) != 0 || col_i(st, 7, 0, 255, &color) != 0 ||
+            col_i(st, 8, 0, 255, &clear) != 0) {
+            sqlite3_finalize(st);
+            return -1;
+        }
+        r = &sw->Ranking[n];
+        r->player = (u16)player;
+        r->score = (u32)score;
+        r->cpu_grade = (s8)cpu;
+        r->grade = (s8)grade;
+        r->wins = (u16)wins;
+        r->player_color = (u8)color;
+        r->all_clear = (u8)clear;
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n == 20 ? 0 : -1;
 }
 
-static int write_dir(SfIni *ini, const char *sec, const SystemDir *d, int versioned)
+int sf_store_read_system(const char *path, struct _SAVE_W *sw)
 {
-    int r;
-    char key[8];
-    if (versioned && sf_ini_set_int(ini, sec, "version", STORE_VERSION) != 0) {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
+    int rc;
+    long long v[22];
+    int i;
+    if (!path || !sw) {
         return -1;
     }
-    for (r = 0; r < 10; r++) {
-        snprintf(key, sizeof key, "row%d", r);
-        if (put_s8s(ini, sec, key, d->contents[r], 7) != 0) {
+    rc = open_db(path, &db, 0);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_game_sql) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    if (prepare(db, "SELECT difficulty, time_limit, battle0, battle1, damage_level, handicap,"
+                    "partner0, partner1, adjust_x, adjust_y, screen_size, screen_mode,"
+                    "guard_check, auto_save, analog_stick, bgm_type, sound_mode,"
+                    "bgm_level, se_level, extra_option, sum, pad0_vibration, pad1_vibration,"
+                    "pad0_shot, pad1_shot, color0, color1, extra FROM system WHERE id=1",
+                &st) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    rc = step_row(st);
+    if (rc != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return rc;
+    }
+    memset(sw, 0, sizeof *sw);
+    for (i = 0; i < 22; i++) {
+        long long min = 0;
+        long long max = 255;
+        if (i == 1 || i == 8 || i == 9) {
+            min = -128;
+            max = 127;
+        } else if (i == 20) {
+            min = 0;
+            max = 4294967295LL;
+        }
+        if (col_i(st, i, min, max, &v[i]) != 0) {
+            sqlite3_finalize(st);
+            sqlite3_close(db);
             return -1;
         }
     }
-    return sf_ini_set_int(ini, sec, "sum", d->sum);
+    sw->Difficulty = (u8)v[0];
+    sw->Time_Limit = (s8)v[1];
+    sw->Battle_Number[0] = (u8)v[2];
+    sw->Battle_Number[1] = (u8)v[3];
+    sw->Damage_Level = (u8)v[4];
+    sw->Handicap = (u8)v[5];
+    sw->Partner_Type[0] = (u8)v[6];
+    sw->Partner_Type[1] = (u8)v[7];
+    sw->Adjust_X = (s8)v[8];
+    sw->Adjust_Y = (s8)v[9];
+    sw->Screen_Size = (u8)v[10];
+    sw->Screen_Mode = (u8)v[11];
+    sw->GuardCheck = (u8)v[12];
+    sw->Auto_Save = (u8)v[13];
+    sw->AnalogStick = (u8)v[14];
+    sw->BgmType = (u8)v[15];
+    sw->SoundMode = (u8)v[16];
+    sw->BGM_Level = (u8)v[17];
+    sw->SE_Level = (u8)v[18];
+    sw->Extra_Option = (u8)v[19];
+    sw->sum = (u32)v[20];
+    sw->Pad_Infor[0].Vibration = (u8)v[21];
+    if (col_i(st, 22, 0, 255, &v[0]) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    sw->Pad_Infor[1].Vibration = (u8)v[0];
+    if (col_blob(st, 23, sw->Pad_Infor[0].Shot, 8) != 0 || col_blob(st, 24, sw->Pad_Infor[1].Shot, 8) != 0 ||
+        col_blob(st, 25, sw->PL_Color[0], 20) != 0 || col_blob(st, 26, sw->PL_Color[1], 20) != 0 ||
+        col_blob(st, 27, sw->extra_option.contents, 32) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    sqlite3_finalize(st);
+    rc = read_ranks(db, sw);
+    sqlite3_close(db);
+    return rc;
 }
 
-static int read_dir(const SfIni *ini, const char *sec, SystemDir *d, int versioned)
+int sf_store_write_system(const char *path, const struct _SAVE_W *sw)
 {
-    int r;
-    int i;
-    char key[8];
-    long long row[7];
+    sqlite3 *db = NULL;
+    int rc;
+    if (!path || !sw) {
+        return -1;
+    }
+    rc = open_db(path, &db, 1);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_game_sql) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    rc = write_system_tx(db, sw);
+    sqlite3_close(db);
+    if (rc != 0) {
+        fprintf(stderr, "save: writing %s failed\n", path);
+    }
+    return rc;
+}
+
+int sf_store_read_directions(const char *path, SystemDir *dir)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
     long long sum;
-    if (versioned && need_version(ini, sec) != 0) {
+    int rc;
+    if (!path || !dir) {
         return -1;
     }
-    for (r = 0; r < 10; r++) {
-        snprintf(key, sizeof key, "row%d", r);
-        memset(row, 0, sizeof row);
-        if (opt_list(ini, sec, key, 7, -128, 127, row) != 0) {
-            return -1;
-        }
-        for (i = 0; i < 7; i++) {
-            d->contents[r][i] = (s8)row[i];
-        }
+    rc = open_db(path, &db, 0);
+    if (rc != 0) {
+        return rc;
     }
-    if (opt_i(ini, sec, "sum", 0, 65535, &sum) != 0) {
+    if (ensure(db, k_game_sql) != 0) {
+        sqlite3_close(db);
         return -1;
     }
-    d->sum = (u16)sum;
+    if (prepare(db, "SELECT rows, sum FROM directions WHERE id=1", &st) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    rc = step_row(st);
+    if (rc != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return rc;
+    }
+    memset(dir, 0, sizeof *dir);
+    if (col_blob(st, 0, dir->contents, 70) != 0 || col_i(st, 1, 0, 65535, &sum) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    dir->sum = (u16)sum;
+    sqlite3_finalize(st);
+    sqlite3_close(db);
     return 0;
 }
 
-static int write_ranks(SfIni *ini, const struct _SAVE_W *sw)
+int sf_store_write_directions(const char *path, const SystemDir *dir)
 {
-    int i;
-    char key[16];
-    for (i = 0; i < 20; i++) {
-        const RANK_DATA *r = &sw->Ranking[i];
-        long long name[3];
-        name[0] = r->name[0];
-        name[1] = r->name[1];
-        name[2] = r->name[2];
-        snprintf(key, sizeof key, "r%d_name", i);
-        if (put_nums(ini, "rank", key, name, 3) != 0) {
-            return -1;
-        }
-        snprintf(key, sizeof key, "r%d_player", i);
-        if (sf_ini_set_int(ini, "rank", key, r->player) != 0) {
-            return -1;
-        }
-        snprintf(key, sizeof key, "r%d_score", i);
-        if (sf_ini_set_int(ini, "rank", key, r->score) != 0) {
-            return -1;
-        }
-        snprintf(key, sizeof key, "r%d_cpu_grade", i);
-        if (sf_ini_set_int(ini, "rank", key, r->cpu_grade) != 0) {
-            return -1;
-        }
-        snprintf(key, sizeof key, "r%d_grade", i);
-        if (sf_ini_set_int(ini, "rank", key, r->grade) != 0) {
-            return -1;
-        }
-        snprintf(key, sizeof key, "r%d_wins", i);
-        if (sf_ini_set_int(ini, "rank", key, r->wins) != 0) {
-            return -1;
-        }
-        snprintf(key, sizeof key, "r%d_color", i);
-        if (sf_ini_set_int(ini, "rank", key, r->player_color) != 0) {
-            return -1;
-        }
-        snprintf(key, sizeof key, "r%d_clear", i);
-        if (sf_ini_set_int(ini, "rank", key, r->all_clear) != 0) {
-            return -1;
-        }
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
+    int rc;
+    if (!path || !dir) {
+        return -1;
     }
-    return 0;
+    rc = open_db(path, &db, 1);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_game_sql) != 0 || begin(db) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    if (prepare(db, "INSERT OR REPLACE INTO directions (id, rows, sum) VALUES (1, ?, ?)", &st) != 0 ||
+        bind_blob(st, 1, dir->contents, 70) != 0 || bind_i(st, 2, dir->sum) != 0 || sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        rollback(db);
+        sqlite3_close(db);
+        fprintf(stderr, "save: writing %s failed\n", path);
+        return -1;
+    }
+    sqlite3_finalize(st);
+    rc = commit(db);
+    sqlite3_close(db);
+    if (rc != 0) {
+        fprintf(stderr, "save: writing %s failed\n", path);
+    }
+    return rc;
 }
 
-static int read_ranks(const SfIni *ini, struct _SAVE_W *sw)
+static int pack_inputs(const _REPLAY_W *w, u8 **out, int *n_out)
 {
+    int last;
     int i;
-    int k;
-    char key[16];
-    long long name[3];
-    long long v;
-    for (i = 0; i < 20; i++) {
-        RANK_DATA *r = &sw->Ranking[i];
-        snprintf(key, sizeof key, "r%d_name", i);
-        memset(name, 0, sizeof name);
-        if (opt_list(ini, "rank", key, 3, 0, 255, name) != 0) {
-            return -1;
-        }
-        for (k = 0; k < 3; k++) {
-            r->name[k] = (u8)name[k];
-        }
-        snprintf(key, sizeof key, "r%d_player", i);
-        if (opt_i(ini, "rank", key, 0, 65535, &v) != 0) {
-            return -1;
-        }
-        r->player = (u16)v;
-        snprintf(key, sizeof key, "r%d_score", i);
-        if (opt_i(ini, "rank", key, 0, 4294967295LL, &v) != 0) {
-            return -1;
-        }
-        r->score = (u32)v;
-        snprintf(key, sizeof key, "r%d_cpu_grade", i);
-        if (opt_i(ini, "rank", key, -128, 127, &v) != 0) {
-            return -1;
-        }
-        r->cpu_grade = (s8)v;
-        snprintf(key, sizeof key, "r%d_grade", i);
-        if (opt_i(ini, "rank", key, -128, 127, &v) != 0) {
-            return -1;
-        }
-        r->grade = (s8)v;
-        snprintf(key, sizeof key, "r%d_wins", i);
-        if (opt_i(ini, "rank", key, 0, 65535, &v) != 0) {
-            return -1;
-        }
-        r->wins = (u16)v;
-        snprintf(key, sizeof key, "r%d_color", i);
-        if (opt_i(ini, "rank", key, 0, 255, &v) != 0) {
-            return -1;
-        }
-        r->player_color = (u8)v;
-        snprintf(key, sizeof key, "r%d_clear", i);
-        if (opt_i(ini, "rank", key, 0, 255, &v) != 0) {
-            return -1;
-        }
-        r->all_clear = (u8)v;
-    }
-    return 0;
-}
-
-static int write_system_body(SfIni *ini, const struct _SAVE_W *sw)
-{
-    int i;
-    char key[8];
-    if (sf_ini_set_int(ini, "system", "version", STORE_VERSION) != 0) {
-        return -1;
-    }
-    if (write_fields(ini, sw, k_system, (int)(sizeof k_system / sizeof k_system[0])) != 0) {
-        return -1;
-    }
-    if (put_u8s(ini, "system", "battle_number", sw->Battle_Number, 2) != 0 ||
-        put_u8s(ini, "system", "partner_type", sw->Partner_Type, 2) != 0 ||
-        put_u8s(ini, "pad0", "shot", sw->Pad_Infor[0].Shot, 8) != 0 ||
-        put_u8s(ini, "pad0", "free", sw->Pad_Infor[0].free, 3) != 0 ||
-        put_u8s(ini, "pad1", "shot", sw->Pad_Infor[1].Shot, 8) != 0 ||
-        put_u8s(ini, "pad1", "free", sw->Pad_Infor[1].free, 3) != 0 ||
-        put_u8s(ini, "color", "p0", sw->PL_Color[0], 20) != 0 || put_u8s(ini, "color", "p1", sw->PL_Color[1], 20) != 0) {
-        return -1;
-    }
-    for (i = 0; i < 4; i++) {
-        snprintf(key, sizeof key, "row%d", i);
-        if (put_s8s(ini, "extra", key, sw->extra_option.contents[i], 8) != 0) {
-            return -1;
-        }
-    }
-    return write_ranks(ini, sw);
-}
-
-static int read_system_body(const SfIni *ini, struct _SAVE_W *sw)
-{
-    int i;
-    char key[8];
-    if (need_version(ini, "system") != 0) {
-        return -1;
-    }
-    if (read_fields(ini, sw, k_system, (int)(sizeof k_system / sizeof k_system[0])) != 0) {
-        return -1;
-    }
-    if (take_u8s(ini, "system", "battle_number", sw->Battle_Number, 2) != 0 ||
-        take_u8s(ini, "system", "partner_type", sw->Partner_Type, 2) != 0 ||
-        take_u8s(ini, "pad0", "shot", sw->Pad_Infor[0].Shot, 8) != 0 ||
-        take_u8s(ini, "pad0", "free", sw->Pad_Infor[0].free, 3) != 0 ||
-        take_u8s(ini, "pad1", "shot", sw->Pad_Infor[1].Shot, 8) != 0 ||
-        take_u8s(ini, "pad1", "free", sw->Pad_Infor[1].free, 3) != 0 ||
-        take_u8s(ini, "color", "p0", sw->PL_Color[0], 20) != 0 || take_u8s(ini, "color", "p1", sw->PL_Color[1], 20) != 0) {
-        return -1;
-    }
-    for (i = 0; i < 4; i++) {
-        snprintf(key, sizeof key, "row%d", i);
-        if (take_s8s(ini, "extra", key, sw->extra_option.contents[i], 8) != 0) {
-            return -1;
-        }
-    }
-    return read_ranks(ini, sw);
-}
-
-static int last_input(const _REPLAY_W *w)
-{
-    int i;
+    int frames;
+    u8 *buf;
+    u16 a;
+    u16 b;
+    last = -1;
     for (i = INPUT_FRAMES - 1; i >= 0; i--) {
         if (w->io_unit.key_buff[0][i] != 0 || w->io_unit.key_buff[1][i] != 0) {
-            return i;
+            last = i;
+            break;
         }
     }
-    return -1;
-}
-
-static int write_inputs(SfIni *ini, const _REPLAY_W *w)
-{
-    int last = last_input(w);
-    int frames = last + 1;
-    u8 *buf;
-    int i;
-    int rc;
-    if (sf_ini_set_int(ini, "inputs", "frames", frames) != 0) {
-        return -1;
-    }
+    frames = last + 1;
+    *n_out = frames * 4;
+    *out = NULL;
     if (frames == 0) {
         return 0;
     }
@@ -1079,281 +619,524 @@ static int write_inputs(SfIni *ini, const _REPLAY_W *w)
         return -1;
     }
     for (i = 0; i < frames; i++) {
-        u16 a = w->io_unit.key_buff[0][i];
-        u16 b = w->io_unit.key_buff[1][i];
+        a = w->io_unit.key_buff[0][i];
+        b = w->io_unit.key_buff[1][i];
         buf[i * 4] = (u8)a;
         buf[i * 4 + 1] = (u8)(a >> 8);
         buf[i * 4 + 2] = (u8)b;
         buf[i * 4 + 3] = (u8)(b >> 8);
     }
-    rc = put_hex(ini, "inputs", "data", buf, frames * 4);
-    free(buf);
-    return rc;
-}
-
-static int read_inputs(const SfIni *ini, _REPLAY_W *w)
-{
-    /* NULL until sf_ini_find writes them. Ubuntu 24.04's gcc, at -O3, otherwise
-     * says the frame count is uninitialized inside parse_i64. */
-    const char *frames_s = NULL;
-    const char *data = NULL;
-    long long frames = 0;
-    int has_frames;
-    int has_data;
-    u8 *buf;
-    int i;
-    has_frames = sf_ini_find(ini, "inputs", "frames", &frames_s) == 0;
-    has_data = sf_ini_find(ini, "inputs", "data", &data) == 0;
-    if (!has_frames && !has_data) {
-        return 0;
-    }
-    if (!has_frames || parse_i64(frames_s, 0, INPUT_FRAMES, &frames) != 0) {
-        return -1;
-    }
-    if (frames == 0) {
-        return has_data && data[0] != 0 ? -1 : 0;
-    }
-    if (!has_data) {
-        return -1;
-    }
-    buf = malloc((size_t)frames * 4);
-    if (!buf) {
-        return -1;
-    }
-    if (parse_hex(data, buf, (int)frames * 4) != 0) {
-        free(buf);
-        return -1;
-    }
-    for (i = 0; i < (int)frames; i++) {
-        w->io_unit.key_buff[0][i] = (u16)(buf[i * 4] | (buf[i * 4 + 1] << 8));
-        w->io_unit.key_buff[1][i] = (u16)(buf[i * 4 + 2] | (buf[i * 4 + 3] << 8));
-    }
-    free(buf);
+    *out = buf;
     return 0;
 }
 
-static int write_replay_body(SfIni *ini, const _REPLAY_W *w)
+static int take_inputs(sqlite3_stmt *st, int col, _REPLAY_W *w)
 {
+    int got;
+    int frames;
     int i;
-    char key[16];
-    if (sf_ini_set_int(ini, "replay", "version", STORE_VERSION) != 0) {
+    const u8 *p;
+    got = sqlite3_column_bytes(st, col);
+    if (got < 0 || (got % 4) != 0) {
         return -1;
     }
-    if (write_fields(ini, w, k_replay, (int)(sizeof k_replay / sizeof k_replay[0])) != 0) {
+    frames = got / 4;
+    if (frames > INPUT_FRAMES) {
         return -1;
     }
-    if (put_hex(ini, "replay", "free_free", w->free_free, 4) != 0 || put_hex(ini, "header", "data", w->header, 640) != 0 ||
-        put_hex(ini, "reserve", "data", w->sega_reserve, 64) != 0) {
+    if (frames == 0) {
+        return 0;
+    }
+    if (sqlite3_column_type(st, col) != SQLITE_BLOB) {
         return -1;
     }
-    if (write_fields(ini, w, k_match, (int)(sizeof k_match / sizeof k_match[0])) != 0) {
+    p = sqlite3_column_blob(st, col);
+    if (!p) {
         return -1;
     }
-    if (put_s8s(ini, "match", "vital", w->game_infor.Vital_Handicap, 2) != 0) {
-        return -1;
+    for (i = 0; i < frames; i++) {
+        w->io_unit.key_buff[0][i] = (u16)(p[i * 4] | (p[i * 4 + 1] << 8));
+        w->io_unit.key_buff[1][i] = (u16)(p[i * 4 + 2] | (p[i * 4 + 3] << 8));
     }
-    if (write_fields(ini, w, k_mini, (int)(sizeof k_mini / sizeof k_mini[0])) != 0) {
-        return -1;
-    }
-    if (put_u8s(ini, "mini", "battle_number", w->mini_save_w.Battle_Number, 2) != 0 ||
-        put_u8s(ini, "mini", "pad0_shot", w->mini_save_w.Pad_Infor[0].Shot, 8) != 0 ||
-        put_u8s(ini, "mini", "pad0_free", w->mini_save_w.Pad_Infor[0].free, 3) != 0 ||
-        put_u8s(ini, "mini", "pad1_shot", w->mini_save_w.Pad_Infor[1].Shot, 8) != 0 ||
-        put_u8s(ini, "mini", "pad1_free", w->mini_save_w.Pad_Infor[1].free, 3) != 0) {
-        return -1;
-    }
-    for (i = 0; i < 4; i++) {
-        snprintf(key, sizeof key, "extra_%d", i);
-        if (put_s8s(ini, "mini", key, w->mini_save_w.extra_option.contents[i], 8) != 0) {
-            return -1;
-        }
-    }
-    if (write_dir(ini, "directions", &w->system_dir, 0) != 0) {
-        return -1;
-    }
-    if (put_hex(ini, "net", "handle_1p", w->net_infor.Handle_1P, 18) != 0 ||
-        put_hex(ini, "net", "id_1p", w->net_infor.Id_1P, 8) != 0 ||
-        put_hex(ini, "net", "handle_2p", w->net_infor.Handle_2P, 18) != 0 ||
-        put_hex(ini, "net", "id_2p", w->net_infor.Id_2P, 8) != 0 ||
-        put_hex(ini, "net", "serial", w->net_infor.Serial_No, 6) != 0 ||
-        put_hex(ini, "net", "battle_code", w->net_infor.Battle_Code, 14) != 0 ||
-        put_hex(ini, "lag", "data", w->lag, 14) != 0) {
-        return -1;
-    }
-    return write_inputs(ini, w);
+    return 0;
 }
 
-static int read_replay_body(const SfIni *ini, _REPLAY_W *w)
-{
-    int i;
-    char key[16];
-    if (need_version(ini, "replay") != 0) {
-        return -1;
-    }
-    if (read_fields(ini, w, k_replay, (int)(sizeof k_replay / sizeof k_replay[0])) != 0) {
-        return -1;
-    }
-    if (take_hex(ini, "replay", "free_free", w->free_free, 4) != 0 || take_hex(ini, "header", "data", w->header, 640) != 0 ||
-        take_hex(ini, "reserve", "data", w->sega_reserve, 64) != 0) {
-        return -1;
-    }
-    if (read_fields(ini, w, k_match, (int)(sizeof k_match / sizeof k_match[0])) != 0) {
-        return -1;
-    }
-    if (take_s8s(ini, "match", "vital", w->game_infor.Vital_Handicap, 2) != 0) {
-        return -1;
-    }
-    if (read_fields(ini, w, k_mini, (int)(sizeof k_mini / sizeof k_mini[0])) != 0) {
-        return -1;
-    }
-    if (take_u8s(ini, "mini", "battle_number", w->mini_save_w.Battle_Number, 2) != 0 ||
-        take_u8s(ini, "mini", "pad0_shot", w->mini_save_w.Pad_Infor[0].Shot, 8) != 0 ||
-        take_u8s(ini, "mini", "pad0_free", w->mini_save_w.Pad_Infor[0].free, 3) != 0 ||
-        take_u8s(ini, "mini", "pad1_shot", w->mini_save_w.Pad_Infor[1].Shot, 8) != 0 ||
-        take_u8s(ini, "mini", "pad1_free", w->mini_save_w.Pad_Infor[1].free, 3) != 0) {
-        return -1;
-    }
-    for (i = 0; i < 4; i++) {
-        snprintf(key, sizeof key, "extra_%d", i);
-        if (take_s8s(ini, "mini", key, w->mini_save_w.extra_option.contents[i], 8) != 0) {
-            return -1;
-        }
-    }
-    if (read_dir(ini, "directions", &w->system_dir, 0) != 0) {
-        return -1;
-    }
-    if (take_hex(ini, "net", "handle_1p", w->net_infor.Handle_1P, 18) != 0 ||
-        take_hex(ini, "net", "id_1p", w->net_infor.Id_1P, 8) != 0 ||
-        take_hex(ini, "net", "handle_2p", w->net_infor.Handle_2P, 18) != 0 ||
-        take_hex(ini, "net", "id_2p", w->net_infor.Id_2P, 8) != 0 ||
-        take_hex(ini, "net", "serial", w->net_infor.Serial_No, 6) != 0 ||
-        take_hex(ini, "net", "battle_code", w->net_infor.Battle_Code, 14) != 0 ||
-        take_hex(ini, "lag", "data", w->lag, 14) != 0) {
-        return -1;
-    }
-    w->game_infor.fname = NULL;
-    return read_inputs(ini, w);
-}
+static const char k_replay_ins[] =
+    "INSERT OR REPLACE INTO replay ("
+    "slot, saved_at, control_time, difficulty, monitor_type, champion, full_data, sum,"
+    "p0_char, p0_sa, p0_color, p0_type, p1_char, p1_sa, p1_color, p1_type,"
+    "stage, direction_working, vital0, vital1,"
+    "random_ix16, random_ix32, random_ix16_ex, random_ix32_ex,"
+    "winner, play_type, players_timer, old_mes_no2, old_mes_no3, old_mes_no_pl, mes_already,"
+    "mini_time, mini_battle0, mini_battle1, mini_damage, mini_pad0_vib, mini_pad1_vib,"
+    "mini_pad0_shot, mini_pad1_shot, mini_extra, directions, directions_sum, inputs"
+    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
-static int finish_read(SfIni *ini, const char *path, int rc)
+int sf_store_write_replay(const char *path, int slot, const _REPLAY_W *w)
 {
-    sf_ini_free(ini);
-    if (rc < 0) {
-        fprintf(stderr, "save: %s is damaged; not loaded\n", path);
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
+    u8 *inputs = NULL;
+    int n_in = 0;
+    int rc;
+    const struct _REP_GAME_INFOR *g;
+    const struct _MINI_SAVE_W *m;
+    if (!path || !w || slot < 0 || slot >= REPLAY_SLOTS) {
+        return -1;
+    }
+    if (pack_inputs(w, &inputs, &n_in) != 0) {
+        return -1;
+    }
+    rc = open_db(path, &db, 1);
+    if (rc != 0) {
+        free(inputs);
+        return rc;
+    }
+    g = &w->game_infor;
+    m = &w->mini_save_w;
+    if (ensure(db, k_game_sql) != 0 || begin(db) != 0 || prepare(db, k_replay_ins, &st) != 0) {
+        free(inputs);
+        sqlite3_close(db);
+        return -1;
+    }
+    if (bind_i(st, 1, slot) != 0 || bind_i(st, 2, (long long)time(NULL)) != 0 ||
+        bind_i(st, 3, w->Control_Time_Buff) != 0 || bind_i(st, 4, w->Difficulty) != 0 ||
+        bind_i(st, 5, w->Monitor_Type) != 0 || bind_i(st, 6, w->champion) != 0 || bind_i(st, 7, w->full_data) != 0 ||
+        bind_i(st, 8, w->sum) != 0 || bind_i(st, 9, g->player_infor[0].my_char) != 0 ||
+        bind_i(st, 10, g->player_infor[0].sa) != 0 || bind_i(st, 11, g->player_infor[0].color) != 0 ||
+        bind_i(st, 12, g->player_infor[0].player_type) != 0 || bind_i(st, 13, g->player_infor[1].my_char) != 0 ||
+        bind_i(st, 14, g->player_infor[1].sa) != 0 || bind_i(st, 15, g->player_infor[1].color) != 0 ||
+        bind_i(st, 16, g->player_infor[1].player_type) != 0 || bind_i(st, 17, g->stage) != 0 ||
+        bind_i(st, 18, g->Direction_Working) != 0 || bind_i(st, 19, g->Vital_Handicap[0]) != 0 ||
+        bind_i(st, 20, g->Vital_Handicap[1]) != 0 || bind_i(st, 21, g->Random_ix16) != 0 ||
+        bind_i(st, 22, g->Random_ix32) != 0 || bind_i(st, 23, g->Random_ix16_ex) != 0 ||
+        bind_i(st, 24, g->Random_ix32_ex) != 0 || bind_i(st, 25, g->winner) != 0 || bind_i(st, 26, g->play_type) != 0 ||
+        bind_i(st, 27, g->players_timer) != 0 || bind_i(st, 28, g->old_mes_no2) != 0 ||
+        bind_i(st, 29, g->old_mes_no3) != 0 || bind_i(st, 30, g->old_mes_no_pl) != 0 ||
+        bind_i(st, 31, g->mes_already) != 0 || bind_i(st, 32, m->Time_Limit) != 0 ||
+        bind_i(st, 33, m->Battle_Number[0]) != 0 || bind_i(st, 34, m->Battle_Number[1]) != 0 ||
+        bind_i(st, 35, m->Damage_Level) != 0 || bind_i(st, 36, m->Pad_Infor[0].Vibration) != 0 ||
+        bind_i(st, 37, m->Pad_Infor[1].Vibration) != 0 || bind_blob(st, 38, m->Pad_Infor[0].Shot, 8) != 0 ||
+        bind_blob(st, 39, m->Pad_Infor[1].Shot, 8) != 0 || bind_blob(st, 40, m->extra_option.contents, 32) != 0 ||
+        bind_blob(st, 41, w->system_dir.contents, 70) != 0 || bind_i(st, 42, w->system_dir.sum) != 0 ||
+        bind_blob(st, 43, inputs, n_in) != 0 || sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        rollback(db);
+        sqlite3_close(db);
+        free(inputs);
+        fprintf(stderr, "save: writing %s failed\n", path);
+        return -1;
+    }
+    sqlite3_finalize(st);
+    free(inputs);
+    rc = commit(db);
+    sqlite3_close(db);
+    if (rc != 0) {
+        fprintf(stderr, "save: writing %s failed\n", path);
     }
     return rc;
 }
 
-static int finish_write(SfIni *ini, const char *path, int rc)
+int sf_store_read_replay(const char *path, int slot, _REPLAY_W *w, long long *saved_at)
 {
-    if (rc == 0) {
-        rc = sf_ini_save(ini, path);
-    } else {
-        fprintf(stderr, "save: writing %s failed\n", path);
-    }
-    sf_ini_free(ini);
-    return rc;
-}
-
-int sf_store_read_system(const char *path, struct _SAVE_W *sw)
-{
-    SfIni *ini;
-    int r;
-    if (!path || !sw) {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
+    int rc;
+    int i;
+    long long v;
+    struct _REP_GAME_INFOR *g;
+    struct _MINI_SAVE_W *m;
+    /* Columns after saved_at: control_time through mes_already. */
+    static const long long k_min[29] = { -32768, 0, 0, 0, 0, 0, 0, -128, -128, -128, 0, -128, -128, -128, -128, -128,
+                                         -128, -128, -32768, -32768, -32768, -32768, 0, 0, 0, -32768, -32768, -32768,
+                                         -32768 };
+    static const long long k_max[29] = { 32767, 255, 255, 255, 255, 4294967295LL, 255, 127, 127, 127, 255, 127, 127,
+                                         127, 127, 127, 127, 127, 32767, 32767, 32767, 32767, 255, 255, 65535, 32767,
+                                         32767, 32767, 32767 };
+    if (!path || !w || slot < 0 || slot >= REPLAY_SLOTS) {
         return -1;
     }
-    ini = sf_ini_new();
-    if (!ini) {
+    rc = open_db(path, &db, 0);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_game_sql) != 0) {
+        sqlite3_close(db);
         return -1;
     }
-    r = sf_ini_load(ini, path);
-    if (r != 0) {
-        return finish_read(ini, path, r);
-    }
-    memset(sw, 0, sizeof *sw);
-    return finish_read(ini, path, read_system_body(ini, sw));
-}
-
-int sf_store_write_system(const char *path, const struct _SAVE_W *sw)
-{
-    SfIni *ini;
-    if (!path || !sw) {
+    if (prepare(db, "SELECT saved_at, control_time, difficulty, monitor_type, champion, full_data, sum,"
+                    "p0_char, p0_sa, p0_color, p0_type, p1_char, p1_sa, p1_color, p1_type,"
+                    "stage, direction_working, vital0, vital1,"
+                    "random_ix16, random_ix32, random_ix16_ex, random_ix32_ex,"
+                    "winner, play_type, players_timer, old_mes_no2, old_mes_no3, old_mes_no_pl, mes_already,"
+                    "mini_time, mini_battle0, mini_battle1, mini_damage, mini_pad0_vib, mini_pad1_vib,"
+                    "mini_pad0_shot, mini_pad1_shot, mini_extra, directions, directions_sum, inputs "
+                    "FROM replay WHERE slot=?",
+                &st) != 0 || bind_i(st, 1, slot) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
         return -1;
     }
-    ini = sf_ini_new();
-    if (!ini) {
-        fprintf(stderr, "save: writing %s failed\n", path);
-        return -1;
-    }
-    sf_ini_set_note(ini, "System settings. version 1.");
-    return finish_write(ini, path, write_system_body(ini, sw));
-}
-
-int sf_store_read_directions(const char *path, SystemDir *dir)
-{
-    SfIni *ini;
-    int r;
-    if (!path || !dir) {
-        return -1;
-    }
-    ini = sf_ini_new();
-    if (!ini) {
-        return -1;
-    }
-    r = sf_ini_load(ini, path);
-    if (r != 0) {
-        return finish_read(ini, path, r);
-    }
-    memset(dir, 0, sizeof *dir);
-    return finish_read(ini, path, read_dir(ini, "directions", dir, 1));
-}
-
-int sf_store_write_directions(const char *path, const SystemDir *dir)
-{
-    SfIni *ini;
-    if (!path || !dir) {
-        return -1;
-    }
-    ini = sf_ini_new();
-    if (!ini) {
-        fprintf(stderr, "save: writing %s failed\n", path);
-        return -1;
-    }
-    sf_ini_set_note(ini, "Button directions. version 1.");
-    return finish_write(ini, path, write_dir(ini, "directions", dir, 1));
-}
-
-int sf_store_read_replay(const char *path, _REPLAY_W *w)
-{
-    SfIni *ini;
-    int r;
-    if (!path || !w) {
-        return -1;
-    }
-    ini = sf_ini_new();
-    if (!ini) {
-        return -1;
-    }
-    r = sf_ini_load(ini, path);
-    if (r != 0) {
-        return finish_read(ini, path, r);
+    rc = step_row(st);
+    if (rc != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return rc;
     }
     memset(w, 0, sizeof *w);
     w->game_infor.fname = NULL;
-    return finish_read(ini, path, read_replay_body(ini, w));
-}
-
-int sf_store_write_replay(const char *path, const _REPLAY_W *w)
-{
-    SfIni *ini;
-    if (!path || !w) {
+    if (col_i(st, 0, 0, 4294967295LL, &v) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
         return -1;
     }
-    ini = sf_ini_new();
-    if (!ini) {
+    if (saved_at) {
+        *saved_at = v;
+    }
+    /* columns 1..29 are the integers between saved_at and the blobs */
+    g = &w->game_infor;
+    m = &w->mini_save_w;
+    for (i = 0; i < 29; i++) {
+        if (col_i(st, i + 1, k_min[i], k_max[i], &v) != 0) {
+            sqlite3_finalize(st);
+            sqlite3_close(db);
+            return -1;
+        }
+        switch (i) {
+        case 0:
+            w->Control_Time_Buff = (s16)v;
+            break;
+        case 1:
+            w->Difficulty = (u8)v;
+            break;
+        case 2:
+            w->Monitor_Type = (u8)v;
+            break;
+        case 3:
+            w->champion = (u8)v;
+            break;
+        case 4:
+            w->full_data = (u8)v;
+            break;
+        case 5:
+            w->sum = (u32)v;
+            break;
+        case 6:
+            g->player_infor[0].my_char = (u8)v;
+            break;
+        case 7:
+            g->player_infor[0].sa = (s8)v;
+            break;
+        case 8:
+            g->player_infor[0].color = (s8)v;
+            break;
+        case 9:
+            g->player_infor[0].player_type = (s8)v;
+            break;
+        case 10:
+            g->player_infor[1].my_char = (u8)v;
+            break;
+        case 11:
+            g->player_infor[1].sa = (s8)v;
+            break;
+        case 12:
+            g->player_infor[1].color = (s8)v;
+            break;
+        case 13:
+            g->player_infor[1].player_type = (s8)v;
+            break;
+        case 14:
+            g->stage = (s8)v;
+            break;
+        case 15:
+            g->Direction_Working = (s8)v;
+            break;
+        case 16:
+            g->Vital_Handicap[0] = (s8)v;
+            break;
+        case 17:
+            g->Vital_Handicap[1] = (s8)v;
+            break;
+        case 18:
+            g->Random_ix16 = (s16)v;
+            break;
+        case 19:
+            g->Random_ix32 = (s16)v;
+            break;
+        case 20:
+            g->Random_ix16_ex = (s16)v;
+            break;
+        case 21:
+            g->Random_ix32_ex = (s16)v;
+            break;
+        case 22:
+            g->winner = (u8)v;
+            break;
+        case 23:
+            g->play_type = (u8)v;
+            break;
+        case 24:
+            g->players_timer = (u16)v;
+            break;
+        case 25:
+            g->old_mes_no2 = (s16)v;
+            break;
+        case 26:
+            g->old_mes_no3 = (s16)v;
+            break;
+        case 27:
+            g->old_mes_no_pl = (s16)v;
+            break;
+        default:
+            g->mes_already = (s16)v;
+            break;
+        }
+    }
+    if (col_i(st, 30, -128, 127, &v) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    m->Time_Limit = (s8)v;
+    if (col_i(st, 31, 0, 255, &v) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    m->Battle_Number[0] = (u8)v;
+    if (col_i(st, 32, 0, 255, &v) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    m->Battle_Number[1] = (u8)v;
+    if (col_i(st, 33, 0, 255, &v) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    m->Damage_Level = (u8)v;
+    if (col_i(st, 34, 0, 255, &v) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    m->Pad_Infor[0].Vibration = (u8)v;
+    if (col_i(st, 35, 0, 255, &v) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    m->Pad_Infor[1].Vibration = (u8)v;
+    if (col_blob(st, 36, m->Pad_Infor[0].Shot, 8) != 0 || col_blob(st, 37, m->Pad_Infor[1].Shot, 8) != 0 ||
+        col_blob(st, 38, m->extra_option.contents, 32) != 0 || col_blob(st, 39, w->system_dir.contents, 70) != 0 ||
+        col_i(st, 40, 0, 65535, &v) != 0 || take_inputs(st, 41, w) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    w->system_dir.sum = (u16)v;
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    return 0;
+}
+
+int sf_store_read_window(const char *path, char *mode, unsigned mode_n, int *width, int *height, char *aspect,
+                         unsigned aspect_n)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
+    const char *ms;
+    const char *as;
+    long long w;
+    long long h;
+    int rc;
+    unsigned n;
+    if (!path || !mode || mode_n < 2 || !width || !height || !aspect || aspect_n < 2) {
+        return -1;
+    }
+    rc = open_db(path, &db, 0);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_host_sql) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    if (prepare(db, "SELECT mode, width, height, aspect FROM window WHERE id=1", &st) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    rc = step_row(st);
+    if (rc != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return rc;
+    }
+    ms = (const char *)sqlite3_column_text(st, 0);
+    as = (const char *)sqlite3_column_text(st, 3);
+    if (!ms || !as || col_i(st, 1, 320, 100000, &w) != 0 || col_i(st, 2, 240, 100000, &h) != 0) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    n = (unsigned)strlen(ms);
+    if (n == 0 || n >= mode_n || strlen(as) == 0 || strlen(as) >= aspect_n) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    memcpy(mode, ms, n + 1);
+    memcpy(aspect, as, strlen(as) + 1);
+    *width = (int)w;
+    *height = (int)h;
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    return 0;
+}
+
+int sf_store_write_window(const char *path, const char *mode, int width, int height, const char *aspect)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
+    int rc;
+    if (!path || !mode || !mode[0] || !aspect || !aspect[0] || width < 320 || width > 100000 || height < 240 ||
+        height > 100000) {
+        return -1;
+    }
+    rc = open_db(path, &db, 1);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_host_sql) != 0 || begin(db) != 0 ||
+        prepare(db, "INSERT OR REPLACE INTO window (id, mode, width, height, aspect) VALUES (1, ?, ?, ?, ?)", &st) !=
+            0 ||
+        sqlite3_bind_text(st, 1, mode, -1, SQLITE_TRANSIENT) != SQLITE_OK || bind_i(st, 2, width) != 0 ||
+        bind_i(st, 3, height) != 0 || sqlite3_bind_text(st, 4, aspect, -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+        sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        rollback(db);
+        sqlite3_close(db);
         fprintf(stderr, "save: writing %s failed\n", path);
         return -1;
     }
-    sf_ini_set_note(ini, "Replay. version 1.");
-    return finish_write(ini, path, write_replay_body(ini, w));
+    sqlite3_finalize(st);
+    rc = commit(db);
+    sqlite3_close(db);
+    return rc;
+}
+
+int sf_store_read_keys(const char *path, const char *const *names, char values[][64], int n)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *count = NULL;
+    sqlite3_stmt *st = NULL;
+    long long rows = 0;
+    const char *text;
+    int i;
+    int rc;
+    unsigned nlen;
+    if (!path || !names || !values || n < 0) {
+        return -1;
+    }
+    rc = open_db(path, &db, 0);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_host_sql) != 0 || prepare(db, "SELECT COUNT(*) FROM key", &count) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    if (step_row(count) != 0 || col_i(count, 0, 0, 100000, &rows) != 0) {
+        sqlite3_finalize(count);
+        sqlite3_close(db);
+        return -1;
+    }
+    sqlite3_finalize(count);
+    if (rows == 0) {
+        sqlite3_close(db);
+        return 1;
+    }
+    for (i = 0; i < n; i++) {
+        values[i][0] = 0;
+    }
+    if (prepare(db, "SELECT scancode FROM key WHERE name=?", &st) != 0) {
+        sqlite3_close(db);
+        return -1;
+    }
+    for (i = 0; i < n; i++) {
+        sqlite3_reset(st);
+        sqlite3_clear_bindings(st);
+        if (!names[i] || sqlite3_bind_text(st, 1, names[i], -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+            sqlite3_finalize(st);
+            sqlite3_close(db);
+            return -1;
+        }
+        rc = step_row(st);
+        if (rc == 1) {
+            continue;
+        }
+        if (rc != 0) {
+            sqlite3_finalize(st);
+            sqlite3_close(db);
+            return -1;
+        }
+        text = (const char *)sqlite3_column_text(st, 0);
+        if (!text) {
+            sqlite3_finalize(st);
+            sqlite3_close(db);
+            return -1;
+        }
+        nlen = (unsigned)strlen(text);
+        if (nlen >= 64) {
+            sqlite3_finalize(st);
+            sqlite3_close(db);
+            return -1;
+        }
+        memcpy(values[i], text, nlen + 1);
+    }
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    return 0;
+}
+
+int sf_store_write_keys(const char *path, const char *const *names, const char *const *values, int n)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
+    int i;
+    int rc;
+    if (!path || !names || !values || n < 0) {
+        return -1;
+    }
+    rc = open_db(path, &db, 1);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_host_sql) != 0 || begin(db) != 0 || exec_sql(db, "DELETE FROM key") != 0 ||
+        prepare(db, "INSERT INTO key (name, scancode) VALUES (?, ?)", &st) != 0) {
+        rollback(db);
+        sqlite3_close(db);
+        fprintf(stderr, "save: writing %s failed\n", path);
+        return -1;
+    }
+    for (i = 0; i < n; i++) {
+        sqlite3_reset(st);
+        sqlite3_clear_bindings(st);
+        if (!names[i] || !values[i] || sqlite3_bind_text(st, 1, names[i], -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+            sqlite3_bind_text(st, 2, values[i], -1, SQLITE_TRANSIENT) != SQLITE_OK || sqlite3_step(st) != SQLITE_DONE) {
+            sqlite3_finalize(st);
+            rollback(db);
+            sqlite3_close(db);
+            fprintf(stderr, "save: writing %s failed\n", path);
+            return -1;
+        }
+    }
+    sqlite3_finalize(st);
+    rc = commit(db);
+    sqlite3_close(db);
+    if (rc != 0) {
+        fprintf(stderr, "save: writing %s failed\n", path);
+    }
+    return rc;
 }

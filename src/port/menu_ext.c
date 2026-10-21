@@ -9,7 +9,7 @@
  *   (sf_replay_page, run by SaveMove), read with the game's pad input.
  * - BUTTON CONFIG has a keyboard page: F1 opens it over the screen, each
  *   Xbox button's key is shown and can be changed, and the keys are kept
- *   in config/keyboard.ini. While it is open the game sees nothing
+ *   in config/host.sqlite. While it is open the game sees nothing
  *   pressed, so a session recording stays a faithful replay. */
 
 #include "host/compat.h"

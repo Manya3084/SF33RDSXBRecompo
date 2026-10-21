@@ -144,6 +144,11 @@ void sf_game_frame(void)
     render_start();
     mpp_w.inGame = 0;
     njUserMain();
+    /* slot 0 is the init task; r_no[0] stays 0 until its first step has
+     * written the factory defaults over save_w */
+    if (task[0].r_no[0] >= 1) {
+        sf_save_startup();
+    }
     sf_menu_ext_frame();
     seqsBeforeProcess();
     njdp2d_draw(7);

@@ -36,5 +36,8 @@ SCREEN
   SF_RENDERER=opengl ./sf33rdsxb uses OpenGL instead of Vulkan.
 
 FILES
-  data/    the imported game, and data/save/ (settings, replays)
-  config/  the display and keyboard settings
+  data/                     the imported game
+  data/save/game.sqlite    settings, rankings, directions and replays
+  config/host.sqlite       the window and the keyboard
+  A save from 1.01 (an ini or a .sav) is not read. The first start writes
+  the original defaults.

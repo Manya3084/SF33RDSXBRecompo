@@ -149,7 +149,7 @@ def main() -> int:
     )
     # a library's own function stubbed means the library was not found:
     # the program would run with it missing
-    lost = [n for n in need if re.match(r"(SDL_|vk[A-Z]|al[A-Z]|alc[A-Z]|gl[A-Z]|archive_)", n)]
+    lost = [n for n in need if re.match(r"(SDL_|vk[A-Z]|al[A-Z]|alc[A-Z]|gl[A-Z]|archive_|sqlite3_)", n)]
     if lost:
         print(f"gen_stubs: library functions not found in any host library: {' '.join(lost[:12])}", file=sys.stderr)
         return 1
