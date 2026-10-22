@@ -349,6 +349,13 @@ int sf_setup_cli(int argc, char **argv)
             return 1;
         }
         printf("sound banks %d\n", SF_SOUND_BANKS);
+        /* and retail's image (src/port/retail.c) */
+        if (sf_join(out, sizeof out, dir, "data/xbe") != 0 || sf_mkdir_p(out, err, sizeof err) != 0 ||
+            sf_join(out, sizeof out, dir, "data/xbe/image.bin") != 0 || sf_xbe_image(xbe, out, err, sizeof err) != 0) {
+            fprintf(stderr, "%s\n", err);
+            return 1;
+        }
+        printf("image %s\n", out);
         return 0;
     }
     if (!source || !dir) {

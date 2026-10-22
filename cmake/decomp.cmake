@@ -145,6 +145,7 @@ add_library(sf_port STATIC
     src/port/math.c
     src/port/jobs.c
     src/port/touch.c
+    src/port/retail.c
     src/port/sound.c
     src/port/se.c
     src/port/menu_ext.c

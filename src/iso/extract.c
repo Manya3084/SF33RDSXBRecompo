@@ -537,6 +537,18 @@ static int import_sound_banks(const char *install, SfExtractResult *result)
         return -1;
     }
     result->files += SF_SOUND_BANKS;
+    {
+        /* retail's image, for the tables the game reads past */
+        char img[4096];
+        char dir[4096];
+        if (sf_join(dir, sizeof dir, install, "data/xbe") == 0 && sf_join(img, sizeof img, install, "data/xbe/image.bin") == 0 &&
+            sf_mkdir_p(dir, err, sizeof err) == 0 && sf_xbe_image(xbe, img, err, sizeof err) == 0) {
+            result->files++;
+        } else {
+            /* the game runs without it (src/port/retail.c); online play asks for it */
+            fprintf(stderr, "import: sf33rd.xbe's image was not written: %s\n", err);
+        }
+    }
     unlink(xbe);
     {
         char tmp[4096];

@@ -137,3 +137,92 @@ done:
     free(x);
     return rc;
 }
+
+int sf_xbe_image(const char *xbe_path, const char *out_path, char *err, size_t err_n)
+{
+    FILE *fp;
+    long n;
+    uint8_t *x;
+    uint32_t size;
+    uint32_t base;
+    uint32_t nsec;
+    uint32_t hdr;
+    uint32_t i;
+    uint32_t at;
+    int rc = -1;
+    fp = fopen(xbe_path, "rb");
+    if (!fp) {
+        sf_set_err(err, err_n, "cannot read %s", xbe_path);
+        return -1;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0 || (n = ftell(fp)) < 0x1000 || n > 64L * 1024 * 1024 || fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        sf_set_err(err, err_n, "%s is not an XBE", xbe_path);
+        return -1;
+    }
+    size = (uint32_t)n;
+    x = malloc(size);
+    if (!x || fread(x, 1, size, fp) != size) {
+        fclose(fp);
+        free(x);
+        sf_set_err(err, err_n, "cannot read %s", xbe_path);
+        return -1;
+    }
+    fclose(fp);
+    if (memcmp(x, "XBEH", 4) != 0) {
+        sf_set_err(err, err_n, "%s is not an XBE", xbe_path);
+        goto done;
+    }
+    base = u32le(x + 0x104);
+    nsec = u32le(x + 0x11C);
+    hdr = u32le(x + 0x120) - base;
+    if (nsec == 0 || nsec > 64 || hdr > size || (uint64_t)hdr + (uint64_t)nsec * 0x38 > size) {
+        sf_set_err(err, err_n, "%s has no sections", xbe_path);
+        goto done;
+    }
+    fp = fopen(out_path, "wb");
+    if (!fp) {
+        sf_set_err(err, err_n, "cannot write %s", out_path);
+        goto done;
+    }
+    {
+        uint8_t head[12] = { 'S', 'F', '3', 'I', 'M', 'G', '1', 0 };
+        head[8] = (uint8_t)nsec;
+        fwrite(head, 1, sizeof head, fp);
+    }
+    /* the table: each section's address, size and offset in this file */
+    at = 12 + nsec * 12;
+    for (i = 0; i < nsec; i++) {
+        const uint8_t *s = x + hdr + i * 0x38;
+        uint32_t entry[3];
+        entry[0] = u32le(s + 4);
+        entry[1] = u32le(s + 8);
+        entry[2] = at;
+        fwrite(entry, sizeof entry, 1, fp);
+        at += entry[1];
+    }
+    for (i = 0; i < nsec; i++) {
+        const uint8_t *s = x + hdr + i * 0x38;
+        uint32_t vsize = u32le(s + 8);
+        uint32_t raw = u32le(s + 12);
+        uint32_t rsize = u32le(s + 16);
+        uint32_t k;
+        if (raw > size || rsize > size - raw) {
+            rsize = 0;
+        }
+        if (rsize > vsize) {
+            rsize = vsize;
+        }
+        fwrite(x + raw, 1, rsize, fp);
+        for (k = rsize; k < vsize; k++) {
+            fputc(0, fp);
+        }
+    }
+    rc = fclose(fp) == 0 ? 0 : -1;
+    if (rc != 0) {
+        sf_set_err(err, err_n, "cannot write %s", out_path);
+    }
+done:
+    free(x);
+    return rc;
+}
