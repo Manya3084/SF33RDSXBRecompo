@@ -92,6 +92,9 @@ endforeach()
 add_library(sf_decomp STATIC ${SF_DECOMP_SOURCES})
 set_target_properties(sf_decomp PROPERTIES C_STANDARD 17 C_EXTENSIONS ON POSITION_INDEPENDENT_CODE ON)
 target_include_directories(sf_decomp PUBLIC "${SF_DECOMP_GEN}/include")
+# the analog stick's direction is a game input: the port's atan2, the same
+# on every machine (src/port/math.c), not the C library's
+target_compile_definitions(sf_decomp PRIVATE atan2=sf_atan2)
 # The decomp is C written to match retail code, not to pass -Wall; the
 # runtime's warnings stay on its own files.
 target_compile_options(sf_decomp PRIVATE -g
@@ -146,6 +149,7 @@ add_library(sf_port STATIC
     src/port/jobs.c
     src/port/touch.c
     src/port/retail.c
+    src/port/sync.c
     src/port/sound.c
     src/port/se.c
     src/port/menu_ext.c
