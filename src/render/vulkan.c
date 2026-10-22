@@ -2,7 +2,8 @@
 
 #include "common.h"
 #include "render/scene.h"
-#include "render/ui_spv.h"
+#include "render/ui_frag_spv.h"
+#include "render/ui_vert_spv.h"
 
 #include <SDL3/SDL_vulkan.h>
 
