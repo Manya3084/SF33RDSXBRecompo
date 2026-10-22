@@ -156,16 +156,14 @@ def main() -> int:
         defined |= d
         undef |= u
     host = set()
-    if hosts:
-        for p in hosts:
-            d = syms(p)[0]
-            # an import library defines NAME and __imp_NAME
-            host |= d | {n[6:] for n in d if n.startswith("__imp_")}
-    else:
-        # the libraries the build links (wherever they are installed), then
-        # the system's
-        for p in host_so + ([q for q in map(host_lib, HOST_LIBS) if q] if system else []):
-            host |= syms(p, dynamic=True)[0]
+    for p in hosts:
+        d = syms(p)[0]
+        # an import library defines NAME and __imp_NAME
+        host |= d | {n[6:] for n in d if n.startswith("__imp_")}
+    # the libraries the build links (wherever they are installed), then the
+    # system's (not for Windows, whose --host list is all of them)
+    for p in host_so + ([q for q in map(host_lib, HOST_LIBS) if q] if system and not hosts else []):
+        host |= syms(p, dynamic=True)[0]
     # names the linker itself provides: the section bounds the game-state
     # snapshot reads (src/port/state.c)
     linker = {"__data_start", "_edata", "__bss_start", "_end"}
@@ -177,7 +175,7 @@ def main() -> int:
     )
     # a library's own function stubbed means the library was not found:
     # the program would run with it missing
-    lost = [n for n in need if re.match(r"(SDL_|vk[A-Z]|al[A-Z]|alc[A-Z]|gl[A-Z]|archive_|sqlite3_)", n)]
+    lost = [n for n in need if re.match(r"(SDL_|vk[A-Z]|al[A-Z]|alc[A-Z]|gl[A-Z]|archive_|sqlite3_|__aarch64_|__atomic_|__sync_)", n)]
     if lost:
         print(f"gen_stubs: library functions not found in any host library: {' '.join(lost[:12])}", file=sys.stderr)
         return 1

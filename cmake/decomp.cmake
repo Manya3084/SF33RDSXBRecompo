@@ -217,6 +217,16 @@ if(ANDROID)
         list(APPEND _stub_win --host-so "${_l}")
     endforeach()
     list(APPEND _stub_archives "${SF_ANDROID_PREFIX}/lib/libarchive.a" "${SF_ANDROID_PREFIX}/lib/liblzma.a")
+    # the compiler's runtime: arm64's outline atomics (__aarch64_cas1_acq_rel
+    # and so on, which history.c's write tracking uses) are there, and a stub
+    # for one silently breaks every atomic operation
+    execute_process(COMMAND ${CMAKE_C_COMPILER} --target=${CMAKE_C_COMPILER_TARGET}
+                            -rtlib=compiler-rt -print-libgcc-file-name
+                    OUTPUT_VARIABLE _rt OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT EXISTS "${_rt}")
+        message(FATAL_ERROR "the compiler's runtime library was not found (${_rt})")
+    endif()
+    list(APPEND _stub_win --host "${_rt}")
 endif()
 # Linux: the shared libraries the program links, where CMake found them
 # (SDL3 built into a prefix, say), as well as the system's own
