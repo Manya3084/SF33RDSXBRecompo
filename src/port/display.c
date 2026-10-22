@@ -43,6 +43,39 @@ static int s_w = 1280;
 static int s_h = 960;
 static char s_text[3][24];
 
+#ifdef __ANDROID__
+/* A phone has no window to size: the first row is the orientation, held
+ * where it is set (not turned by the phone's sensor), kept in the same
+ * place as a computer's window mode. */
+#include <jni.h>
+
+static int s_portrait;
+static const char *const k_orient_name[2] = { "landscape", "portrait" };
+static const char *const k_orient_text[2] = { "LANDSCAPE", "PORTRAIT" };
+
+static void set_orientation(void)
+{
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    jclass cls;
+    jmethodID m;
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, s_portrait ? "Portrait" : "LandscapeLeft");
+    if (!env || !act) {
+        return;
+    }
+    cls = (*env)->GetObjectClass(env, act);
+    m = (*env)->GetMethodID(env, cls, "setFixedOrientation", "(Z)V");
+    if (m) {
+        (*env)->CallVoidMethod(env, act, m, (jboolean)(s_portrait != 0));
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+    (*env)->DeleteLocalRef(env, cls);
+    (*env)->DeleteLocalRef(env, act);
+}
+#endif
+
 static SDL_DisplayID display(void)
 {
     SDL_Window *w = sf_video_window();
@@ -150,7 +183,11 @@ static int save(void)
     if (host_db(path, sizeof path) != 0) {
         return -1;
     }
+#ifdef __ANDROID__
+    if (sf_store_write_window(path, k_orient_name[s_portrait], s_w, s_h, k_aspect_name[s_aspect]) != 0) {
+#else
     if (sf_store_write_window(path, k_mode_name[s_mode], s_w, s_h, k_aspect_name[s_aspect]) != 0) {
+#endif
         fprintf(stderr, "display: cannot write %s\n", path);
         return -1;
     }
@@ -179,6 +216,9 @@ static void load(void)
     if (r != 0) {
         return;
     }
+#ifdef __ANDROID__
+    s_portrait = named(mode, k_orient_name, 2) == 1;
+#endif
     i = named(mode, k_mode_name, MODES);
     if (i >= 0) {
         s_mode = i;
@@ -199,6 +239,10 @@ static void apply(void)
     if (!win) {
         return; /* headless */
     }
+#ifdef __ANDROID__
+    set_orientation();
+    return;
+#endif
     switch (s_mode) {
     case MODE_WINDOWED:
         SDL_SetWindowFullscreen(win, false);
@@ -250,9 +294,17 @@ const char *sf_display_text(int row)
     char *t = s_text[row < 0 ? 0 : row > 2 ? 2 : row];
     switch (row) {
     case 0:
+#ifdef __ANDROID__
+        snprintf(t, sizeof s_text[0], "%s", k_orient_text[s_portrait]);
+        break;
+#endif
         snprintf(t, sizeof s_text[0], "%s", k_mode_text[s_mode]);
         break;
     case 1:
+#ifdef __ANDROID__
+        snprintf(t, sizeof s_text[0], "DEVICE");
+        break;
+#endif
         if (s_mode == MODE_BORDERLESS) {
             snprintf(t, sizeof s_text[0], "DESKTOP");
         } else {
@@ -270,6 +322,17 @@ const char *sf_display_text(int row)
 int sf_display_step(int row, int dir)
 {
     int i;
+#ifdef __ANDROID__
+    if (row == 0) {
+        s_portrait = !s_portrait;
+        save();
+        apply();
+        return 1;
+    }
+    if (row == 1) {
+        return 0; /* the phone's own screen */
+    }
+#endif
     switch (row) {
     case 0:
         s_mode = (s_mode + MODES + dir) % MODES;
@@ -315,6 +378,9 @@ void sf_display_default(void)
     s_w = 1280;
     s_h = 960;
     s_aspect = ASPECT_4_3;
+#ifdef __ANDROID__
+    s_portrait = 0;
+#endif
     save();
     apply();
 }

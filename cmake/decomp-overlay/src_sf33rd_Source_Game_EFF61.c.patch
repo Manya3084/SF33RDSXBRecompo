@@ -10,31 +10,39 @@
      {
          "ARCADE",
          "VERSUS",
-@@ -123,7 +124,10 @@
+@@ -123,7 +124,14 @@
          "BGM SELECT",
          "DEFAULT SETTING",
          "BGM TEST",
 -        "EXIT"
 +        "EXIT",
++#ifdef __ANDROID__
++        "ORIENTATION^^", /* a phone: landscape or portrait */
++#else
 +        "WINDOW MODE^^",
++#endif
 +        "RESOLUTION^^^",
 +        "ASPECT RATIO^"
      },
      {
          "ARCADE",
-@@ -192,7 +196,10 @@
+@@ -192,7 +200,14 @@
          "BGM SELECT",
          "DEFAULT SETTING",
          "BGM TEST",
 -        "EXIT"
 +        "EXIT",
++#ifdef __ANDROID__
++        "ORIENTATION^^", /* a phone: landscape or portrait */
++#else
 +        "WINDOW MODE^^",
++#endif
 +        "RESOLUTION^^^",
 +        "ASPECT RATIO^"
      }
  };
  
-@@ -237,7 +244,8 @@
+@@ -237,7 +252,8 @@
          }
      } else if (Menu_Cursor_Y[ewk->master_id] == ewk->wu.type) {
          ewk->wu.my_clear_level = 0;

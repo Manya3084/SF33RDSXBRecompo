@@ -2,6 +2,7 @@ package io.github.manya3084.sf33rdsxb;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.pm.ActivityInfo;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 
@@ -26,6 +27,18 @@ public class SF3Activity extends SDLActivity {
                 if (clip != null) {
                     clip.setPrimaryClip(ClipData.newPlainText("3rd Strike log", text));
                 }
+            }
+        });
+    }
+
+    /* SCREEN ADJUST's ORIENTATION (src/port/display.c): landscape or
+     * portrait, held there whichever way the phone is turned. */
+    public void setFixedOrientation(final boolean portrait) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                setRequestedOrientation(portrait ? ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                                 : ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
             }
         });
     }

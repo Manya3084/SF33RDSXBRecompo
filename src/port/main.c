@@ -430,8 +430,10 @@ int main(int argc, char **argv)
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
     }
 #ifdef __ANDROID__
-    /* landscape only, either way round: SDL would let a resizable window turn */
-    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    /* landscape, held there (not turned by the sensor) until SCREEN ADJUST's
+     * ORIENTATION says otherwise (src/port/display.c): SDL would otherwise
+     * let a resizable window turn with the phone */
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft");
 #endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
