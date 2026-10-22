@@ -53,7 +53,8 @@ static void put_ent(uint8_t *dir, uint32_t off, uint16_t left, uint16_t right, u
     memcpy(p + 14, name, nlen);
 }
 
-/* A stand-in sf33rd.xbe: the header, then the 21 sound banks the import
+/* A stand-in sf33rd.xbe: the header with one section (the banks, which
+ * the import's retail image copies), then the 21 sound banks the import
  * reads out of it ("SDBK" version 11, named SE and pl00 to pl19, no RPC
  * table, 0x38 bytes each). */
 #define FAKE_XBE_N (0x1000u + 21u * 0x38u)
@@ -63,6 +64,13 @@ static void fake_xbe(uint8_t *x)
     int i;
     memset(x, 0, FAKE_XBE_N);
     memcpy(x, "XBEH", 4);
+    wu32(x + 0x104, 0x10000);         /* base */
+    wu32(x + 0x11C, 1);               /* sections */
+    wu32(x + 0x120, 0x10000 + 0x200); /* their headers */
+    wu32(x + 0x200 + 4, 0x11000);     /* the section's address */
+    wu32(x + 0x200 + 8, 21u * 0x38u); /* its size */
+    wu32(x + 0x200 + 12, 0x1000);     /* where its bytes are */
+    wu32(x + 0x200 + 16, 21u * 0x38u);
     for (i = 0; i < 21; i++) {
         uint8_t *b = x + 0x1000u + (size_t)i * 0x38u;
         memcpy(b, "SDBK", 4);
@@ -268,6 +276,8 @@ static void check_ready(const char *install, int expect_shader_fail, const char 
     expect(read_file(path, buf, 4) == 0 && memcmp(buf, "SDBK", 4) == 0, "sound banks from the xbe");
     snprintf(path, sizeof path, "%s/data/.import-tmp/sf33rd.xbe", install);
     expect(stat(path, &st) != 0, "the xbe is not kept");
+    snprintf(path, sizeof path, "%s/data/xbe/image.bin", install);
+    expect(read_file(path, buf, 4) == 0 && memcmp(buf, "SF3I", 4) == 0, "the retail image from the xbe");
     if (expect_shader_fail) {
         snprintf(path, sizeof path, "%s/data/shaders/spirv/dummy.spv", install);
         expect(stat(path, &st) != 0, "bad shader is not spirv");
