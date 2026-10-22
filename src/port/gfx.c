@@ -496,7 +496,9 @@ s32 xb_GetTextureHandleInfo(void *out, s32 h)
     if (h <= 0 || h >= SF_TEX_MAX || !s_tex[h].used) {
         return 0;
     }
-    memcpy(out, &s_tex[h].info, sizeof(plContext));
+    /* the game's buffer is retail's 0x48 bytes (PPGFile.c); a 64-bit
+     * plContext is 0x50, and copying all of it overran the stack */
+    memcpy(out, &s_tex[h].info, sizeof(plContext) < 0x48 ? sizeof(plContext) : 0x48);
     return 1;
 }
 

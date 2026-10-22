@@ -308,7 +308,7 @@ int sf_net_page(int start)
         } else if (sw & 0x200) {
             SE_selected();
             s_pg.open = 0;
-            return 0;
+            return 1; /* the mode menu must not see this press too */
         } else if (sw & 0x100) {
             SE_selected();
             switch (s_pg.row) {
@@ -329,7 +329,7 @@ int sf_net_page(int start)
                 break;
             case ROW_EXIT:
                 s_pg.open = 0;
-                return 0;
+                return 1; /* or the menu takes the press and opens the page again */
             default:
                 break;
             }
