@@ -55,6 +55,7 @@ void sf_net_page_text(const char *text);
 int sf_setting_read(const char *name, char *value, unsigned n);
 void sf_setting_write(const char *name, const char *value);
 void sf_net_stop(void);
+void sf_net_quit(void);
 void sf_net_tick(void);
 void sf_net_env(void);
 int sf_net_active(void);

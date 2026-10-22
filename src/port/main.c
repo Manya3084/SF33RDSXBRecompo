@@ -479,6 +479,7 @@ int main(int argc, char **argv)
             sf_frame();
         }
     }
+    sf_net_quit();
     /* the sound first, so nothing plays on while the window goes */
     sf_sound_shutdown();
     sf_video_shutdown();

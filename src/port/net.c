@@ -582,6 +582,26 @@ void sf_net_stop(void)
     }
 }
 
+/* The program is closing: tell the other player, without going back to
+ * the title. Sent a few times, as a lost goodbye leaves them waiting. */
+void sf_net_quit(void)
+{
+    Packet p;
+    int i;
+    if (s_n.state == ST_PLAYING) {
+        head(&p, PK_BYE);
+        for (i = 0; i < 3; i++) {
+            raw_send(&p);
+        }
+        if (s_n.s != SOCK_NONE) {
+            sock_close(s_n.s);
+            s_n.s = SOCK_NONE;
+        }
+        s_n.state = ST_OFF;
+    }
+    sf_net_cancel();
+}
+
 /* ---- packets in ---- */
 
 static void on_input(const uint8_t *b, int n)
@@ -1062,6 +1082,7 @@ void sf_net_tick(void)
     send_input();
     if (s_n.end_at && s_n.cur >= s_n.end_at) {
         fprintf(stderr, "net: frame %d reached\n", s_n.cur);
+        sf_net_quit();
         exit(0);
     }
 }

@@ -32,6 +32,7 @@ extern struct _TASK task[11];
 extern u8 No_Trans;
 extern const s16 Fade_Pos_tbl[8];
 extern f32 PrioBase[];
+extern PPGDataList ppgScrList; /* the screen font, from Scrscreen_Init */
 
 void njColorBlendingMode(s32 mode, s32 blend);
 void njDrawPolygon2D(PAL_CURSOR *poly, s32 n, f32 pri, s32 attr, s32 kind);
@@ -550,8 +551,9 @@ void sf_menu_ext_frame(void)
             SE_selected();
         }
     }
-    {
-        /* how the last network game ended, over the title a while */
+    if (ppgScrList.tex && !No_Trans) {
+        /* how the last network game ended, over the title a while; a
+         * session ends at the start-up state, before the font is loaded */
         const char *b = sf_net_banner();
         if (b) {
             char up[160];
