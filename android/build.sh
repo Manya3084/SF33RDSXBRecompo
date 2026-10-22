@@ -1,7 +1,7 @@
 #!/bin/sh
 # The Android APK, start to end:
 #
-#   android/build.sh [debug|release]
+#   android/build.sh [debug|release|synctest]
 #
 # ANDROID_HOME is the SDK (with the NDK in it), SF_DECOMP_DIR the decomp
 # checkout (default ../3s-decomp-ogxb), SF_ANDROID_WORK where the
@@ -35,6 +35,14 @@ cp "$ROOT/build-android/libmain.so" "$PREFIX/lib/libSDL3.so" "$PREFIX/lib/libope
 cd "$ROOT/android"
 TASK=assembleDebug
 [ "$KIND" = release ] && TASK=assembleRelease
+if [ "$KIND" = synctest ]; then
+    # SF_SYNCTEST_DIR holds session.input (a recording) and expected.bin
+    # (tools/sync_pack.py of a computer's SF_SYNC_LOG over it)
+    : "${SF_SYNCTEST_DIR:?set SF_SYNCTEST_DIR to the recording and its hashes}"
+    TASK=assembleSynctest
+    mkdir -p "$ROOT/android/app/src/synctest/assets/sync"
+    cp "$SF_SYNCTEST_DIR/session.input" "$SF_SYNCTEST_DIR/expected.bin" "$ROOT/android/app/src/synctest/assets/sync/"
+fi
 # clean first: an APK packed over the last one keeps the old libraries'
 # bytes as dead space
 SIGN=""

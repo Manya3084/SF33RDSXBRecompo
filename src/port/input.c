@@ -19,6 +19,8 @@
 #include "host/compat.h"
 #include "port/port.h"
 #include "port/touch.h"
+
+double sf_atan2(double y, double x);
 #include "port/store.h"
 
 #include "types.h"
@@ -317,7 +319,7 @@ void sf_input_block(int on)
     s_block = on;
 }
 
-static FILE *s_replay;
+static SDL_IOStream *s_replay; /* SDL's: on Android a relative path is an asset of the APK */
 
 /* The tape: every frame's pads from a mark, so frames run again after a
  * rollback read the same pads (src/port/state.c). Recording, each read
@@ -483,7 +485,7 @@ static void convert_stick(PAD_STICK *st, s16 depth)
 {
     f32 radian = 0.0f;
     if ((st->y | st->x) != 0) {
-        radian = (f32)atan2(-st->y, st->x);
+        radian = (f32)sf_atan2(-st->y, st->x); /* the same on every machine (math.c) */
         if (radian < 0.0f) {
             radian += 6.2831855f;
         }
@@ -575,11 +577,11 @@ static void record_open(void)
     tried = 1;
     if (replay) {
         char magic[4];
-        s_replay = fopen(replay, "rb");
-        if (!s_replay || fread(magic, 4, 1, s_replay) != 1 || memcmp(magic, RECORD_MAGIC, 4) != 0) {
+        s_replay = SDL_IOFromFile(replay, "rb");
+        if (!s_replay || SDL_ReadIO(s_replay, magic, 4) != 4 || memcmp(magic, RECORD_MAGIC, 4) != 0) {
             fprintf(stderr, "input: %s is not a session recording\n", replay);
             if (s_replay) {
-                fclose(s_replay);
+                SDL_CloseIO(s_replay);
                 s_replay = NULL;
             }
         } else {
@@ -633,10 +635,10 @@ void xb_PADRead(void)
         goto have_pads;
     }
     if (s_replay) {
-        if (fread(x, sizeof x, 1, s_replay) != 1) {
+        if (SDL_ReadIO(s_replay, x, sizeof x) != sizeof x) {
             /* past the end: the game goes on with nothing pressed */
             fprintf(stderr, "input: the recording ended at frame %d\n", sf_port_frame);
-            fclose(s_replay);
+            SDL_CloseIO(s_replay);
             s_replay = NULL;
             memset(x, 0, sizeof x);
             x[0].connected = 1;

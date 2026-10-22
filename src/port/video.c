@@ -468,6 +468,13 @@ void sf_video_present(void)
 {
     static int frame;
     char err[512];
+    if (sf_sync_testing() && frame % 30 != 0) {
+        /* a sync test: at full speed, a frame in 30 shown */
+        frame++;
+        sf_gfx_frame_ready();
+        sf_gfx_frame_done();
+        return;
+    }
     sf_gfx_frame_ready();
     sf_touch_frame();
     rt_start();
@@ -533,7 +540,7 @@ void sf_video_present(void)
             fclose(f);
         }
     }
-    if (!getenv("SF_HEADLESS") || getenv("SF_PACE")) {
+    if ((!getenv("SF_HEADLESS") || getenv("SF_PACE")) && !sf_sync_testing()) {
         pace(); /* headless tests run as fast as they can, unless SF_PACE */
     }
     screenshot(frame++);

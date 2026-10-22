@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sync test (build type synctest): SDL sets these as the game's
+     environment, so it replays the recording and checks the hashes. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data android:name="SDL_ENV.SF_REPLAY" android:value="sync/session.input" />
+        <meta-data android:name="SDL_ENV.SF_SYNC_TEST" android:value="sync/expected.bin" />
+    </application>
+</manifest>

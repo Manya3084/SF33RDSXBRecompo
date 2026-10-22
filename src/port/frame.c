@@ -170,6 +170,7 @@ void sf_game_frame(void)
     sf_se_frame();
     sf_sound_pump();
     sf_state_test_frame();
+    sf_sync_frame();
 }
 
 /* A stop on an error (port.h). */

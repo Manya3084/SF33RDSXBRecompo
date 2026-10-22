@@ -52,6 +52,15 @@ android {
             isMinifyEnabled = false
             signingConfig = if (signing != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
+        // A sync test: replays a recording and checks the game against
+        // another machine's hashes (src/port/sync.c); its own app beside
+        // the game. android/build.sh synctest puts the two files in
+        // src/synctest/assets/sync.
+        create("synctest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".synctest"
+            versionNameSuffix = "-synctest"
+        }
     }
     lint {
         abortOnError = false

@@ -17,6 +17,12 @@ void sf_port_missing(const char *name);
  * would lock the mutexes they destroy, and Android aborts on that. */
 void sf_fatal(const char *fmt, ...);
 
+/* The game's state as one number, the same on every machine playing the
+ * same game (src/port/sync.c); SF_SYNC_LOG=PATH writes it every frame. */
+uint32_t sf_sync_hash(void);
+void sf_sync_frame(void);
+int sf_sync_testing(void);
+
 /* The game frame running, for messages. */
 extern int sf_port_frame;
 

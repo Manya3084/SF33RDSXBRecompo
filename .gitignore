@@ -23,3 +23,4 @@ android/build/
 android/.gradle/
 android/local.properties
 build-android-work/
+android/app/src/synctest/assets/
