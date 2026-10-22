@@ -89,6 +89,19 @@ void sf_game_init(void)
     /* retail's start-up: the button pictures are drawn untinted */
     xb_SetScreenShotColor(0xFFFFFF);
     sf_menu_ext_init();
+    sf_state_boot_save(); /* where a netplay session starts both machines */
+    sf_net_env();
+}
+
+/* A turn of the main loop: a frame, or in a netplay session what the
+ * session runs (src/port/net.c). */
+void sf_frame(void)
+{
+    if (sf_net_active() || sf_net_waiting()) {
+        sf_net_tick();
+    } else {
+        sf_game_frame();
+    }
 }
 
 void sf_game_frame(void)

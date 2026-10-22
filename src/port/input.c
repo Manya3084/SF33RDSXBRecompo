@@ -37,20 +37,7 @@ double sf_atan2(double y, double x);
 
 #define PORTS 4
 
-/* An Xbox gamepad as the XDK's input sample reads it. */
-enum { XB_DPAD_UP = 1, XB_DPAD_DOWN = 2, XB_DPAD_LEFT = 4, XB_DPAD_RIGHT = 8, XB_START = 0x10, XB_BACK = 0x20,
-       XB_LTHUMB = 0x40, XB_RTHUMB = 0x80 };
-enum { XB_A, XB_B, XB_X, XB_Y, XB_BLACK, XB_WHITE, XB_LTRIG, XB_RTRIG };
-
-typedef struct XbGamepad {
-    int connected;
-    u16 buttons;
-    u8 analog[8];
-    f32 lx;
-    f32 ly; /* up is positive */
-    f32 rx;
-    f32 ry;
-} XbGamepad;
+#include "port/pad.h"
 
 TARPAD tarpad_root[PORTS];
 
@@ -348,6 +335,14 @@ void sf_input_tape_seek(int at)
     s_tape_at = at < s_tape_n ? at : -1;
 }
 
+/* The recording (SF_REPLAY) from its first frame again. */
+void sf_input_replay_rewind(void)
+{
+    if (s_replay) {
+        SDL_SeekIO(s_replay, 4, SDL_IO_SEEK_SET);
+    }
+}
+
 void sf_input_tape_off(void)
 {
     s_tape_on = 0;
@@ -608,10 +603,51 @@ static void record_open(void)
     }
 }
 
+/* This machine's devices as one player, for netplay: buttons pressed on
+ * any, the triggers' and sticks' furthest. */
+void sf_input_local(XbGamepad *out)
+{
+    XbGamepad x[PORTS];
+    int i;
+    int j;
+    SDL_PumpEvents();
+    refresh_gamepads();
+    memset(x, 0, sizeof x);
+    read_keyboard(&x[0]);
+    for (i = 1; i < PORTS; i++) {
+        read_gamepad(s_pads[i], &x[i]);
+    }
+    memset(out, 0, sizeof *out);
+    out->connected = 1;
+    if (s_block) {
+        return; /* a port page (the keys) has them */
+    }
+    for (i = 0; i < PORTS; i++) {
+        out->buttons |= x[i].buttons;
+        for (j = 0; j < 8; j++) {
+            if (x[i].analog[j] > out->analog[j]) {
+                out->analog[j] = x[i].analog[j];
+            }
+        }
+        if (x[i].lx * x[i].lx + x[i].ly * x[i].ly > out->lx * out->lx + out->ly * out->ly) {
+            out->lx = x[i].lx;
+            out->ly = x[i].ly;
+        }
+        if (x[i].rx * x[i].rx + x[i].ry * x[i].ry > out->rx * out->rx + out->ry * out->ry) {
+            out->rx = x[i].rx;
+            out->ry = x[i].ry;
+        }
+    }
+}
+
 void xb_PADRead(void)
 {
     XbGamepad x[PORTS];
     int i;
+    if (sf_net_pads(x, PORTS)) {
+        /* a netplay game: both players' pads for this frame */
+        goto have_pads;
+    }
     record_open();
     SDL_PumpEvents();
     refresh_gamepads();

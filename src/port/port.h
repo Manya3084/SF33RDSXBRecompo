@@ -33,11 +33,37 @@ void sf_arena_extent(uint8_t **base, size_t *used);
 void *sf_gheap_alloc(size_t n);
 void sf_gheap_free(void *p);
 void sf_gfx_state_restored(void);
+void sf_se_state_restored(void);
+void sf_state_restored(void);
 /* GAME OPTION's LANGUAGE row (src/port/language.c). */
 void sf_language_init(void);
 const char *sf_language_text(void);
 int sf_language_step(int dir);
 int sf_language_japanese(void);
+void sf_language_force(int japanese);
+/* Netplay (src/port/net.c). */
+#define SF_NET_PORT 33133
+int sf_net_host(int port);
+int sf_net_join(const char *address);
+int sf_net_host_delay(int port, int delay);
+void sf_net_cancel(void);
+void sf_net_at_menu(void);
+const char *sf_net_banner(void);
+void sf_net_local_address(char *out, size_t n);
+int sf_net_page(int start);
+void sf_net_page_text(const char *text);
+int sf_setting_read(const char *name, char *value, unsigned n);
+void sf_setting_write(const char *name, const char *value);
+void sf_net_stop(void);
+void sf_net_tick(void);
+void sf_net_env(void);
+int sf_net_active(void);
+int sf_net_waiting(void);
+int sf_net_resim(void);
+const char *sf_net_status(void);
+uint64_t sf_afs_identity(void);
+void sf_video_wait_frame(void);
+void sf_frame(void);
 void sf_arena_free(void *p);
 
 /* Video: the game's 640x448 frame, shown in the SDL3 window. */
@@ -118,6 +144,7 @@ int sf_input_replaying(void);
 void sf_input_tape_mark(void);
 void sf_input_tape_rewind(void);
 void sf_input_tape_seek(int at);
+void sf_input_replay_rewind(void);
 void sf_input_tape_off(void);
 
 /* Replays (src/port/save.c): ten slots in data/save/game.sqlite.
@@ -153,6 +180,11 @@ int sf_hist_oldest(void);
 int sf_hist_on(void);
 void sf_hist_stop(void);
 void sf_hist_touch(void *p, size_t n);
+/* The state as start-up left it (src/port/state.c), for netplay. */
+void sf_state_boot_save(void);
+int sf_state_boot_ok(void);
+int sf_state_boot_restore(void);
+void sf_save_restart(void);
 /* The music streams' place, which the game waits on (src/port/sound.c). */
 size_t sf_sound_state_size(void);
 void sf_sound_state_save(void *buf);

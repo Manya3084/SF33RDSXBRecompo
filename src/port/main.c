@@ -466,6 +466,8 @@ int main(int argc, char **argv)
 #ifdef __ANDROID__
                 run_report_mark(0); /* Android may end it there: not a stop */
 #endif
+            } else if (ev.type == SDL_EVENT_TEXT_INPUT) {
+                sf_net_page_text(ev.text.text); /* the NETWORK page's address */
             } else if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
                 sf_sound_pause(0);
 #ifdef __ANDROID__
@@ -474,7 +476,7 @@ int main(int argc, char **argv)
             }
         }
         if (!sf_port_quitting()) {
-            sf_game_frame();
+            sf_frame();
         }
     }
     /* the sound first, so nothing plays on while the window goes */

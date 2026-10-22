@@ -213,17 +213,25 @@ typedef struct Request {
     u16 g;
 } Request;
 
+/* A slot as the game sees it: game state, so a rollback puts back which
+ * character's sounds each holds (the game asks, xb_GetColorRamEntry, and
+ * loads them when they are not). The decoded waves are the port's (own),
+ * made again from the game's memory when a rollback changes the slot
+ * (sf_se_state_restored). */
 typedef struct Slot {
     int loaded;
     int bank; /* sound bank */
-    WaveBank *own; /* the wave bank this slot registered */
+    const uint8_t *addr; /* the wave bank in the game's memory */
+    uint32_t size;
 } Slot;
 
 static Voice s_voice[SE_VOICES];
 static Request s_queue[SE_QUEUE];
 static u32 s_queued;
-static Slot s_slot[SE_SLOTS];
-static s32 s_entry[SE_SLOTS] = { -1, -1, -1 };
+static Slot s_slot[SE_SLOTS] SF_GAME;
+static s32 s_entry[SE_SLOTS] SF_GAME = { -1, -1, -1 };
+static WaveBank *s_own[SE_SLOTS]; /* the wave bank each slot registered */
+static Slot s_own_was[SE_SLOTS]; /* the slot it was registered for */
 static int s_ready;
 static int s_al;
 static int s_loop_points;
@@ -830,8 +838,9 @@ void sf_se_frame(void)
         s_queued--;
         memmove(&s_queue[0], &s_queue[1], s_queued * sizeof s_queue[0]);
     }
-    /* what started this frame begins playing now */
-    if (s_al) {
+    /* what started this frame begins playing now (not in a netplay
+     * frame run again, which is not heard) */
+    if (s_al && !sf_net_resim()) {
         int i;
         int t;
         for (i = 0; i < SE_VOICES; i++) {
@@ -900,9 +909,9 @@ void xb_PurgeListEntry(u8 id)
             s_voice[i].state = 1;
         }
     }
-    if (s_slot[id].own) {
-        wb_drop(s_slot[id].own);
-        s_slot[id].own = NULL;
+    if (s_own[id]) {
+        wb_drop(s_own[id]);
+        s_own[id] = NULL;
     }
     s_slot[id].loaded = 0;
 }
@@ -930,12 +939,45 @@ s32 xb_SetColorRamEntry(void *addr, u32 size, s32 id, s32 index)
         if (s_slot[id].loaded) {
             xb_PurgeListEntry((u8)id);
         }
-        s_slot[id].own = wb_register(addr, size);
+        s_own[id] = wb_register(addr, size);
         s_slot[id].bank = index;
-        s_slot[id].loaded = s_slot[id].own != NULL && index > 0 && index < SE_BANKS;
+        s_slot[id].addr = addr;
+        s_slot[id].size = size;
+        s_slot[id].loaded = s_own[id] != NULL && index > 0 && index < SE_BANKS;
+        s_own_was[id] = s_slot[id];
     }
     s_entry[id] = index;
     return 0;
+}
+
+/* After a rollback: each character slot's decoded waves as the state has
+ * the slot, made again from the game's memory where they differ. */
+void sf_se_state_restored(void)
+{
+    int id;
+    for (id = 1; id < SE_SLOTS; id++) {
+        const Slot *want = &s_slot[id];
+        const Slot *was = &s_own_was[id];
+        if (want->loaded == was->loaded && want->bank == was->bank && want->addr == was->addr &&
+            want->size == was->size && (s_own[id] != NULL) == (want->loaded != 0)) {
+            continue;
+        }
+        if (s_own[id]) {
+            int i;
+            for (i = 0; i < SE_VOICES; i++) {
+                if (s_voice[i].cue && s_voice[i].state != 1 && s_voice[i].slot == id) {
+                    voice_stop_al(&s_voice[i]);
+                    s_voice[i].state = 1;
+                }
+            }
+            wb_drop(s_own[id]);
+            s_own[id] = NULL;
+        }
+        if (want->loaded && want->addr) {
+            s_own[id] = wb_register(want->addr, want->size);
+        }
+        s_own_was[id] = *want;
+    }
 }
 
 s32 xb_GetColorRamEntry(s32 i)

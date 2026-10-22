@@ -38,8 +38,7 @@ typedef struct AdxfFile {
     u32 size;
     u32 pos; /* in sectors */
     s32 stat;
-    /* the read on the worker */
-    SfJob job;
+    /* the read on the worker (its job is s_jobs[] at the same place) */
     void *buf;
     size_t want;
     off_t at;
@@ -50,7 +49,17 @@ static u32 s_count;
 static u32 *s_toc; /* offset, size pairs */
 static off_t s_afs_size;
 static s32 s_pt_stat = ADXF_STAT_STOP;
-static AdxfFile s_files[16];
+/* The handles are game state: the game keeps them, and a rollback (or a
+ * netplay session's start) puts back which are open and where they are.
+ * A save or a rollback waits for every read first (sf_files_sync), so a
+ * handle put back is never mid-read. The worker jobs are the port's. */
+static AdxfFile s_files[16] SF_GAME;
+static SfJob s_jobs[16];
+
+static SfJob *job_of(const AdxfFile *f)
+{
+    return &s_jobs[f - s_files];
+}
 
 s32 ADXF_LoadPartitionNw(s32 ptid, const char *fname, void *dir, void *ptinfo)
 {
@@ -85,6 +94,21 @@ s32 ADXF_LoadPartitionNw(s32 ptid, const char *fname, void *dir, void *ptinfo)
     s_afs_size = lseek(s_fd, 0, SEEK_END);
     s_pt_stat = ADXF_STAT_READEND;
     return 0;
+}
+
+/* The archive as a number: two machines with the same disc imported
+ * have the same (a netplay session checks it). 0 before it is open. */
+uint64_t sf_afs_identity(void)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    u32 i;
+    if (!s_toc) {
+        return 0;
+    }
+    for (i = 0; i < s_count * 2; i++) {
+        h = (h ^ s_toc[i]) * 0x100000001B3ull;
+    }
+    return (h ^ (uint64_t)s_afs_size) * 0x100000001B3ull;
 }
 
 /* Retail's disc-error screen, which waits for the disc to come back. The
@@ -143,14 +167,14 @@ void sf_files_sync(void)
 {
     size_t i;
     for (i = 0; i < sizeof s_files / sizeof s_files[0]; i++) {
-        sf_job_wait(&s_files[i].job);
+        sf_job_wait(&s_jobs[i]);
     }
 }
 
 void ADXF_Close(void *adxf)
 {
     if (adxf) {
-        sf_job_wait(&((AdxfFile *)adxf)->job);
+        sf_job_wait(job_of((AdxfFile *)adxf));
         ((AdxfFile *)adxf)->used = 0;
     }
 }
@@ -160,14 +184,14 @@ s32 ADXF_GetStat(void *adxf)
     if (!adxf) {
         return ADXF_STAT_ERROR;
     }
-    sf_job_wait(&((AdxfFile *)adxf)->job);
+    sf_job_wait(job_of((AdxfFile *)adxf));
     return ((AdxfFile *)adxf)->stat;
 }
 
 s32 ADXF_StopNw(void *adxf)
 {
     if (adxf) {
-        sf_job_wait(&((AdxfFile *)adxf)->job);
+        sf_job_wait(job_of((AdxfFile *)adxf));
         ((AdxfFile *)adxf)->stat = ADXF_STAT_STOP;
     }
     return 0;
@@ -181,7 +205,7 @@ s32 ADXF_ReadNw(void *adxf, s32 nsct, void *buf)
     if (!f || nsct <= 0) {
         return 0;
     }
-    sf_job_wait(&f->job);
+    sf_job_wait(job_of(f));
     at = (off_t)f->offset + (off_t)f->pos * SECTOR;
     want = (size_t)nsct * SECTOR;
     if (at >= s_afs_size) {
@@ -196,7 +220,7 @@ s32 ADXF_ReadNw(void *adxf, s32 nsct, void *buf)
     f->buf = buf;
     f->want = want;
     f->at = at;
-    sf_job_start(&f->job, read_run, f);
+    sf_job_start(job_of(f), read_run, f);
     return nsct;
 }
 

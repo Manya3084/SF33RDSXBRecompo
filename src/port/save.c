@@ -99,6 +99,19 @@ static u8 s_screen_size;
 static u8 s_screen_mode;
 
 static int game_db(char *out, size_t n);
+int sf_net_settings(struct _SAVE_W *sw, SystemDir *dir);
+
+/* A netplay game plays on the host's settings: this machine's database
+ * keeps its own (the write is skipped, and the game told it went). */
+static int net_write_system(const char *path, const struct _SAVE_W *sw)
+{
+    return sf_net_active() ? 0 : sf_store_write_system(path, sw);
+}
+
+static int net_write_directions(const char *path, const SystemDir *dir)
+{
+    return sf_net_active() ? 0 : sf_store_write_directions(path, dir);
+}
 
 static void remember_screen(const struct _SAVE_W *sw)
 {
@@ -120,7 +133,7 @@ void sf_system_commit_screen(void)
         sw->Screen_Size == s_screen_size && sw->Screen_Mode == s_screen_mode) {
         return;
     }
-    if (game_db(path, sizeof path) != 0 || sf_store_write_system(path, sw) != 0) {
+    if (game_db(path, sizeof path) != 0 || net_write_system(path, sw) != 0) {
         return;
     }
     remember_screen(sw);
@@ -159,7 +172,7 @@ static int open_system(struct _SAVE_W *sw)
         return r;
     }
     *sw = Game_Default_Data;
-    if (sf_store_write_system(path, sw) != 0) {
+    if (net_write_system(path, sw) != 0) {
         return -1;
     }
     return 0;
@@ -177,7 +190,7 @@ static int open_directions(SystemDir *dir)
         return r;
     }
     *dir = Dir_Default_Data;
-    if (sf_store_write_directions(path, dir) != 0) {
+    if (net_write_directions(path, dir) != 0) {
         return -1;
     }
     return 0;
@@ -247,15 +260,42 @@ static void apply_system(const struct _SAVE_W *in)
 /* The init task writes the factory defaults into save_w and system_dir.
  * This replaces them with the database. Called once that write has
  * finished. A damaged file is left alone and the defaults stay. */
+static int s_startup_done;
+
+/* Back at start-up (src/port/state.c): the next init step reads the
+ * database again. */
+void sf_save_restart(void)
+{
+    s_startup_done = 0;
+}
+
 void sf_save_startup(void)
 {
-    static int done;
+    int done = s_startup_done;
     struct _SAVE_W sw;
     SystemDir dir;
     if (done) {
         return;
     }
-    done = 1;
+    s_startup_done = 1;
+    if (sf_net_settings(&sw, &dir)) {
+        /* a netplay game: the host's settings, but this machine's
+           screen and volumes (they change only what it shows and plays) */
+        struct _SAVE_W mine;
+        if (open_system(&mine) == 0) {
+            sw.Adjust_X = mine.Adjust_X;
+            sw.Adjust_Y = mine.Adjust_Y;
+            sw.Screen_Size = mine.Screen_Size;
+            sw.Screen_Mode = mine.Screen_Mode;
+            sw.BGM_Level = mine.BGM_Level;
+            sw.SE_Level = mine.SE_Level;
+            sw.SoundMode = mine.SoundMode;
+        }
+        apply_system(&sw);
+        system_dir[Present_Mode] = dir;
+        fill_directions();
+        return;
+    }
     if (open_system(&sw) == 0) {
         s_system_ok = 1;
         apply_system(&sw);
@@ -278,7 +318,7 @@ static void run(void)
         if (s_mode == 1) {
             Save_Game_Data();
             if (game_db(path, sizeof path) == 0 &&
-                sf_store_write_system(path, &save_w[Present_Mode]) == 0) {
+                net_write_system(path, &save_w[Present_Mode]) == 0) {
                 s_system_ok = 1;
                 if (Present_Mode == 1) {
                     remember_screen(&save_w[1]);
@@ -295,7 +335,7 @@ static void run(void)
     case 1:
         if (s_mode == 1) {
             if (game_db(path, sizeof path) == 0) {
-                sf_store_write_directions(path, &system_dir[Present_Mode]);
+                net_write_directions(path, &system_dir[Present_Mode]);
             }
         } else if (open_directions(&dir) == 0) {
             system_dir[Present_Mode] = dir;

@@ -77,7 +77,9 @@ typedef struct Hist {
     int newest;   /* the frame now logging (the last saved) */
     int count;    /* frames kept, the newest among them */
     uint8_t *arena;
-    size_t arena_used;
+    size_t arena_used; /* the arena kept: as far as the game has ever taken */
+    SfStateRegion reg[32];
+    int reg_n;
 } Hist;
 
 static Hist *s_h;
@@ -122,10 +124,9 @@ static void protect(uint8_t *p, size_t n, int writable)
 /* The page's state bytes from src (a whole page's copy) back into it. */
 static void put_back(uint8_t *page, const uint8_t *src)
 {
-    SfStateRegion reg[32];
-    int n = sf_state_regions(reg, 32);
+    const SfStateRegion *reg = s_h->reg;
     int i;
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < s_h->reg_n; i++) {
         uint8_t *lo = reg[i].p > page ? reg[i].p : page;
         uint8_t *hi = reg[i].p + reg[i].n < page + PAGE ? reg[i].p + reg[i].n : page + PAGE;
         if (hi > lo) {
@@ -278,12 +279,12 @@ static void frame_close(Frame *f)
 
 static void build(void)
 {
-    SfStateRegion reg[32];
+    SfStateRegion *reg = s_h->reg;
     int n;
     int i;
     size_t k;
     sf_state_size(); /* the regions as they are now */
-    n = sf_state_regions(reg, 32);
+    n = s_h->reg_n = sf_state_regions(reg, 32);
     s_h->span_n = 0;
     s_h->pages = 0;
     for (i = 0; i < n && s_h->span_n < SPANS; i++) {
@@ -417,11 +418,11 @@ void sf_hist_save(int frame)
     }
     sf_files_sync();
     sf_arena_extent(&arena, &used);
-    if (used != s_h->arena_used || atomic_load(&s_h->pool_full)) {
+    if (used > s_h->arena_used || atomic_load(&s_h->pool_full)) {
         /* the game took more of the arena, or a frame wrote more than the
          * pool holds: keeping starts again from here */
         fprintf(stderr, "history: %s at frame %d; frames before it are gone\n",
-                used != s_h->arena_used ? "the arena grew" : "the pool filled", frame);
+                used > s_h->arena_used ? "the arena grew" : "the pool filled", frame);
         sf_hist_start(frame);
         return;
     }
@@ -485,7 +486,7 @@ int sf_hist_load(int frame)
         put_back(page_addr(s_h->always[a]), target->always + a * PAGE);
     }
     sf_sound_state_restore(target->sound);
-    sf_gfx_state_restored();
+    sf_state_restored();
     /* the frame logs anew from here */
     s_h->newest = (s_h->newest + FRAMES - back) % FRAMES;
     s_h->count -= back;

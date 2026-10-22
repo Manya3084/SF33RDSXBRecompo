@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -16,7 +17,11 @@
 #define SF_ARENA (512u << 20)
 
 static uint8_t *s_base;
-static size_t s_used;
+/* how much is taken is game state: going back to an earlier frame (a
+ * rollback, or a netplay session's start) gives the game the same
+ * blocks again */
+static size_t s_used SF_GAME;
+static size_t s_high; /* as far as the arena was ever taken: zero beyond */
 
 void *sf_arena_alloc(size_t size, size_t align)
 {
@@ -47,6 +52,13 @@ void *sf_arena_alloc(size_t size, size_t align)
         abort();
     }
     s_used = at + size;
+    if (at < s_high) {
+        /* taken before, by a run since put back: as zero as fresh memory */
+        memset(s_base + at, 0, (s_used < s_high ? s_used : s_high) - at);
+    }
+    if (s_used > s_high) {
+        s_high = s_used;
+    }
     if (getenv("SF_ARENA_DEBUG")) {
         fprintf(stderr, "arena: +0x%zx %zu bytes from %p\n", at, size, __builtin_return_address(0));
     }

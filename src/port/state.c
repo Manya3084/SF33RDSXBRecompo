@@ -229,6 +229,14 @@ static void regions(void)
     add_region(arena, arena + used);
 }
 
+/* After the state is put back: the port's copies of what the game sees
+ * (the renderer's textures, the sound effects' waves) brought into line. */
+void sf_state_restored(void)
+{
+    sf_gfx_state_restored();
+    sf_se_state_restored();
+}
+
 int sf_state_regions(SfStateRegion *out, int max)
 {
     int i;
@@ -274,7 +282,93 @@ void sf_state_restore(const uint8_t *buf)
         buf += s_reg[i].n;
     }
     sf_sound_state_restore(buf);
-    sf_gfx_state_restored();
+    sf_state_restored();
+}
+
+/* ---- the start-up state ----
+ *
+ * The state as start-up left it (before the first frame), for a netplay
+ * session: both machines go back to it, so they start from the same
+ * game. Its regions are kept with it (the arena may be taken further
+ * since), and a page of zeros is not copied. */
+
+static struct {
+    SfStateRegion reg[32];
+    int n;
+    uint8_t **page; /* by page of the regions in order; NULL for zeros */
+    size_t pages;
+    uint8_t *sound;
+} s_boot SF_KEEP;
+
+static int all_zero(const uint8_t *p, size_t n)
+{
+    static const uint8_t zero[PAGE];
+    return memcmp(p, zero, n) == 0;
+}
+
+void sf_state_boot_save(void)
+{
+    size_t k = 0;
+    size_t kept = 0;
+    int i;
+    sf_files_sync();
+    sf_state_size();
+    s_boot.n = sf_state_regions(s_boot.reg, 32);
+    s_boot.pages = 0;
+    for (i = 0; i < s_boot.n; i++) {
+        s_boot.pages += (s_boot.reg[i].n + PAGE - 1) / PAGE;
+    }
+    s_boot.page = calloc(s_boot.pages, sizeof *s_boot.page);
+    s_boot.sound = malloc(sf_sound_state_size());
+    if (!s_boot.page || !s_boot.sound) {
+        return;
+    }
+    for (i = 0; i < s_boot.n; i++) {
+        size_t off;
+        for (off = 0; off < s_boot.reg[i].n; off += PAGE, k++) {
+            size_t n = s_boot.reg[i].n - off < PAGE ? s_boot.reg[i].n - off : PAGE;
+            if (!all_zero(s_boot.reg[i].p + off, n)) {
+                s_boot.page[k] = malloc(n);
+                if (s_boot.page[k]) {
+                    memcpy(s_boot.page[k], s_boot.reg[i].p + off, n);
+                    kept++;
+                }
+            }
+        }
+    }
+    sf_sound_state_save(s_boot.sound);
+    fprintf(stderr, "state: start-up kept, %zu KB of %zu KB\n", kept * 4, s_boot.pages * 4);
+}
+
+int sf_state_boot_ok(void)
+{
+    return s_boot.page != NULL;
+}
+
+/* Back to start-up (the history stopped first: the caller's). */
+int sf_state_boot_restore(void)
+{
+    size_t k = 0;
+    int i;
+    if (!s_boot.page) {
+        return -1;
+    }
+    sf_files_sync();
+    for (i = 0; i < s_boot.n; i++) {
+        size_t off;
+        for (off = 0; off < s_boot.reg[i].n; off += PAGE, k++) {
+            size_t n = s_boot.reg[i].n - off < PAGE ? s_boot.reg[i].n - off : PAGE;
+            if (s_boot.page[k]) {
+                memcpy(s_boot.reg[i].p + off, s_boot.page[k], n);
+            } else {
+                memset(s_boot.reg[i].p + off, 0, n);
+            }
+        }
+    }
+    sf_sound_state_restore(s_boot.sound);
+    sf_state_restored();
+    sf_save_restart();
+    return 0;
 }
 
 static uint64_t hash_bytes(const uint8_t *p, size_t n, uint64_t h)
@@ -589,12 +683,32 @@ static void hist_test_frame(void)
     }
 }
 
+/* SF_BOOT_TEST=FRAME: after FRAME, back to start-up with the recording
+ * from its start: with SF_SYNC_LOG, the frames after it must log as the
+ * first ones did (tools: compare the two runs of frame numbers). */
+static void boot_test_frame(void)
+{
+    static int at = -2;
+    if (at == -2) {
+        at = getenv("SF_BOOT_TEST") ? atoi(getenv("SF_BOOT_TEST")) : -1;
+    }
+    if (at < 0 || sf_port_frame != at) {
+        return;
+    }
+    at = -1;
+    fprintf(stderr, "boot test: back to start-up after frame %d\n", sf_port_frame);
+    sf_state_boot_restore();
+    sf_input_replay_rewind();
+    sf_port_frame = 0;
+}
+
 /* After each game frame. */
 void sf_state_test_frame(void)
 {
     trace_frame();
     profile_frame();
     hist_test_frame();
+    boot_test_frame();
     const char *env;
     uint64_t *now;
     size_t i;

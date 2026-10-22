@@ -464,10 +464,24 @@ void sf_video_shutdown(void)
     }
 }
 
+/* A turn of the loop with no frame run (a netplay wait): its time. */
+void sf_video_wait_frame(void)
+{
+    if (!getenv("SF_HEADLESS") || getenv("SF_PACE")) {
+        pace();
+    }
+}
+
 void sf_video_present(void)
 {
     static int frame;
     char err[512];
+    if (sf_net_resim()) {
+        /* a netplay frame run again: not shown */
+        sf_gfx_frame_ready();
+        sf_gfx_frame_done();
+        return;
+    }
     if (sf_sync_testing() && frame % 30 != 0) {
         /* a sync test: at full speed, a frame in 30 shown */
         frame++;

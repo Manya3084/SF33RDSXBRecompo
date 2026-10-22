@@ -518,6 +518,9 @@ void sf_menu_ext_init(void)
 {
     Menu_Letter_Data[0][7] = (const s8 *)"EXIT GAME";
     Menu_Letter_Data[1][7] = (const s8 *)"EXIT GAME";
+    /* direct-IP play in Xbox Live's place (src/port/netpage.c) */
+    Menu_Letter_Data[0][6] = (const s8 *)"NETWORK";
+    Menu_Letter_Data[1][6] = (const s8 *)"NETWORK";
 }
 
 /* Each frame, after the game's tasks and before the frame is drawn. */
@@ -545,6 +548,19 @@ void sf_menu_ext_frame(void)
             s_row = 0;
             s_waiting = 0;
             SE_selected();
+        }
+    }
+    {
+        /* how the last network game ended, over the title a while */
+        const char *b = sf_net_banner();
+        if (b) {
+            char up[160];
+            size_t i;
+            for (i = 0; b[i] && i + 1 < sizeof up; i++) {
+                up[i] = (char)toupper((unsigned char)b[i]);
+            }
+            up[i] = 0;
+            put_centred(196, up, 1.0f, COL_CURSOR, 1);
         }
     }
     if (s_hold && !any_key_down(k)) {

@@ -61,6 +61,24 @@ static void apply(void)
     D_007AA5F1 = (s8)(Country == 1);
 }
 
+/* A setting of the port's in config/host.sqlite: 0 with its value. */
+int sf_setting_read(const char *name, char *value, unsigned n)
+{
+    char path[4096 + 64];
+    if (host_db(path, sizeof path) != 0) {
+        return -1;
+    }
+    return sf_store_read_setting(path, name, value, n);
+}
+
+void sf_setting_write(const char *name, const char *value)
+{
+    char path[4096 + 64];
+    if (host_db(path, sizeof path) == 0) {
+        sf_store_write_setting(path, name, value);
+    }
+}
+
 /* At start-up, from the region setup (src/port/system.c). */
 void sf_language_init(void)
 {
@@ -89,6 +107,17 @@ int sf_language_step(int dir)
         sf_store_write_setting(path, "language", s_japanese ? "japanese" : "english");
     }
     return 1;
+}
+
+/* A netplay game plays in the host's language (not kept): the game's
+ * variables as that has them, until the session ends. */
+void sf_language_force(int japanese)
+{
+    int mine = s_japanese;
+    s_japanese = japanese;
+    apply();
+    Setup_Difficult_V();
+    s_japanese = mine;
 }
 
 /* For netplay: the language both machines play in. */

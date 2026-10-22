@@ -20,10 +20,12 @@ Working:
 - Vulkan, or OpenGL 3.3 when Vulkan is missing (`SF_RENDERER=opengl` picks it)
 - the game at a locked 60 on one thread, with the drawing on a render thread and the disc reads and sound decoding on worker threads ([docs/porting.md](docs/porting.md#threads))
 - EXIT GAME in the mode menu (retail's SELECT GAME), which quits cleanly
+- versus over the network by direct IP, with rollback, between any of the builds (a phone against a PC too): NETWORK in the mode menu, where Xbox Live was ([Network](#network))
+- GAME OPTION's LANGUAGE: ENGLISH, or JAPANESE as a Japanese Xbox ran the game (its text, names and CPU)
 
 Not done yet:
 
-- online play (the game runs offline; Xbox Live is greyed out in the mode menu)
+- finding a player without an address (no lobby or matchmaking)
 
 ## Download
 
@@ -136,6 +138,18 @@ Three rows follow FILTER:
 - ASPECT RATIO: 4:3 (the original, with bars at the sides), 16:9 (widened), or FULL (the whole window).
 
 DEFAULT SETTING puts them back to SMOOTH in a 1280×960 window at 4:3. FILTER and the picture size are written to the system database when they change. WINDOW MODE, RESOLUTION and ASPECT RATIO are written to the host database when those rows change.
+
+## Network
+
+NETWORK in the mode menu plays a versus game with another machine, by its address:
+
+- HOST MATCH waits for a player and shows this machine's address on its network. Over the internet, the other player needs your public address, and your router must forward UDP port 33133 to this machine.
+- JOIN MATCH calls the address in ADDRESS. On the pad, up and down step a letter, left and right move along, A calls and B rubs out; a keyboard types.
+- INPUT DELAY (0 to 6 frames, 2 by default) is how late each player's pad is used. The host's is used for both. Higher leaves more time for the other machine's pad to arrive, so there are fewer rollbacks on a slow line.
+
+Both machines need this version and the same disc imported. A disc imported before 1.2 needs importing again, because netplay uses the retail image the import now writes. The game starts both machines from the same state with the host's GAME OPTION settings; each machine keeps its own screen, sound and keys. It goes straight to the versus character select. The game ends when it goes back to the mode menu, or when a player holds BACK for two seconds, and each machine returns to its title.
+
+The game runs ahead on a guess at the other player's pad, and when the real pad differs it goes back and runs those frames again unseen (rollback). Every half second the two machines compare a checksum of the game, and stop with a message if they ever differ.
 
 ## Layout
 

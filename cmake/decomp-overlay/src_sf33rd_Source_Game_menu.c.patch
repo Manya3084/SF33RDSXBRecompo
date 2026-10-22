@@ -1,29 +1,44 @@
 --- a/menu.c
 +++ b/menu.c
-@@ -431,6 +431,10 @@
+@@ -431,6 +431,11 @@
  void Game_Option(struct _TASK* task_ptr);
  void Button_Config(struct _TASK* task_ptr);
  void Screen_Adjust(struct _TASK* task_ptr);
 +int sf_display_step(int row, int dir);
 +int sf_language_step(int dir);
++int sf_net_page(int start);
 +void sf_display_default(void);
 +void sf_system_commit_screen(void);
  void Sound_Test(struct _TASK* task_ptr);
  void Memory_Card(struct _TASK* task_ptr);
  void Extra_Option(struct _TASK* task_ptr);
-@@ -1000,6 +1004,11 @@
+@@ -1001,6 +1006,11 @@
+         break;
+ 
+     case 3:
++        /* Port: the NETWORK page (src/port/netpage.c) takes the frame while it is open */
++        if (sf_net_page(0)) {
++            break;
++        }
++
+         if (Connect_Status == 0 && Menu_Cursor_Y[0] == 1) {
+             Menu_Cursor_Y[0] = 2;
+         } else {
+@@ -1014,6 +1024,13 @@
  
          switch (IO_Result) {
          case 0x100:
 +            if (Menu_Cursor_Y[0] == 6) {
-+                /* Port: no Xbox Live; the cursor skips it, and A on it does nothing */
++                /* Port: NETWORK, direct-IP play, in place of Xbox Live */
++                SE_selected();
++                sf_net_page(1);
 +                break;
 +            }
 +
              switch (Menu_Cursor_Y[0]) {
              case 0:
                  G_No[2] += 1;
-@@ -2376,8 +2385,10 @@
+@@ -2390,8 +2407,10 @@
          Order_Dir[0x6A] = 8;
          Order_Timer[0x6A] = 1;
  
@@ -36,7 +51,7 @@
              Order[ix + 0x50] = 1;
              Order_Dir[ix + 0x50] = 4;
              Order_Timer[ix + 0x50] = ix + 0x14;
-@@ -2392,6 +2403,12 @@
+@@ -2406,6 +2425,12 @@
              Order_Timer[ix + 0x5D] = ix + 0x14;
          }
  
@@ -49,7 +64,7 @@
          break;
  
      case 1:
-@@ -2426,13 +2443,20 @@
+@@ -2440,13 +2465,20 @@
  
      sw = ~plsw_01[PL_id] & plsw_00[PL_id];
      sw = Check_Menu_Lever(PL_id, 0);
@@ -71,7 +86,7 @@
      if (Menu_Cursor_Y[cursor_id] > 9) {
          return 0;
      }
-@@ -2637,7 +2661,7 @@
+@@ -2651,7 +2683,7 @@
  
      switch (task_ptr->r_no[1]) {
      case 9:
@@ -80,7 +95,7 @@
              SE_selected();
              Return_Option_Mode_Sub(task_ptr);
              Order[0x6A] = 4;
-@@ -2645,7 +2669,7 @@
+@@ -2659,7 +2691,7 @@
              return;
          }
  
@@ -89,7 +104,7 @@
              SE_selected();
              save_w[1].Difficulty = Game_Default_Data.Difficulty;
              save_w[1].Time_Limit = Game_Default_Data.Time_Limit;
-@@ -2773,15 +2797,18 @@
+@@ -2787,15 +2819,18 @@
          Order_Dir[0x65] = 8;
          Order_Timer[0x65] = 1;
  
@@ -111,7 +126,7 @@
              Order[ix + 0x50] = 1;
              Order_Dir[ix + 0x50] = 4;
              Order_Timer[ix + 0x50] = ix + 0x14;
-@@ -2811,11 +2838,14 @@
+@@ -2825,11 +2860,14 @@
              Screen_Exit_Check(task_ptr, 0);
          }
  
@@ -130,7 +145,7 @@
          break;
      }
  }
-@@ -2825,7 +2855,7 @@
+@@ -2839,7 +2877,7 @@
      u16 sw;
      sw = ~plsw_01[PL_id] & plsw_00[PL_id];
      sw = Check_Menu_Lever(PL_id, 0);
@@ -139,7 +154,7 @@
      Screen_Move_Sub_LR(sw);
  }
  
-@@ -2839,7 +2869,7 @@
+@@ -2853,7 +2891,7 @@
          return;
      }
  
@@ -148,7 +163,7 @@
          SE_selected();
          Menu_Suicide[1] = 0;
          Menu_Suicide[2] = 1;
-@@ -2867,10 +2897,13 @@
+@@ -2881,10 +2919,13 @@
          return;
      }
  
@@ -163,7 +178,7 @@
          Disp_Size_H = 100;
          Disp_Size_V = 100;
          Setup_Disp_Size(0);
-@@ -2932,7 +2965,8 @@
+@@ -2946,7 +2987,8 @@
              break;
  
          case 4:
@@ -173,7 +188,7 @@
              flag = 1;
              break;
          }
-@@ -2985,12 +3019,18 @@
+@@ -2999,12 +3041,18 @@
              break;
  
          case 4:
@@ -192,13 +207,4 @@
 +
      if (flag) {
          SE_dir_cursor_move();
-     }
-@@ -3545,7 +3585,7 @@
- u16 MC_Move_Sub(u16 sw, s16 cursor_id, s16 menu_max, s16 cansel_menu) {
- #define MC_SKIP_ROW(y)                                                                                             \
-     ((D_00796884 == 12 && (y) < 3) || (D_00796884 == 10 && ((y) == 3 || (y) == 7)) || (D_00796884 == 19 && (y) == 1) || \
--     (D_00796884 == 13 && (y) == 2))
-+     (D_00796884 == 13 && (y) == 2) || (D_00796884 == 20 && (y) == 6)) /* Port: no Xbox Live */
-     if (Menu_Cursor_Move > 0) {
-         return 0;
      }

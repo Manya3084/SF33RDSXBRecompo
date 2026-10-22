@@ -53,13 +53,3 @@
      }
  };
  
-@@ -237,7 +263,8 @@
-         }
-     } else if (Menu_Cursor_Y[ewk->master_id] == ewk->wu.type) {
-         ewk->wu.my_clear_level = 0;
--    } else if (ewk->wu.char_index == 1 && Connect_Status == 0) {
-+    } else if ((ewk->wu.char_index == 1 && Connect_Status == 0) || ewk->wu.char_index == 6) {
-+        /* Port: Xbox Live (6) is greyed like VERSUS without a second player */
-         ewk->wu.my_clear_level = 179;
-     } else {
-         ewk->wu.my_clear_level = 128;

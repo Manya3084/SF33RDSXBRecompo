@@ -158,6 +158,8 @@ add_library(sf_port STATIC
     src/port/state.c
     src/port/history.c
     src/port/language.c
+    src/port/net.c
+    src/port/netpage.c
     src/port/setup.c
     src/ui/ui.c
     src/port/live.c
@@ -170,6 +172,9 @@ add_library(sf_port STATIC
 )
 target_link_libraries(sf_port PUBLIC ZLIB::ZLIB OpenAL::OpenAL sf_sqlite)
 target_link_libraries(sf_port PUBLIC sf_gfx sf_render sf_import)
+if(WIN32)
+    target_link_libraries(sf_port PUBLIC ws2_32)
+endif()
 set_target_properties(sf_port PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The port's own variables (the window, textures, sound, input devices)
@@ -194,7 +199,7 @@ endforeach()
 set(_stub_win "")
 if(WIN32)
     set(_stub_win --coff --nm x86_64-w64-mingw32-nm --objdump x86_64-w64-mingw32-objdump)
-    foreach(_l libmsvcrt.a libmingwex.a libmingw32.a libmoldname.a libkernel32.a libuser32.a libopengl32.a libgcc.a)
+    foreach(_l libmsvcrt.a libmingwex.a libmingw32.a libmoldname.a libkernel32.a libuser32.a libopengl32.a libgcc.a libws2_32.a)
         execute_process(COMMAND ${CMAKE_C_COMPILER} -print-file-name=${_l} OUTPUT_VARIABLE _p OUTPUT_STRIP_TRAILING_WHITESPACE)
         list(APPEND _stub_win --host "${_p}")
     endforeach()

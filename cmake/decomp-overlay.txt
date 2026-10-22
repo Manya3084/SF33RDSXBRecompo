@@ -10,8 +10,9 @@
 # size are written when they change. The window rows write on their own
 # step. GAME OPTION has a LANGUAGE row (src/port/language.c) before
 # DEFAULT SETTING, its thirteen rows 12 apart. The mode
-# menu's Xbox Live is greyed and skipped, as VERSUS is without a second
-# player (menu.c's cursor, EFF61.c's label): the port has no online play.
+# menu's Xbox Live is NETWORK: A on it opens the port's page for a
+# direct-IP game (src/port/netpage.c), which takes the menu's frames
+# while it is open.
 patch src/sf33rd/Source/Game/menu.c
 patch src/sf33rd/Source/Game/EFF61.c
 patch src/sf33rd/Source/Game/EFF63.c
