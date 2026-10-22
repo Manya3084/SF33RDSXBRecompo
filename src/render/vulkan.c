@@ -23,12 +23,10 @@ static uint32_t mem_index(VkPhysicalDevice physical, uint32_t bits, VkMemoryProp
     return UINT32_MAX;
 }
 
-/* On Android a sideways phone's present says suboptimal every frame (the
- * compositor turns the image): that is kept, not rebuilt each frame. */
 #ifdef __ANDROID__
-#define SF_KEEP_SUBOPTIMAL 1
+#define SF_ANDROID 1
 #else
-#define SF_KEEP_SUBOPTIMAL 0
+#define SF_ANDROID 0
 #endif
 
 static void destroy_swapchain(SfRenderer *r)
@@ -121,7 +119,15 @@ static int make_swapchain(SfRenderer *r, char *err, size_t err_n)
     }
     if (caps.currentExtent.width != UINT32_MAX) {
         extent = caps.currentExtent;
-
+#ifdef __ANDROID__
+        /* the surface's size is given the way the screen stands now; turned
+         * a quarter (pre-rotation), the images are the panel's own way up */
+        if (caps.currentTransform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)) {
+            uint32_t t = extent.width;
+            extent.width = extent.height;
+            extent.height = t;
+        }
+#endif
     } else {
         SDL_GetWindowSizeInPixels(r->window, &w, &h);
         if (w < 1) {
@@ -1047,7 +1053,18 @@ int sf_vk_present(SfRenderer *r, const SfCanvas *canvas, char *err, size_t err_n
     if (ar == VK_ERROR_SURFACE_LOST_KHR) {
         return renew_surface(r, err, err_n);
     }
-    if (ar == VK_ERROR_OUT_OF_DATE_KHR || (ar == VK_SUBOPTIMAL_KHR && !SF_KEEP_SUBOPTIMAL)) {
+    /* suboptimal (still shown, but not as the surface now is: the app
+     * back from the background, the screen turned) is not a failure: the
+     * swapchain is made again, twice at most in a row, so a driver that
+     * says it every frame does not have it remade every frame */
+    if (ar == VK_SUBOPTIMAL_KHR && r->suboptimal >= 2) {
+        ar = VK_SUCCESS;
+    } else if (ar == VK_SUBOPTIMAL_KHR) {
+        r->suboptimal++;
+    } else if (ar == VK_SUCCESS) {
+        r->suboptimal = 0;
+    }
+    if (ar == VK_ERROR_OUT_OF_DATE_KHR || ar == VK_SUBOPTIMAL_KHR) {
         vkDeviceWaitIdle(r->device);
         destroy_swapchain(r);
         if (make_swapchain(r, err, err_n) != 0) {
@@ -1180,7 +1197,7 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
         SDL_GetWindowSizeInPixels(r->window, &w, &h);
         /* (Android reports a changed surface itself, and its window and
          * surface stand differently: not there) */
-        if (!SF_KEEP_SUBOPTIMAL && r->surface && w > 0 && h > 0 && (w != r->sized_w || h != r->sized_h)) {
+        if (!SF_ANDROID && r->surface && w > 0 && h > 0 && (w != r->sized_w || h != r->sized_h)) {
             r->sized_w = w;
             r->sized_h = h;
             if ((uint32_t)w != r->extent.width || (uint32_t)h != r->extent.height) {
@@ -1241,7 +1258,18 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
     if (ar == VK_ERROR_SURFACE_LOST_KHR) {
         return renew_surface(r, err, err_n);
     }
-    if (ar == VK_ERROR_OUT_OF_DATE_KHR || (ar == VK_SUBOPTIMAL_KHR && !SF_KEEP_SUBOPTIMAL)) {
+    /* suboptimal (still shown, but not as the surface now is: the app
+     * back from the background, the screen turned) is not a failure: the
+     * swapchain is made again, twice at most in a row, so a driver that
+     * says it every frame does not have it remade every frame */
+    if (ar == VK_SUBOPTIMAL_KHR && r->suboptimal >= 2) {
+        ar = VK_SUCCESS;
+    } else if (ar == VK_SUBOPTIMAL_KHR) {
+        r->suboptimal++;
+    } else if (ar == VK_SUCCESS) {
+        r->suboptimal = 0;
+    }
+    if (ar == VK_ERROR_OUT_OF_DATE_KHR || ar == VK_SUBOPTIMAL_KHR) {
         vkDeviceWaitIdle(r->device);
         destroy_swapchain(r);
         return make_swapchain(r, err, err_n);
