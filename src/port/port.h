@@ -55,6 +55,8 @@ void sf_save_startup(void);
 
 /* A whole member of the imported archive, malloc'd. */
 int sf_afs_read(int32_t fid, uint8_t **data, uint32_t *size);
+/* Every disc read finished (src/port/files.c). */
+void sf_files_sync(void);
 int sf_afs_member(int32_t fid, uint32_t *offset, uint32_t *size);
 long sf_afs_pread(void *buf, uint32_t n, uint32_t offset);
 

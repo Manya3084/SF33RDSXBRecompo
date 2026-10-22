@@ -151,6 +151,7 @@ size_t sf_state_size(void)
 void sf_state_save(uint8_t *buf)
 {
     int i;
+    sf_files_sync(); /* no read still landing in the memory copied */
     regions();
     for (i = 0; i < s_reg_n; i++) {
         memcpy(buf, s_reg[i].p, s_reg[i].n);
@@ -162,6 +163,7 @@ void sf_state_save(uint8_t *buf)
 void sf_state_restore(const uint8_t *buf)
 {
     int i;
+    sf_files_sync(); /* no read still landing in the memory copied */
     regions();
     for (i = 0; i < s_reg_n; i++) {
         memcpy(s_reg[i].p, buf, s_reg[i].n);

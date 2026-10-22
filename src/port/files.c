@@ -2,13 +2,17 @@
  *
  * The game reads SF33RDXB.AFS by member number, in 2048-byte sectors from
  * a running position (GD3rd.c's fsOpen and fsRequestFileRead). Retail's
- * CRI layer reads the disc asynchronously; here a read is done when it is
- * asked for, so the next status poll already sees it finished. A read runs
- * on through the sectors after the member, as a sector read from the disc
- * does. */
+ * CRI layer reads the disc asynchronously, and so does this: a read runs
+ * on a worker thread (src/port/jobs.c) from when it is asked for, and the
+ * next status poll waits for it, so that poll always sees it finished, on
+ * the frame it would if the read were done at once. The game asks on one
+ * frame and polls on the next, so the read has the rest of the frame. A
+ * read runs on through the sectors after the member, as a sector read
+ * from the disc does. */
 
 #include "host/compat.h"
 #include "host/paths.h"
+#include "port/jobs.h"
 #include "port/port.h"
 
 #include "types.h"
@@ -34,6 +38,11 @@ typedef struct AdxfFile {
     u32 size;
     u32 pos; /* in sectors */
     s32 stat;
+    /* the read on the worker */
+    SfJob job;
+    void *buf;
+    size_t want;
+    off_t at;
 } AdxfFile;
 
 static int s_fd = -1;
@@ -118,21 +127,49 @@ void *ADXF_OpenAfs(s32 ptid, s32 flid)
     return NULL;
 }
 
+/* The worker's half of a read. */
+static void read_run(void *arg)
+{
+    AdxfFile *f = arg;
+    ssize_t got = pread(s_fd, f->buf, f->want, f->at);
+    if (got < 0) {
+        fprintf(stderr, "files: reading %zu bytes at %lld into %p: %s\n", f->want, (long long)f->at, f->buf,
+                strerror(errno));
+        f->stat = ADXF_STAT_ERROR;
+    }
+}
+
+/* Every read finished: before the game's memory is copied or put back
+ * (src/port/state.c). */
+void sf_files_sync(void)
+{
+    size_t i;
+    for (i = 0; i < sizeof s_files / sizeof s_files[0]; i++) {
+        sf_job_wait(&s_files[i].job);
+    }
+}
+
 void ADXF_Close(void *adxf)
 {
     if (adxf) {
+        sf_job_wait(&((AdxfFile *)adxf)->job);
         ((AdxfFile *)adxf)->used = 0;
     }
 }
 
 s32 ADXF_GetStat(void *adxf)
 {
-    return adxf ? ((AdxfFile *)adxf)->stat : ADXF_STAT_ERROR;
+    if (!adxf) {
+        return ADXF_STAT_ERROR;
+    }
+    sf_job_wait(&((AdxfFile *)adxf)->job);
+    return ((AdxfFile *)adxf)->stat;
 }
 
 s32 ADXF_StopNw(void *adxf)
 {
     if (adxf) {
+        sf_job_wait(&((AdxfFile *)adxf)->job);
         ((AdxfFile *)adxf)->stat = ADXF_STAT_STOP;
     }
     return 0;
@@ -143,10 +180,10 @@ s32 ADXF_ReadNw(void *adxf, s32 nsct, void *buf)
     AdxfFile *f = adxf;
     off_t at;
     size_t want;
-    ssize_t got;
     if (!f || nsct <= 0) {
         return 0;
     }
+    sf_job_wait(&f->job);
     at = (off_t)f->offset + (off_t)f->pos * SECTOR;
     want = (size_t)nsct * SECTOR;
     if (at >= s_afs_size) {
@@ -156,32 +193,13 @@ s32 ADXF_ReadNw(void *adxf, s32 nsct, void *buf)
     if (at + (off_t)want > s_afs_size) {
         want = (size_t)(s_afs_size - at);
     }
-    got = pread(s_fd, buf, want, at);
-    if (got < 0) {
-        fprintf(stderr, "files: reading %zu bytes at %lld into %p: %s\n", want, (long long)at, buf, strerror(errno));
-        f->stat = ADXF_STAT_ERROR;
-        return 0;
-    }
     f->pos += (u32)nsct;
     f->stat = ADXF_STAT_READEND;
+    f->buf = buf;
+    f->want = want;
+    f->at = at;
+    sf_job_start(&f->job, read_run, f);
     return nsct;
-}
-
-/* A whole archive member, malloc'd (the sound code's reads). */
-int sf_afs_read(s32 fid, u8 **data, u32 *size)
-{
-    u8 *buf;
-    if (s_fd < 0 || fid < 0 || (u32)fid >= s_count) {
-        return -1;
-    }
-    *size = s_toc[fid * 2 + 1];
-    buf = malloc(*size ? *size : 1);
-    if (!buf || pread(s_fd, buf, *size, (off_t)s_toc[fid * 2]) != (ssize_t)*size) {
-        free(buf);
-        return -1;
-    }
-    *data = buf;
-    return 0;
 }
 
 /* An archive member's place, and a read from the archive: for the music
