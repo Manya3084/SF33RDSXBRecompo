@@ -54,6 +54,7 @@ struct SfRenderer {
     int tex_h;
     SfScene *scene;
     int shot_pending;
+    int rot; /* the swapchain image's quarter turns (Android's pre-rotation) */
     SDL_GLContext gl;
     GLuint gl_tex;
     void *glscene; /* the game's screen on OpenGL (glscene.c) */

@@ -332,6 +332,18 @@ static void run_report_begin(void)
                 report_add(lines[--ln]);
             }
         }
+        {
+            /* eight lines at most: the dialog's buttons stay on the screen */
+            char *q = s_report;
+            int k;
+            for (k = 0; k < 8 && q && *q; k++) {
+                q = strchr(q, '\n');
+                q = q ? q + 1 : NULL;
+            }
+            if (q) {
+                *q = 0;
+            }
+        }
         if (!crash && !strstr(s_report_full, "stopped: ") && !s_fatal_seen) {
             /* it was closed, or ended by Android in the background: no stop */
             s_report[0] = 0;

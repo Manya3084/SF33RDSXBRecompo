@@ -804,7 +804,7 @@ static int make_copies(SfScene *s, VkRenderPass show_pass)
     /* src at 0 for both stages; the window filter's mode follows it */
     push[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     push[0].size = 16;
-    push[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT; /* the turn at 20 */
     push[1].offset = 16;
     push[1].size = 16;
     memset(&layout_info, 0, sizeof layout_info);
@@ -1400,6 +1400,11 @@ static void record_copy(SfScene *s, VkCommandBuffer cmd, int clear_out, uint32_t
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s->show_layout, 0, 1, &s->copy_set, 0, NULL);
     vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof src, src);
+    {
+        static const float upright[4] = { 0.f, 0.f, 0.f, 0.f }; /* no turn into the screen's own targets */
+        vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 16, 16,
+                           upright);
+    }
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
 }
@@ -1432,8 +1437,12 @@ void sf_scene_record(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l)
 }
 
 void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, float aspect, const SfDrawList *l,
-                          int filter)
+                          int filter, int rot)
 {
+    float lw;
+    float lh;
+    float lx;
+    float ly;
     VkViewport viewport;
     VkRect2D scissor;
     float block[8];
@@ -1447,20 +1456,45 @@ void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, fl
     if (!s->show_pipe) {
         return;
     }
-    /* the game area in the asked shape, centred in the window */
-    frame_w = (float)extent.width;
-    frame_h = (float)extent.height;
+    /* the game area in the asked shape, centred in the window, laid out
+     * the way the window stands (lw x lh); a swapchain image turned a
+     * quarter (Android's pre-rotation) takes it turned the same way */
+    rot &= 3;
+    lw = (float)((rot & 1) ? extent.height : extent.width);
+    lh = (float)((rot & 1) ? extent.width : extent.height);
+    frame_w = lw;
+    frame_h = lh;
     if (aspect > 0.f) {
         frame_h = frame_w / aspect;
-        if (frame_h > (float)extent.height) {
-            frame_h = (float)extent.height;
+        if (frame_h > lh) {
+            frame_h = lh;
             frame_w = frame_h * aspect;
         }
     }
-    viewport.x = ((float)extent.width - frame_w) / 2.f;
-    viewport.y = ((float)extent.height - frame_h) / 2.f;
-    viewport.width = frame_w;
-    viewport.height = frame_h;
+    lx = (lw - frame_w) / 2.f;
+    ly = (lh - frame_h) / 2.f;
+    switch (rot) {
+    case 1:
+        viewport.x = lh - ly - frame_h;
+        viewport.y = lx;
+        break;
+    case 2:
+        viewport.x = lw - lx - frame_w;
+        viewport.y = lh - ly - frame_h;
+        break;
+    case 3:
+        viewport.x = ly;
+        viewport.y = lw - lx - frame_w;
+        break;
+    default:
+        viewport.x = lx;
+        viewport.y = ly;
+        break;
+    }
+    viewport.width = (rot & 1) ? frame_h : frame_w;
+    viewport.height = (rot & 1) ? frame_w : frame_h;
+    frame_w = viewport.width;
+    frame_h = viewport.height;
     viewport.minDepth = 0.f;
     viewport.maxDepth = 1.f;
     scissor.offset.x = (int32_t)viewport.x;
@@ -1474,8 +1508,10 @@ void sf_scene_record_show(SfScene *s, VkCommandBuffer cmd, VkExtent2D extent, fl
     memset(block, 0, sizeof block);
     memcpy(block, src, sizeof src);
     block[4] = (float)(filter < 0 ? 0 : (filter > 3 ? 3 : filter));
+    block[5] = (float)rot;
     vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, block);
-    vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 16, 16, block + 4);
+    vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 16, 16,
+                       block + 4);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 

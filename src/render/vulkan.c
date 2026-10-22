@@ -121,16 +121,7 @@ static int make_swapchain(SfRenderer *r, char *err, size_t err_n)
     }
     if (caps.currentExtent.width != UINT32_MAX) {
         extent = caps.currentExtent;
-#ifdef __ANDROID__
-        /* a phone held sideways reports its surface turned a quarter (and
-         * its size the native way up): the images are made the way the
-         * window is, and the compositor turns them */
-        if (caps.currentTransform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)) {
-            uint32_t t = extent.width;
-            extent.width = extent.height;
-            extent.height = t;
-        }
-#endif
+
     } else {
         SDL_GetWindowSizeInPixels(r->window, &w, &h);
         if (w < 1) {
@@ -168,11 +159,15 @@ static int make_swapchain(SfRenderer *r, char *err, size_t err_n)
     info.imageArrayLayers = 1;
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    /* Android: the images are the surface's own size, turned as the
+     * display is (pre-rotation: the picture is drawn turned, r->rot
+     * quarters, and the compositor shows it as it is) */
     info.preTransform = caps.currentTransform;
+    r->rot = caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR    ? 1
+             : caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR ? 2
+             : caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR ? 3
+                                                                                 : 0;
 #ifdef __ANDROID__
-    if (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
-        info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-    }
     fprintf(stderr,
             "video: Vulkan swapchain %ux%u; surface %ux%u (allowed %ux%u to %ux%u), transform %u (supported 0x%x)\n",
             extent.width, extent.height, caps.currentExtent.width, caps.currentExtent.height, caps.minImageExtent.width,
@@ -569,6 +564,12 @@ int sf_vk_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n)
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.setLayoutCount = 1;
     layout_info.pSetLayouts = &r->set_layout;
+    {
+        /* the swapchain's quarter turns (ui.vert) */
+        static const VkPushConstantRange turn = { VK_SHADER_STAGE_VERTEX_BIT, 0, 4 };
+        layout_info.pushConstantRangeCount = 1;
+        layout_info.pPushConstantRanges = &turn;
+    }
     if (vkCreatePipelineLayout(r->device, &layout_info, NULL, &r->layout) != VK_SUCCESS) {
         sf_set_err(err, err_n, "Vulkan pipeline layout failed");
         sf_vk_destroy(r);
@@ -967,6 +968,10 @@ static int record(SfRenderer *r, uint32_t image_index, const SfCanvas *canvas)
     vkCmdSetViewport(r->cmd, 0, 1, &viewport);
     vkCmdSetScissor(r->cmd, 0, 1, &scissor);
     vkCmdBindDescriptorSets(r->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->layout, 0, 1, &r->set, 0, NULL);
+    {
+        float turn = (float)r->rot;
+        vkCmdPushConstants(r->cmd, r->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof turn, &turn);
+    }
     vkCmdDraw(r->cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(r->cmd);
     return vkEndCommandBuffer(r->cmd) == VK_SUCCESS ? 0 : -1;
@@ -1006,7 +1011,7 @@ int sf_vk_present(SfRenderer *r, const SfCanvas *canvas, char *err, size_t err_n
         return 0;
     }
     if (ar != VK_SUCCESS && ar != VK_SUBOPTIMAL_KHR) {
-        sf_set_err(err, err_n, "Vulkan acquire failed");
+        sf_set_err(err, err_n, "Vulkan acquire failed (%d)", (int)ar);
         return -1;
     }
     if (ensure_texture(r, canvas, err, err_n) != 0) {
@@ -1051,7 +1056,7 @@ int sf_vk_present(SfRenderer *r, const SfCanvas *canvas, char *err, size_t err_n
         return 0;
     }
     if (ar != VK_SUCCESS) {
-        sf_set_err(err, err_n, "Vulkan present failed");
+        sf_set_err(err, err_n, "Vulkan present failed (%d)", (int)ar);
         return -1;
     }
     return 0;
@@ -1108,7 +1113,7 @@ static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *li
     rp.clearValueCount = 1;
     rp.pClearValues = &clear;
     vkCmdBeginRenderPass(r->cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
-    sf_scene_record_show(r->scene, r->cmd, r->extent, r->aspect, list, r->filter);
+    sf_scene_record_show(r->scene, r->cmd, r->extent, r->aspect, list, r->filter, r->rot);
     vkCmdEndRenderPass(r->cmd);
     return vkEndCommandBuffer(r->cmd) == VK_SUCCESS ? 0 : -1;
 }
@@ -1173,7 +1178,9 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
         int w = 0;
         int h = 0;
         SDL_GetWindowSizeInPixels(r->window, &w, &h);
-        if (r->surface && w > 0 && h > 0 && (w != r->sized_w || h != r->sized_h)) {
+        /* (Android reports a changed surface itself, and its window and
+         * surface stand differently: not there) */
+        if (!SF_KEEP_SUBOPTIMAL && r->surface && w > 0 && h > 0 && (w != r->sized_w || h != r->sized_h)) {
             r->sized_w = w;
             r->sized_h = h;
             if ((uint32_t)w != r->extent.width || (uint32_t)h != r->extent.height) {
@@ -1201,7 +1208,7 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
         return make_swapchain(r, err, err_n);
     }
     if (ar != VK_SUCCESS && ar != VK_SUBOPTIMAL_KHR) {
-        sf_set_err(err, err_n, "Vulkan acquire failed");
+        sf_set_err(err, err_n, "Vulkan acquire failed (%d)", (int)ar);
         return -1;
     }
     vkResetFences(r->device, 1, &r->fence);
@@ -1240,7 +1247,7 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
         return make_swapchain(r, err, err_n);
     }
     if (ar != VK_SUCCESS) {
-        sf_set_err(err, err_n, "Vulkan present failed");
+        sf_set_err(err, err_n, "Vulkan present failed (%d)", (int)ar);
         return -1;
     }
     return 0;
