@@ -89,7 +89,9 @@ static void on_crash(int sig)
 #endif
 #ifdef __ANDROID__
     if (s_log_fd >= 0) {
-        /* stderr's pipe may not reach the file before the process ends */
+        /* stderr's pipe may not reach the file before the process ends;
+         * a new line first, in case the pipe's last line is half written */
+        (void)!write(s_log_fd, "\n", 1);
         (void)!write(s_log_fd, head, (size_t)len);
         android_backtrace(s_log_fd);
         fsync(s_log_fd);
@@ -167,11 +169,56 @@ static void *log_pump(void *arg)
 static char s_report[3072];
 static char s_report_full[65536];
 
+/* A line of the report: the stack's frames less the reporter's own. */
+static int keep_frame(const char *p)
+{
+    return !strstr(p, "android_backtrace") && !strstr(p, "on_crash") && !strstr(p, "sigreturn") &&
+           !strstr(p, "(abort+") && !strstr(p, "(raise+");
+}
+
+static void report_add(const char *line)
+{
+    size_t at = strlen(s_report);
+    snprintf(s_report + at, sizeof s_report - at, "%s\n", line);
+}
+
+/* What Android's own C library said as the process stopped (an abort's
+ * reason: FORTIFY, fdsan, an uncaught C++ exception) goes to the system
+ * log, not to stderr; an app may read its own lines there. */
+static void read_system_log(void)
+{
+    FILE *f = popen("logcat -d -v brief -t 800 '*:W' 2>/dev/null", "r");
+    char line[512];
+    size_t at = strlen(s_report_full);
+    int fatal = 0;
+    if (!f) {
+        return;
+    }
+    at += (size_t)snprintf(s_report_full + at, sizeof s_report_full - at, "\n--- system log ---\n");
+    while (fgets(line, sizeof line, f)) {
+        if (at < sizeof s_report_full - 1) {
+            at += (size_t)snprintf(s_report_full + at, sizeof s_report_full - at, "%s", line);
+            if (at > sizeof s_report_full - 1) {
+                at = sizeof s_report_full - 1;
+            }
+        }
+        if (fatal < 6 && (strncmp(line, "F/", 2) == 0 || strstr(line, "FORTIFY") || strstr(line, "fdsan") ||
+                          strstr(line, "Abort message") || strstr(line, "terminating"))) {
+            line[strcspn(line, "\n")] = 0;
+            report_add(line);
+            fatal++;
+        }
+    }
+    pclose(f);
+}
+
 static void run_report_begin(void)
 {
     char base[4096];
     char path[4200];
+    char prev[4200];
     char marker[4200];
+    int stopped;
     int fd;
     if (sf_exe_dir(base, sizeof base) != 0) {
         return;
@@ -179,86 +226,70 @@ static void run_report_begin(void)
     snprintf(path, sizeof path, "%s/data", base);
     mkdir(path, 0755);
     snprintf(path, sizeof path, "%s/data/last_run.log", base);
+    snprintf(prev, sizeof prev, "%s/data/prev_run.log", base);
     snprintf(marker, sizeof marker, "%s/data/run.marker", base);
-    if (access(marker, F_OK) == 0 && (fd = open(path, O_RDONLY)) >= 0) {
-        /* the last run's log (its end, if it is long) to share, and for the
-         * dialog its last lines, newest first, a crash's own lines first */
+    stopped = access(marker, F_OK) == 0;
+    /* the last run's log moves aside before this run's starts */
+    rename(path, prev);
+    if (stopped && (fd = open(prev, O_RDONLY)) >= 0) {
         off_t end = lseek(fd, 0, SEEK_END);
-        off_t from = end > (off_t)sizeof s_report_full - 1 ? end - (off_t)sizeof s_report_full + 1 : 0;
+        off_t from = end > (off_t)sizeof s_report_full / 2 ? end - (off_t)sizeof s_report_full / 2 : 0;
         ssize_t n;
-        char *crash;
-        char *lines[16];
-        int ln = 0;
-        char *p;
         lseek(fd, from, SEEK_SET);
-        n = read(fd, s_report_full, sizeof s_report_full - 1);
+        n = read(fd, s_report_full, sizeof s_report_full / 2);
         s_report_full[n > 0 ? n : 0] = 0;
         close(fd);
-        crash = strstr(s_report_full, "crash: ");
+    }
+    if (stopped) {
+        static char work[sizeof s_report_full];
+        char *save = NULL;
+        char *p;
+        char *crash = strstr(s_report_full, "crash: ");
+        s_report[0] = 0;
+        read_system_log(); /* its fatal lines first */
+        memcpy(work, s_report_full, sizeof work);
         if (crash) {
-            /* the lines just before the crash (a message saying why), the
-             * crash, and its stack less the reporter's own frames */
-            static char work[sizeof s_report_full];
-            char *save = NULL;
-            char *before[4];
-            int nb = 0;
+            /* the crash and its stack */
             int frames = 0;
-            int seen = 0;
-            memcpy(work, s_report_full, sizeof work);
-            s_report[0] = 0;
-            for (p = strtok_r(work, "\n", &save); p; p = strtok_r(NULL, "\n", &save)) {
-                size_t at = strlen(s_report);
-                if (!seen && strncmp(p, "crash: ", 7) != 0) {
-                    if (strstr(p, "no shim")) {
-                        continue;
-                    }
-                    if (nb == 4) {
-                        memmove(before, before + 1, sizeof before - sizeof before[0]);
-                        nb--;
-                    }
-                    before[nb++] = p;
-                    continue;
+            int in = 0;
+            for (p = strtok_r(work + (crash - s_report_full), "\n", &save); p; p = strtok_r(NULL, "\n", &save)) {
+                if (strstr(p, "--- system log ---")) {
+                    break;
                 }
-                if (!seen) {
-                    int k;
-                    seen = 1;
-                    for (k = 0; k < nb; k++) {
-                        at = strlen(s_report);
-                        snprintf(s_report + at, sizeof s_report - at, "%s\n", before[k]);
-                    }
-                    at = strlen(s_report);
-                    snprintf(s_report + at, sizeof s_report - at, "%s\n", p);
-                    continue;
+                if (!in) {
+                    report_add(p);
+                    in = 1;
+                } else if (strncmp(p, "  #", 3) == 0 && keep_frame(p) && frames < 14) {
+                    report_add(p);
+                    frames++;
                 }
-                if (strncmp(p, "  #", 3) != 0 || strstr(p, "android_backtrace") || strstr(p, "on_crash") ||
-                    strstr(p, "sigreturn") || strstr(p, "(abort+") || strstr(p, "raise+") || frames >= 14) {
-                    continue;
-                }
-                frames++;
-                snprintf(s_report + at, sizeof s_report - at, "%s\n", p);
             }
         } else {
-            static char work[sizeof s_report_full];
-            memcpy(work, s_report_full, sizeof work);
-            char *save = NULL;
+            /* no crash: the log's last lines, newest first */
+            char *lines[14];
+            int ln = 0;
             for (p = strtok_r(work, "\n", &save); p; p = strtok_r(NULL, "\n", &save)) {
-                if (ln == 16) {
+                if (strstr(p, "--- system log ---")) {
+                    break;
+                }
+                if (strstr(p, "no shim")) {
+                    continue;
+                }
+                if (ln == 14) {
                     memmove(lines, lines + 1, sizeof lines - sizeof lines[0]);
                     ln--;
                 }
                 lines[ln++] = p;
             }
-            s_report[0] = 0;
             while (ln > 0) {
-                size_t at = strlen(s_report);
-                snprintf(s_report + at, sizeof s_report - at, "%s\n", lines[--ln]);
+                report_add(lines[--ln]);
             }
         }
         if (!s_report[0]) {
-            snprintf(s_report, sizeof s_report, "(the log was empty)");
+            snprintf(s_report, sizeof s_report, "(nothing was logged)");
         }
     }
-    s_log_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    s_log_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644);
     fd = open(marker, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) {
         close(fd);
