@@ -2,6 +2,7 @@
  * presented frame per game frame. */
 
 #include "port/gfx.h"
+#include "port/icon_rgba.h"
 #include "port/port.h"
 #include "port/touch.h"
 #include "render/renderer.h"
@@ -22,6 +23,18 @@
 
 static SDL_Window *s_window;
 static SfRenderer *s_renderer;
+
+/* The same picture as the Windows exe and the Android launcher. */
+static void set_window_icon(void)
+{
+    SDL_Surface *icon = SDL_CreateSurfaceFrom(sf_icon_w, sf_icon_h, SDL_PIXELFORMAT_RGBA32,
+                                              (void *)sf_icon_rgba, sf_icon_w * 4);
+    if (!icon) {
+        return;
+    }
+    SDL_SetWindowIcon(s_window, icon);
+    SDL_DestroySurface(icon);
+}
 
 /* ---- the render thread ----
  *
@@ -302,6 +315,7 @@ static void open_gl(int w)
     if (!s_window) {
         sf_fatal("video: window: %s", SDL_GetError());
     }
+    set_window_icon();
     if (sf_render_create(&s_renderer, s_window, SF_RENDER_OPENGL, err, sizeof err) != 0) {
         sf_fatal("video: OpenGL: %s", err);
     }
@@ -333,6 +347,7 @@ void sf_video_init(int w, int h)
                                     SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_VULKAN |
                                         SF_PHONE_FULLSCREEN);
         if (s_window && sf_render_create(&s_renderer, s_window, SF_RENDER_VULKAN, err, sizeof err) == 0) {
+            set_window_icon();
             sf_gfx_init();
             sf_display_init();
             return;

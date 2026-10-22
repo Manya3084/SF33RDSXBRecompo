@@ -22,6 +22,11 @@
  * the sync hash of a frame both have settled: two that differ end the
  * game (a desync).
  *
+ * A machine on the same network is found by the lobby (src/port/lobby.c),
+ * apart from these packets. Joining it sends PK_HELLO to the address the
+ * announcement names (the host's own address, not whichever interface the
+ * broadcast left by).
+ *
  * SF_NET_HOST=PORT or SF_NET_JOIN=ADDRESS[:PORT] start a session at
  * start-up, for tests. SF_NET_DELAY sets the input delay (frames);
  * SF_NET_LAG (ms) and SF_NET_LOSS (percent) hold back and drop this
@@ -337,6 +342,53 @@ static int sock_open(int port)
     return 0;
 }
 
+static int peer_set(const struct sockaddr *sa, socklen_t n)
+{
+    memcpy(&s_n.peer, sa, n);
+    s_n.peer_n = n;
+    s_n.have_peer = 1;
+    return 0;
+}
+
+/* A literal address, written straight into the socket's family. A lookup
+ * of an IPv4 number through an IPv6 socket fails on some systems (the
+ * phone's), which used to leave the lobby's A press with nothing on
+ * screen. */
+static int peer_literal(const char *host, int port, int family)
+{
+    struct in_addr v4;
+    struct in6_addr v6;
+    if (inet_pton(AF_INET, host, &v4) == 1) {
+        if (family == AF_INET) {
+            struct sockaddr_in a;
+            memset(&a, 0, sizeof a);
+            a.sin_family = AF_INET;
+            a.sin_port = htons((uint16_t)port);
+            a.sin_addr = v4;
+            return peer_set((const struct sockaddr *)&a, sizeof a);
+        }
+        {
+            struct sockaddr_in6 a;
+            memset(&a, 0, sizeof a);
+            a.sin6_family = AF_INET6;
+            a.sin6_port = htons((uint16_t)port);
+            a.sin6_addr.s6_addr[10] = 0xFF;
+            a.sin6_addr.s6_addr[11] = 0xFF;
+            memcpy(a.sin6_addr.s6_addr + 12, &v4, 4);
+            return peer_set((const struct sockaddr *)&a, sizeof a);
+        }
+    }
+    if (family == AF_INET6 && inet_pton(AF_INET6, host, &v6) == 1) {
+        struct sockaddr_in6 a;
+        memset(&a, 0, sizeof a);
+        a.sin6_family = AF_INET6;
+        a.sin6_port = htons((uint16_t)port);
+        a.sin6_addr = v6;
+        return peer_set((const struct sockaddr *)&a, sizeof a);
+    }
+    return -1;
+}
+
 /* The other machine's address, as the socket's family takes it. */
 static int resolve(const char *text, int port)
 {
@@ -366,6 +418,9 @@ static int resolve(const char *text, int port)
     snprintf(serv, sizeof serv, "%d", port);
     getsockname(s_n.s, (struct sockaddr *)&mine, &mine_n);
     family = mine.ss_family;
+    if (peer_literal(host, port, family) == 0) {
+        return 0;
+    }
     memset(&hints, 0, sizeof hints);
     hints.ai_family = family;
     hints.ai_socktype = SOCK_DGRAM;
@@ -393,10 +448,28 @@ static void say(const char *fmt, ...)
     fprintf(stderr, "net: %s\n", s_n.status);
 }
 
+/* The match port this machine is bound to (a host's announcement says it). */
+static int bound_port(void)
+{
+    struct sockaddr_storage a;
+    socklen_t n = sizeof a;
+    if (s_n.s == SOCK_NONE || getsockname(s_n.s, (struct sockaddr *)&a, &n) != 0) {
+        return SF_NET_PORT;
+    }
+    if (a.ss_family == AF_INET) {
+        return ntohs(((struct sockaddr_in *)&a)->sin_port);
+    }
+    if (a.ss_family == AF_INET6) {
+        return ntohs(((struct sockaddr_in6 *)&a)->sin6_port);
+    }
+    return SF_NET_PORT;
+}
+
 /* The game starts again from start-up, both machines alike. */
 static void begin(void)
 {
     int i;
+    sf_lobby_close(); /* the match has a player; the announcement stops */
     sf_hist_stop();
     sf_state_boot_restore();
     sf_language_force(s_n.japanese);
@@ -599,6 +672,7 @@ void sf_net_quit(void)
         }
         s_n.state = ST_OFF;
     }
+    sf_lobby_close();
     sf_net_cancel();
 }
 
@@ -960,6 +1034,7 @@ void sf_net_tick(void)
         return;
     }
     if (s_n.state == ST_HOSTING) {
+        sf_lobby_poll(1, bound_port()); /* other machines on this network can find it */
         sf_game_frame();
         return;
     }

@@ -57,6 +57,13 @@ void sf_net_cancel(void);
 void sf_net_at_menu(void);
 const char *sf_net_banner(void);
 void sf_net_local_address(char *out, size_t n);
+/* Games waiting on this network (src/port/lobby.c). announce sends this
+ * machine's own beacon (a host waiting for a player); match_port is the
+ * port a joiner calls. The list drops a game silent for a few seconds. */
+void sf_lobby_poll(int announce, int match_port);
+void sf_lobby_close(void);
+int sf_lobby_count(void);
+int sf_lobby_address(int index, char *out, size_t n);
 int sf_net_page(int start);
 void sf_net_page_text(const char *text);
 int sf_setting_read(const char *name, char *value, unsigned n);
@@ -98,6 +105,8 @@ void sf_display_init(void);
 const char *sf_display_text(int row);
 int sf_display_step(int row, int dir);
 void sf_display_default(void);
+/* The picture's shape in the window: 4/3, 16/9, or 0 when it fills the window. */
+float sf_display_aspect(void);
 
 /* SCREEN ADJUST's FILTER, live: 0 OFF, 1 SMOOTH, 2 CRT CURVED, 3 CRT FLAT. */
 int sf_save_screen_filter(void);

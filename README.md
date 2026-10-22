@@ -20,12 +20,8 @@ Working:
 - Vulkan, or OpenGL 3.3 when Vulkan is missing (`SF_RENDERER=opengl` picks it)
 - the game at a locked 60 on one thread, with the drawing on a render thread and the disc reads and sound decoding on worker threads ([docs/porting.md](docs/porting.md#threads))
 - EXIT GAME in the mode menu (retail's SELECT GAME), which quits cleanly
-- versus over the network by direct IP, with rollback, between any of the builds (a phone against a PC too): NETWORK in the mode menu, where Xbox Live was ([Network](#network))
-- GAME OPTION's LANGUAGE: ENGLISH, or JAPANESE as a Japanese Xbox ran the game (its text, names and CPU)
-
-Not done yet:
-
-- finding a player without an address (no lobby or matchmaking)
+- versus over the network, with rollback, between any of the builds (a phone against a PC too): NETWORK in the mode menu, where Xbox Live was. A game on the same network is listed, or you call an address ([Network](#network))
+- GAME OPTION's LANGUAGE: ENGLISH, or JAPANESE as a Japanese Xbox ran the game (its text, names and CPU). It asks, and restarts into the one you pick
 
 ## Download
 
@@ -141,9 +137,10 @@ DEFAULT SETTING puts them back to SMOOTH in a 1280×960 window at 4:3. FILTER an
 
 ## Network
 
-NETWORK in the mode menu plays a versus game with another machine, by its address:
+NETWORK in the mode menu plays a versus game with another machine:
 
-- HOST MATCH waits for a player and shows this machine's address on its network. Over the internet, the other player needs your public address, and your router must forward UDP port 33133 to this machine.
+- HOST MATCH waits for a player and shows this machine's address on its network. It also announces that game on the local network. Over the internet, the other player needs your public address, and your router must forward UDP port 33133 to this machine. A firewall on this machine has to allow that port, and UDP port 33134 for the announcement.
+- LOBBY lists the games waiting on this network. A joins the one the cursor is on. On a touch screen, a tap on a row joins it.
 - JOIN MATCH calls the address in ADDRESS. On the pad, up and down step a letter, left and right move along, A calls and B rubs out; a keyboard types.
 - INPUT DELAY (0 to 6 frames, 2 by default) is how late each player's pad is used. The host's is used for both. Higher leaves more time for the other machine's pad to arrive, so there are fewer rollbacks on a slow line.
 
@@ -205,3 +202,9 @@ It builds SDL3, OpenAL Soft, liblzma and libarchive for arm64 the first time (`a
 `SF_DECOMP_DIR` is a checkout of 3s-decomp-ogxb (default `../3s-decomp-ogxb`). Until it is merged, that checkout must be on its `xbox-port-data` branch. The port is 64-bit only, an ordinary position-independent program with ASLR (see [docs/porting.md](docs/porting.md#x86-64)).
 
 `SF_SCALE=N` fixes the render scale, and `SF_COUNTRY=1..4` picks the region. The debugging switches (headless runs, input replay, frame captures) are listed in [docs/porting.md](docs/porting.md#debugging).
+
+## Thanks
+
+The game's C comes from the PlayStation 2 decompilation [3s-decomp](https://github.com/crowded-street/3s-decomp). That project is [Artem Pstygo](https://github.com/apstygo)'s, with [foolycooly95](https://github.com/foolycooly95), [Xkower8181](https://github.com/Xkower8181), [Lajuan Station](https://github.com/WuGambinos), [Mark Street](https://github.com/mkst), [Ziemas](https://github.com/Ziemas), and the other contributors there. The Xbox decompilation matches their C to the Xbox disc.
+
+The port runs on [SDL](https://github.com/libsdl-org/SDL) for the window, input and timing, [OpenAL Soft](https://github.com/kcat/openal-soft) for sound, [libarchive](https://github.com/libarchive/libarchive) and [XZ Utils](https://github.com/tukaani-project/xz) to read a disc packed in a zip or 7z, [zlib](https://github.com/madler/zlib) for the disc's compressed data, and [SQLite](https://sqlite.org/) for the saves.

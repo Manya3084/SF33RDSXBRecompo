@@ -274,6 +274,11 @@ static void apply(void)
 }
 
 /* At start, once the window is up. */
+float sf_display_aspect(void)
+{
+    return k_aspect[s_aspect];
+}
+
 void sf_display_init(void)
 {
     load();

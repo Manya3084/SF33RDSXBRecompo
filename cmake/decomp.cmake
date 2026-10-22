@@ -160,6 +160,7 @@ add_library(sf_port STATIC
     src/port/language.c
     src/port/net.c
     src/port/netpage.c
+    src/port/lobby.c
     src/port/setup.c
     src/ui/ui.c
     src/port/live.c
@@ -281,7 +282,10 @@ target_include_directories(sf33rdsxb_game PRIVATE src)
 set_target_properties(sf33rdsxb_game PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_source_files_properties("${SF_DECOMP_GEN}/stubs.c" PROPERTIES COMPILE_OPTIONS "-Wno-error;-w;-fno-builtin")
 if(WIN32)
-    # A Windows program with no console.
+    # A Windows program with no console. The rc's icon sits beside it.
+    target_sources(sf33rdsxb_game PRIVATE "${CMAKE_SOURCE_DIR}/packaging/sf33rdsxb.rc")
+    set_source_files_properties("${CMAKE_SOURCE_DIR}/packaging/sf33rdsxb.rc" PROPERTIES
+        INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/packaging")
     target_link_options(sf33rdsxb_game PRIVATE -mwindows -static-libgcc -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
     target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB)
 elseif(ANDROID)
@@ -302,6 +306,10 @@ add_executable(test_store tests/test_store.c src/port/store.c)
 target_include_directories(test_store PRIVATE src "${SF_DECOMP_GEN}/include")
 target_link_libraries(test_store PRIVATE sf_sqlite)
 add_test(NAME store COMMAND test_store)
+
+add_executable(test_lobby tests/test_lobby.c src/port/lobby.c)
+target_include_directories(test_lobby PRIVATE src)
+add_test(NAME lobby COMMAND test_lobby)
 set(_lvp "")
 foreach(f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json /usr/share/vulkan/icd.d/lvp_icd.json)
     if(EXISTS "${f}" AND _lvp STREQUAL "")
