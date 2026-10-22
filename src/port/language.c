@@ -1,8 +1,10 @@
 /* The game's language: GAME OPTION's LANGUAGE row (sf_language_step,
  * sf_language_text). Retail took it from the console: a Japanese Xbox
  * set to Japanese ran the game as the Japanese release (Country 1, its
- * text and names, its CPU difficulty and music ducking), and any other
- * as the American one here (Country 4). JAPANESE is that Japanese Xbox.
+ * text and names, its CPU difficulty, its control time and its music
+ * ducking), and any other as the American one here (Country 4).
+ * JAPANESE is that Japanese Xbox. Those are chosen while the program
+ * starts, so the row asks and then starts the program again.
  * config/host.sqlite keeps the choice; SF_COUNTRY still overrides the
  * region for tests.
  *
@@ -29,6 +31,10 @@ extern s8 D_007AA5F1;
 void Setup_Difficult_V(void);
 
 static int s_japanese;
+static int s_ask = -1; /* -1 closed; 0 English, 1 Japanese, waiting on yes */
+static int s_restart;
+
+void SE_selected(void);
 
 static int host_db(char *out, size_t n)
 {
@@ -95,18 +101,51 @@ const char *sf_language_text(void)
     return s_japanese ? "JAPANESE" : "ENGLISH";
 }
 
-/* Left or right on the row: the other language, kept. */
+/* Left or right on the row: ask to start again in the other language.
+ * The text, the names and the match rules load with the program, so they
+ * change together when it starts again. */
 int sf_language_step(int dir)
 {
-    char path[4096 + 64];
     (void)dir;
-    s_japanese = !s_japanese;
-    apply();
-    Setup_Difficult_V(); /* the CPU's difficulty values are the region's */
-    if (host_db(path, sizeof path) == 0) {
-        sf_store_write_setting(path, "language", s_japanese ? "japanese" : "english");
+    if (s_ask >= 0 || s_restart) {
+        return 1;
     }
+    s_ask = !s_japanese;
+    SE_selected();
     return 1;
+}
+
+/* The prompt (src/port/menu_ext.c): -1 while it is closed. */
+int sf_language_asking(void)
+{
+    return s_ask;
+}
+
+void sf_language_ask_close(void)
+{
+    if (!s_restart) {
+        s_ask = -1;
+    }
+}
+
+/* Yes: keep the choice, then the frame starts the program again. */
+int sf_language_ask_accept(void)
+{
+    char path[4096 + 64];
+    if (s_ask < 0 || s_restart) {
+        return s_restart ? 0 : -1;
+    }
+    if (host_db(path, sizeof path) != 0 ||
+        sf_store_write_setting(path, "language", s_ask ? "japanese" : "english") != 0) {
+        return -1;
+    }
+    s_restart = 1;
+    return 0;
+}
+
+int sf_language_restart_ready(void)
+{
+    return s_restart;
 }
 
 /* A netplay game plays in the host's language (not kept): the game's

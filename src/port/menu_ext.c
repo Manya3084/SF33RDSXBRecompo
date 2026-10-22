@@ -524,6 +524,97 @@ void sf_menu_ext_init(void)
     Menu_Letter_Data[1][6] = (const s8 *)"NETWORK";
 }
 
+/* A held face button on any pad (Xbox A is South, B is East). */
+static int pad_held(SDL_GamepadButton b)
+{
+    int n = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&n);
+    int i;
+    int held = 0;
+    if (!ids) {
+        return 0;
+    }
+    for (i = 0; i < n && !held; i++) {
+        SDL_Gamepad *g = SDL_GetGamepadFromID(ids[i]);
+        if (g && SDL_GetGamepadButton(g, b)) {
+            held = 1;
+        }
+    }
+    SDL_free(ids);
+    return held;
+}
+
+/* GAME OPTION, taking input: LANGUAGE's restart prompt belongs on that page. */
+static int on_game_option(void)
+{
+    const struct _TASK *t = &task[3];
+    return t->condition != 0 && t->r_no[0] == 0 && t->r_no[1] == 9 && t->r_no[2] == 3;
+}
+
+/* Left or right on LANGUAGE opened this. Yes starts the program again. */
+static void language_prompt(const bool *k)
+{
+    static int primed;
+    static int pad_a_prev;
+    static int pad_b_prev;
+    int ask = sf_language_asking();
+    int a_sc;
+    int b_sc;
+    int a_pad;
+    int b_pad;
+    int a_key;
+    int b_key;
+    int yes;
+    int no;
+
+    if (ask < 0) {
+        primed = 0;
+        return;
+    }
+    if (!on_game_option()) {
+        sf_language_ask_close();
+        primed = 0;
+        return;
+    }
+
+    a_sc = sf_keys_get(6);
+    b_sc = sf_keys_get(7);
+    a_pad = pad_held(SDL_GAMEPAD_BUTTON_SOUTH);
+    b_pad = pad_held(SDL_GAMEPAD_BUTTON_EAST);
+    a_key = a_sc > 0 && a_sc < SDL_SCANCODE_COUNT && k[a_sc] && !s_prev[a_sc];
+    b_key = (b_sc > 0 && b_sc < SDL_SCANCODE_COUNT && k[b_sc] && !s_prev[b_sc]) ||
+            (k[SDL_SCANCODE_ESCAPE] && !s_prev[SDL_SCANCODE_ESCAPE]);
+    if (!primed) {
+        /* the press that opened the prompt is not an answer */
+        pad_a_prev = a_pad;
+        pad_b_prev = b_pad;
+        primed = 1;
+    } else {
+        yes = a_key || (a_pad && !pad_a_prev);
+        no = b_key || (b_pad && !pad_b_prev);
+        pad_a_prev = a_pad;
+        pad_b_prev = b_pad;
+        if (no) {
+            SE_selected();
+            sf_language_ask_close();
+            return;
+        }
+        if (yes && sf_language_ask_accept() == 0) {
+            SE_selected();
+        }
+    }
+
+    if (sf_language_asking() < 0) {
+        return;
+    }
+    xb_ToneDownCopy(0xE8, 2);
+    Akaobi();
+    put_centred(88, ask ? "SWITCH TO JAPANESE." : "SWITCH TO ENGLISH.", 1.0f, COL_TEXT, 1);
+    put_centred(102, "THE GAME WILL RESTART.", 1.0f, COL_TEXT, 1);
+    put_centred(116, "IS THIS OK ?", 1.0f, COL_TEXT, 1);
+    draw_yes_no(138);
+}
+
 /* Each frame, after the game's tasks and before the frame is drawn. */
 void sf_menu_ext_frame(void)
 {
@@ -565,10 +656,11 @@ void sf_menu_ext_frame(void)
             put_centred(196, up, 1.0f, COL_CURSOR, 1);
         }
     }
+    language_prompt(k);
     if (s_hold && !any_key_down(k)) {
         s_hold = 0;
     }
-    sf_input_block(s_open || s_hold);
+    sf_input_block(s_open || s_hold || sf_language_asking() >= 0);
     memcpy(s_prev, k, sizeof s_prev);
 }
 

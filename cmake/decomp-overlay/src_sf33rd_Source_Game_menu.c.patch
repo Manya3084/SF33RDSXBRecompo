@@ -78,8 +78,8 @@
  u16 GO_Move_Sub_LR(u16 sw, s16 cursor_id) {
 +    /* Port: row 10, LANGUAGE */
 +    if (Menu_Cursor_Y[cursor_id] == 10 && (sw == 4 || sw == 8)) {
++        /* The row asks, then the program starts again in that language. */
 +        sf_language_step(sw == 4 ? -1 : 1);
-+        SE_dir_cursor_move();
 +        return sw;
 +    }
 +

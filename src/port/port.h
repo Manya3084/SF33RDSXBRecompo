@@ -41,6 +41,13 @@ const char *sf_language_text(void);
 int sf_language_step(int dir);
 int sf_language_japanese(void);
 void sf_language_force(int japanese);
+/* The LANGUAGE row's restart prompt: -1 closed, 0 English, 1 Japanese. */
+int sf_language_asking(void);
+void sf_language_ask_close(void);
+int sf_language_ask_accept(void);
+int sf_language_restart_ready(void);
+/* Start this program again (the language prompt's yes). */
+void sf_port_restart(void);
 /* Netplay (src/port/net.c). */
 #define SF_NET_PORT 33133
 int sf_net_host(int port);

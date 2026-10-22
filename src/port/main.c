@@ -26,7 +26,66 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 #include "host/paths.h"
+
+/* How this process was started, so a language change can start it again. */
+static int s_argc;
+static char **s_argv;
+
+#ifndef __ANDROID__
+static int exe_path(char *out, size_t n)
+{
+#if defined(_WIN32)
+    DWORD got = GetModuleFileNameA(NULL, out, (DWORD)n);
+    return (got == 0 || got >= n) ? -1 : 0;
+#else
+    ssize_t got = readlink("/proc/self/exe", out, n - 1);
+    if (got <= 0 || (size_t)got >= n) {
+        return -1;
+    }
+    out[got] = 0;
+    return 0;
+#endif
+}
+#endif
+
+/* Replace this process with a new one of the same program. The language
+ * prompt writes the choice first; start-up reads it. */
+void sf_port_restart(void)
+{
+#ifdef __ANDROID__
+    /* the next launch of the app reads the setting */
+    sf_port_quit();
+#else
+    char exe[4096];
+    char **args;
+    int i;
+    if (exe_path(exe, sizeof exe) != 0 || s_argc < 1) {
+        sf_port_quit();
+        return;
+    }
+    args = malloc((size_t)(s_argc + 1) * sizeof *args);
+    if (!args) {
+        sf_port_quit();
+        return;
+    }
+    args[0] = exe;
+    for (i = 1; i < s_argc; i++) {
+        args[i] = s_argv[i];
+    }
+    args[s_argc] = NULL;
+    sf_net_quit();
+    sf_sound_shutdown();
+    sf_video_shutdown();
+    sf_jobs_shutdown();
+    SDL_Quit();
+    execv(exe, args);
+    _exit(1);
+#endif
+}
 
 /* A crash writes where it happened to stderr and data/crash.log. */
 static char s_crash_path[4096 + 32];
@@ -424,8 +483,8 @@ static void log_to_logcat(void)
 
 int main(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    s_argc = argc;
+    s_argv = argv;
 #ifdef __ANDROID__
     log_to_logcat();
 #endif
@@ -477,6 +536,10 @@ int main(int argc, char **argv)
         }
         if (!sf_port_quitting()) {
             sf_frame();
+            /* LANGUAGE's yes: the setting is already written */
+            if (sf_language_restart_ready()) {
+                sf_port_restart();
+            }
         }
     }
     sf_net_quit();
