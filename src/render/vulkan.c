@@ -475,8 +475,14 @@ int sf_vk_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n)
     device_info.enabledExtensionCount = 1;
     device_info.ppEnabledExtensionNames = &swap_ext;
     memset(&features, 0, sizeof features);
+    {
+        VkPhysicalDeviceProperties dp;
+        vkGetPhysicalDeviceProperties(r->physical, &dp);
+        fprintf(stderr, "video: Vulkan %u.%u on %s (driver %u)\n", VK_API_VERSION_MAJOR(dp.apiVersion),
+                VK_API_VERSION_MINOR(dp.apiVersion), dp.deviceName, dp.driverVersion);
+    }
     if (sf_scene_supported(r->physical)) {
-        sf_scene_features(&features);
+        sf_scene_features(r->physical, &features);
     }
     device_info.pEnabledFeatures = &features;
     if (vkCreateDevice(r->physical, &device_info, NULL, &r->device) != VK_SUCCESS) {
@@ -1090,7 +1096,7 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
     VkPresentInfoKHR present;
     if (!r->scene) {
         if (!sf_scene_supported(r->physical)) {
-            sf_set_err(err, err_n, "this Vulkan device cannot index 256 textures in a shader");
+            sf_set_err(err, err_n, "this Vulkan device cannot sample two textures in a shader");
             return -1;
         }
         if (sf_scene_create(&r->scene, r->physical, r->device, r->pass, err, err_n) != 0) {
@@ -1300,7 +1306,7 @@ int sf_vk_create_headless(SfRenderer **out, char *err, size_t err_n)
     qi.queueCount = 1;
     qi.pQueuePriorities = &prio;
     memset(&features, 0, sizeof features);
-    sf_scene_features(&features);
+    sf_scene_features(r->physical, &features);
     memset(&di, 0, sizeof di);
     di.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     di.queueCreateInfoCount = 1;

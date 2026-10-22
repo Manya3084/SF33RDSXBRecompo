@@ -60,6 +60,17 @@ foreach(sh scene.vert scene.frag show.vert show.frag copy.frag)
         COMMENT "Shader ${sh}")
     list(APPEND SF_SHADER_HEADERS "${SF_GEN}/render/${n}_spv.h")
 endforeach()
+# the scene shader again with one texture bound per batch, for a GPU that
+# cannot index an array of textures (src/render/scene.c)
+add_custom_command(OUTPUT "${SF_GEN}/render/scene1_frag_spv.h"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SF_GEN}/render"
+    COMMAND ${GLSLC} --target-env=vulkan1.0 -O -DSF_ONE_TEX "${CMAKE_SOURCE_DIR}/shaders/scene.frag"
+        -o "${SF_GEN}/render/scene1_frag.spv"
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/spv2h.py" "${SF_GEN}/render/scene1_frag.spv"
+        "${SF_GEN}/render/scene1_frag_spv.h" "sf_scene1_frag_spv"
+    DEPENDS "${CMAKE_SOURCE_DIR}/shaders/scene.frag" "${CMAKE_SOURCE_DIR}/tools/spv2h.py"
+    COMMENT "Shader scene.frag (one texture)")
+list(APPEND SF_SHADER_HEADERS "${SF_GEN}/render/scene1_frag_spv.h")
 
 if(ANDROID)
     set(SF_GL_SOURCES src/render/gl_none.c)

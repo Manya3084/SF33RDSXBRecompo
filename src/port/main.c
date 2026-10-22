@@ -13,7 +13,10 @@
 #ifdef __ANDROID__
 #include <SDL3/SDL_main.h> /* SDL's activity calls SDL_main */
 #include <android/log.h>
+#include <dlfcn.h>
 #include <pthread.h>
+#include <sys/stat.h>
+#include <unwind.h>
 #endif
 #include <signal.h>
 #include <stdio.h>
@@ -25,6 +28,50 @@
 
 /* A crash writes where it happened to stderr and data/crash.log. */
 static char s_crash_path[4096 + 32];
+
+#ifdef __ANDROID__
+/* This run's log (data/last_run.log), which a crash also writes to. */
+static int s_log_fd = -1;
+
+typedef struct Unwound {
+    void *pc[32];
+    int n;
+} Unwound;
+
+static _Unwind_Reason_Code unwind_one(struct _Unwind_Context *ctx, void *arg)
+{
+    Unwound *u = arg;
+    void *pc = (void *)_Unwind_GetIP(ctx);
+    if (pc && u->n < 32) {
+        u->pc[u->n++] = pc;
+    }
+    return u->n < 32 ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+
+/* The crash's stack, each frame as library+offset (function+offset). */
+static void android_backtrace(int fd)
+{
+    Unwound u;
+    int i;
+    u.n = 0;
+    _Unwind_Backtrace(unwind_one, &u);
+    for (i = 0; i < u.n; i++) {
+        Dl_info info;
+        char line[512];
+        int len;
+        if (dladdr(u.pc[i], &info) && info.dli_fname) {
+            const char *lib = strrchr(info.dli_fname, '/');
+            lib = lib ? lib + 1 : info.dli_fname;
+            len = snprintf(line, sizeof line, "  #%02d %s+0x%lx (%s+0x%lx)\n", i, lib,
+                           (unsigned long)((char *)u.pc[i] - (char *)info.dli_fbase), info.dli_sname ? info.dli_sname : "?",
+                           info.dli_saddr ? (unsigned long)((char *)u.pc[i] - (char *)info.dli_saddr) : 0ul);
+        } else {
+            len = snprintf(line, sizeof line, "  #%02d %p\n", i, u.pc[i]);
+        }
+        (void)!write(fd, line, (size_t)len);
+    }
+}
+#endif
 
 static void on_crash(int sig)
 {
@@ -38,6 +85,13 @@ static void on_crash(int sig)
     (void)!write(2, head, (size_t)len);
 #ifdef SF_BACKTRACE
     backtrace_symbols_fd(frames, n, 2);
+#endif
+#ifdef __ANDROID__
+    if (s_log_fd >= 0) {
+        (void)!write(s_log_fd, head, (size_t)len);
+        android_backtrace(s_log_fd);
+        fsync(s_log_fd);
+    }
 #endif
     fd = open(s_crash_path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0644);
     if (fd >= 0) {
@@ -87,6 +141,10 @@ static void *log_pump(void *arg)
         while ((nl = strchr(line, '\n')) != NULL) {
             *nl = 0;
             __android_log_write(ANDROID_LOG_INFO, "sf3", line);
+            if (s_log_fd >= 0) {
+                *nl = '\n';
+                (void)!write(s_log_fd, line, (size_t)(nl - line + 1));
+            }
             line = nl + 1;
         }
         have = strlen(line);
@@ -100,10 +158,68 @@ static void *log_pump(void *arg)
     return NULL;
 }
 
+/* The phone has no terminal to read: each run's log is kept in
+ * data/last_run.log, and a run that did not end cleanly (a crash, or a
+ * stop on an error) is shown, from the end of its log, when the game
+ * next starts. data/run.marker is there while a run is. */
+static char s_report[3072];
+
+static void run_report_begin(void)
+{
+    char base[4096];
+    char path[4200];
+    char marker[4200];
+    int fd;
+    if (sf_exe_dir(base, sizeof base) != 0) {
+        return;
+    }
+    snprintf(path, sizeof path, "%s/data", base);
+    mkdir(path, 0755);
+    snprintf(path, sizeof path, "%s/data/last_run.log", base);
+    snprintf(marker, sizeof marker, "%s/data/run.marker", base);
+    if (access(marker, F_OK) == 0 && (fd = open(path, O_RDONLY)) >= 0) {
+        /* the end of the last run's log */
+        off_t end = lseek(fd, 0, SEEK_END);
+        off_t from = end > (off_t)sizeof s_report - 1 ? end - (off_t)sizeof s_report + 1 : 0;
+        ssize_t n;
+        lseek(fd, from, SEEK_SET);
+        n = read(fd, s_report, sizeof s_report - 1);
+        s_report[n > 0 ? n : 0] = 0;
+        close(fd);
+        if (!s_report[0]) {
+            snprintf(s_report, sizeof s_report, "(the log was empty)");
+        }
+    }
+    s_log_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    fd = open(marker, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        close(fd);
+    }
+}
+
+static void run_report_show(void)
+{
+    if (s_report[0]) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "The last run stopped", s_report, NULL);
+    }
+}
+
+/* A clean end: no report next time. */
+static void run_report_end(void)
+{
+    char base[4096];
+    char marker[4200];
+    if (sf_exe_dir(base, sizeof base) == 0) {
+        snprintf(marker, sizeof marker, "%s/data/run.marker", base);
+        unlink(marker);
+    }
+}
+
 static void log_to_logcat(void)
 {
     int p[2];
     pthread_t t;
+    run_report_begin();
     setvbuf(stderr, NULL, _IOLBF, 0);
     if (pipe(p) != 0) {
         return;
@@ -138,6 +254,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+#ifdef __ANDROID__
+    run_report_show();
+    fprintf(stderr, "android: API %d\n", SDL_GetAndroidSDKVersion());
+#endif
     sf_game_init();
     while (!sf_port_quitting()) {
         SDL_Event ev;
@@ -158,6 +278,9 @@ int main(int argc, char **argv)
     sf_sound_shutdown();
     sf_video_shutdown();
     sf_jobs_shutdown();
+#ifdef __ANDROID__
+    run_report_end();
+#endif
     SDL_Quit();
     return 0;
 }

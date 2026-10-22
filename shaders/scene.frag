@@ -4,7 +4,15 @@
 // with texture as argument 1 and the vertex colour as argument 2, and the
 // alpha test. Filtering and addressing are done here so that an indexed
 // texture is filtered after its palette lookup.
+#ifdef SF_ONE_TEX
+// a GPU that cannot index an array of textures in a shader (many phones'):
+// the batch's texture is bound on its own, in set 1
+layout(set = 1, binding = 0) uniform texture2D tex1;
+#define TEX tex1
+#else
 layout(set = 0, binding = 0) uniform texture2D tex[256];
+#define TEX tex[pc.tex]
+#endif
 layout(set = 0, binding = 1) uniform texture2D pal;
 layout(set = 0, binding = 2) uniform sampler smp;
 
@@ -49,7 +57,7 @@ vec4 fetch(ivec2 t)
     ivec2 n = ivec2(pc.size);
     t = clamp(t, lo, hi);
     ivec2 a = ivec2(address(t.x, n.x, (pc.ops >> 16) & 0xFFu), address(t.y, n.y, (pc.ops >> 24) & 0xFFu));
-    vec4 c = texelFetch(sampler2D(tex[pc.tex], smp), a, 0);
+    vec4 c = texelFetch(sampler2D(TEX, smp), a, 0);
     if ((pc.misc & 2u) != 0u) {
         int index = int(c.r * 255.0 + 0.5);
         c = texelFetch(sampler2D(pal, smp), ivec2(index, int(pc.pal)), 0);

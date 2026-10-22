@@ -77,7 +77,7 @@ static int open_device(void)
     qi.queueCount = 1;
     qi.pQueuePriorities = &prio;
     memset(&features, 0, sizeof features);
-    sf_scene_features(&features);
+    sf_scene_features(s_physical, &features);
     memset(&di, 0, sizeof di);
     di.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     di.queueCreateInfoCount = 1;

@@ -3,6 +3,7 @@
 #include "common.h"
 #include "render/copy_frag_spv.h"
 #include "render/scene_frag_spv.h"
+#include "render/scene1_frag_spv.h"
 #include "render/scene_vert_spv.h"
 #include "render/show_frag_spv.h"
 #include "render/show_vert_spv.h"
@@ -61,6 +62,11 @@ struct SfScene {
     VkPipelineLayout layout;
     VkDescriptorPool desc_pool;
     VkDescriptorSet set;
+    /* a GPU that cannot index the texture array: each texture in a set of
+     * its own (set 1), bound per batch */
+    int one_tex;
+    VkDescriptorSetLayout tex_layout;
+    VkDescriptorSet tex_set[SF_TEX_MAX];
     VkSampler nearest;
     VkSampler linear;
     VkShaderModule vert;
@@ -116,19 +122,29 @@ static uint32_t mem_index(VkPhysicalDevice physical, uint32_t bits, VkMemoryProp
     return UINT32_MAX;
 }
 
-void sf_scene_features(VkPhysicalDeviceFeatures *features)
-{
-    features->shaderSampledImageArrayDynamicIndexing = VK_TRUE;
-}
-
-int sf_scene_supported(VkPhysicalDevice physical)
+/* The textures as one array a shader indexes, where the GPU can; many
+ * phones' cannot, and get one texture bound per batch instead. */
+static int indexing_ok(VkPhysicalDevice physical)
 {
     VkPhysicalDeviceFeatures f;
     VkPhysicalDeviceProperties p;
     vkGetPhysicalDeviceFeatures(physical, &f);
     vkGetPhysicalDeviceProperties(physical, &p);
-    return f.shaderSampledImageArrayDynamicIndexing && p.limits.maxPerStageDescriptorSampledImages >= SF_TEX_MAX + 1 &&
-           p.limits.maxImageDimension2D >= SF_PAL_MAX;
+    return f.shaderSampledImageArrayDynamicIndexing && p.limits.maxPerStageDescriptorSampledImages >= SF_TEX_MAX + 1;
+}
+
+void sf_scene_features(VkPhysicalDevice physical, VkPhysicalDeviceFeatures *features)
+{
+    if (indexing_ok(physical)) {
+        features->shaderSampledImageArrayDynamicIndexing = VK_TRUE;
+    }
+}
+
+int sf_scene_supported(VkPhysicalDevice physical)
+{
+    VkPhysicalDeviceProperties p;
+    vkGetPhysicalDeviceProperties(physical, &p);
+    return p.limits.maxPerStageDescriptorSampledImages >= 2 && p.limits.maxImageDimension2D >= SF_PAL_MAX;
 }
 
 static int make_buffer(SfScene *s, VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer *buf, VkDeviceMemory *mem,
@@ -420,10 +436,11 @@ static int make_layouts(SfScene *s)
     VkDescriptorPoolSize sizes[3];
     VkDescriptorPoolCreateInfo pool;
     VkDescriptorSetAllocateInfo alloc;
+    VkDescriptorSetLayout layouts[2];
     memset(b, 0, sizeof b);
     b[0].binding = 0;
     b[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    b[0].descriptorCount = SF_TEX_MAX;
+    b[0].descriptorCount = s->one_tex ? 1 : SF_TEX_MAX;
     b[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     b[1].binding = 1;
     b[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -435,18 +452,28 @@ static int make_layouts(SfScene *s)
     b[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     memset(&set_info, 0, sizeof set_info);
     set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    set_info.bindingCount = 3;
-    set_info.pBindings = b;
+    /* one texture: set 0 is the palettes and the sampler, set 1 a texture */
+    set_info.bindingCount = s->one_tex ? 2 : 3;
+    set_info.pBindings = s->one_tex ? b + 1 : b;
     if (vkCreateDescriptorSetLayout(s->device, &set_info, NULL, &s->set_layout) != VK_SUCCESS) {
         return -1;
     }
+    if (s->one_tex) {
+        set_info.bindingCount = 1;
+        set_info.pBindings = b;
+        if (vkCreateDescriptorSetLayout(s->device, &set_info, NULL, &s->tex_layout) != VK_SUCCESS) {
+            return -1;
+        }
+    }
+    layouts[0] = s->set_layout;
+    layouts[1] = s->tex_layout;
     memset(&push, 0, sizeof push);
     push.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     push.size = sizeof(Push);
     memset(&layout_info, 0, sizeof layout_info);
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layout_info.setLayoutCount = 1;
-    layout_info.pSetLayouts = &s->set_layout;
+    layout_info.setLayoutCount = s->one_tex ? 2 : 1;
+    layout_info.pSetLayouts = layouts;
     layout_info.pushConstantRangeCount = 1;
     layout_info.pPushConstantRanges = &push;
     if (vkCreatePipelineLayout(s->device, &layout_info, NULL, &s->layout) != VK_SUCCESS) {
@@ -460,7 +487,7 @@ static int make_layouts(SfScene *s)
     sizes[2].descriptorCount = 2;
     memset(&pool, 0, sizeof pool);
     pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool.maxSets = 3;
+    pool.maxSets = 3 + (s->one_tex ? SF_TEX_MAX : 0);
     pool.poolSizeCount = 3;
     pool.pPoolSizes = sizes;
     if (vkCreateDescriptorPool(s->device, &pool, NULL, &s->desc_pool) != VK_SUCCESS) {
@@ -471,7 +498,22 @@ static int make_layouts(SfScene *s)
     alloc.descriptorPool = s->desc_pool;
     alloc.descriptorSetCount = 1;
     alloc.pSetLayouts = &s->set_layout;
-    return vkAllocateDescriptorSets(s->device, &alloc, &s->set) == VK_SUCCESS ? 0 : -1;
+    if (vkAllocateDescriptorSets(s->device, &alloc, &s->set) != VK_SUCCESS) {
+        return -1;
+    }
+    if (s->one_tex) {
+        VkDescriptorSetLayout each[SF_TEX_MAX];
+        int i;
+        for (i = 0; i < SF_TEX_MAX; i++) {
+            each[i] = s->tex_layout;
+        }
+        alloc.descriptorSetCount = SF_TEX_MAX;
+        alloc.pSetLayouts = each;
+        if (vkAllocateDescriptorSets(s->device, &alloc, s->tex_set) != VK_SUCCESS) {
+            return -1;
+        }
+    }
+    return 0;
 }
 
 static VkSampler make_sampler(SfScene *s, VkFilter filter)
@@ -821,9 +863,9 @@ static void write_texture_descriptor(SfScene *s, int h)
     image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     memset(&write, 0, sizeof write);
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = s->set;
+    write.dstSet = s->one_tex ? s->tex_set[h] : s->set;
     write.dstBinding = 0;
-    write.dstArrayElement = (uint32_t)h;
+    write.dstArrayElement = s->one_tex ? 0 : (uint32_t)h;
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     write.pImageInfo = &image;
@@ -844,6 +886,8 @@ int sf_scene_create(SfScene **out, VkPhysicalDevice physical, VkDevice device, V
     }
     s->physical = physical;
     s->device = device;
+    s->one_tex = !indexing_ok(physical) || getenv("SF_VK_ONE_TEXTURE") != NULL;
+    fprintf(stderr, "video: Vulkan textures %s\n", s->one_tex ? "bound one per batch" : "indexed in one array");
     s->depth_format = pick_depth(physical);
     if (s->depth_format == VK_FORMAT_UNDEFINED) {
         sf_set_err(err, err_n, "no depth format");
@@ -866,7 +910,8 @@ int sf_scene_create(SfScene **out, VkPhysicalDevice physical, VkDevice device, V
     s->nearest = make_sampler(s, VK_FILTER_NEAREST);
     s->linear = make_sampler(s, VK_FILTER_LINEAR);
     s->vert = make_shader(device, sf_scene_vert_spv, sf_scene_vert_spv_size);
-    s->frag = make_shader(device, sf_scene_frag_spv, sf_scene_frag_spv_size);
+    s->frag = s->one_tex ? make_shader(device, sf_scene1_frag_spv, sf_scene1_frag_spv_size)
+                         : make_shader(device, sf_scene_frag_spv, sf_scene_frag_spv_size);
     if (!s->nearest || !s->linear || !s->vert || !s->frag) {
         sf_set_err(err, err_n, "Vulkan scene shaders failed");
         sf_scene_destroy(s);
@@ -925,6 +970,9 @@ void sf_scene_destroy(SfScene *s)
     }
     if (s->show_layout) {
         vkDestroyPipelineLayout(s->device, s->show_layout, NULL);
+    }
+    if (s->tex_layout) {
+        vkDestroyDescriptorSetLayout(s->device, s->tex_layout, NULL);
     }
     if (s->show_set_layout) {
         vkDestroyDescriptorSetLayout(s->device, s->show_set_layout, NULL);
@@ -1242,6 +1290,7 @@ static void record_screen(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l, 
     VkDeviceSize zero = 0;
     VkPipeline bound = VK_NULL_HANDLE;
     int k = s->scale;
+    int tex_bound;
     uint32_t i;
     clears[0] = clear_of(clear);
     memset(&clears[1], 0, sizeof clears[1]);
@@ -1267,6 +1316,7 @@ static void record_screen(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l, 
         vkCmdBindIndexBuffer(cmd, s->ibuf, 0, VK_INDEX_TYPE_UINT32);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s->layout, 0, 1, &s->set, 0, NULL);
     }
+    tex_bound = -1;
     for (i = from; i < to; i++) {
         const SfBatch *b = &l->b[i];
         const SfShadeState *st = &b->shade;
@@ -1289,6 +1339,10 @@ static void record_screen(SfScene *s, VkCommandBuffer cmd, const SfDrawList *l, 
         scissor.extent.width = (uint32_t)((x1 - x0) * k);
         scissor.extent.height = (uint32_t)((y1 - y0) * k);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
+        if (s->one_tex && st->tex != tex_bound) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s->layout, 1, 1, &s->tex_set[st->tex], 0, NULL);
+            tex_bound = st->tex;
+        }
         memset(&push, 0, sizeof push);
         push.tex = st->tex;
         push.pal = st->pal;

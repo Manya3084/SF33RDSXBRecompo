@@ -33,5 +33,7 @@ cp "$ROOT/build-android/libmain.so" "$PREFIX/lib/libSDL3.so" "$PREFIX/lib/libope
 cd "$ROOT/android"
 TASK=assembleDebug
 [ "$KIND" = release ] && TASK=assembleRelease
-./gradlew --no-daemon -q "$TASK" -PsdlJava="$WORK/src/SDL/android-project/app/src/main/java"
+# clean first: an APK packed over the last one keeps the old libraries'
+# bytes as dead space
+./gradlew --no-daemon -q clean "$TASK" -PsdlJava="$WORK/src/SDL/android-project/app/src/main/java"
 ls -l app/build/outputs/apk/*/*.apk

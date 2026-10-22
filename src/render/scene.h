@@ -14,7 +14,7 @@
 typedef struct SfScene SfScene;
 
 /* The device features the scene needs. */
-void sf_scene_features(VkPhysicalDeviceFeatures *features);
+void sf_scene_features(VkPhysicalDevice physical, VkPhysicalDeviceFeatures *features);
 int sf_scene_supported(VkPhysicalDevice physical);
 
 /* show_pass is the window's render pass, or VK_NULL_HANDLE headless. */
