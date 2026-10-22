@@ -16,5 +16,6 @@ typedef struct SfUi {
 int sf_canvas_open(SfCanvas *canvas, int width, int height);
 void sf_canvas_close(SfCanvas *canvas);
 void sf_ui_draw(SfCanvas *canvas, const SfUi *ui);
+void sf_ui_glyph(char c, uint8_t rows[8]);
 
 #endif

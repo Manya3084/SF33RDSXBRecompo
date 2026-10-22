@@ -3,6 +3,7 @@
 
 #include "port/gfx.h"
 #include "port/port.h"
+#include "port/touch.h"
 #include "render/renderer.h"
 
 #include <SDL3/SDL.h>
@@ -215,6 +216,28 @@ static void rt_copy(const SfDrawList *l)
     o->cp3 = l->cp3;
     o->cp3_at = l->cp3_at;
     memcpy(o->cp3_rect, l->cp3_rect, sizeof o->cp3_rect);
+    /* the controls' picture: its own copy, when it changed */
+    if (!l->overlay) {
+        o->overlay = NULL;
+    } else {
+        static uint8_t *pic;
+        static size_t pic_n;
+        size_t n = (size_t)l->overlay_w * (size_t)l->overlay_h * 4;
+        if (o->overlay_version != l->overlay_version || !o->overlay) {
+            if (n > pic_n) {
+                free(pic);
+                pic = malloc(n);
+                pic_n = pic ? n : 0;
+            }
+            if (pic) {
+                memcpy(pic, l->overlay, n);
+            }
+        }
+        o->overlay = pic;
+        o->overlay_w = l->overlay_w;
+        o->overlay_h = l->overlay_h;
+        o->overlay_version = l->overlay_version;
+    }
 }
 
 /* The renderer's calls, on its thread. */
@@ -446,6 +469,7 @@ void sf_video_present(void)
     static int frame;
     char err[512];
     sf_gfx_frame_ready();
+    sf_touch_frame();
     rt_start();
     if (s_rt.thread) {
         /* the frame before is drawn; this one goes to the render thread */

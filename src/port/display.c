@@ -8,6 +8,7 @@
 #include "host/paths.h"
 #include "host/compat.h"
 #include "port/port.h"
+#include "port/touch.h"
 #include "port/store.h"
 
 #include <SDL3/SDL.h>
@@ -50,6 +51,7 @@ static char s_text[3][24];
 #include <jni.h>
 
 static int s_portrait;
+/* TOUCH PAD off is kept with the orientation ("landscape-notouch") */
 static const char *const k_orient_name[2] = { "landscape", "portrait" };
 static const char *const k_orient_text[2] = { "LANDSCAPE", "PORTRAIT" };
 
@@ -184,7 +186,9 @@ static int save(void)
         return -1;
     }
 #ifdef __ANDROID__
-    if (sf_store_write_window(path, k_orient_name[s_portrait], s_w, s_h, k_aspect_name[s_aspect]) != 0) {
+    char orient[32];
+    snprintf(orient, sizeof orient, "%s%s", k_orient_name[s_portrait], sf_touch_on() ? "" : "-notouch");
+    if (sf_store_write_window(path, orient, s_w, s_h, k_aspect_name[s_aspect]) != 0) {
 #else
     if (sf_store_write_window(path, k_mode_name[s_mode], s_w, s_h, k_aspect_name[s_aspect]) != 0) {
 #endif
@@ -217,7 +221,8 @@ static void load(void)
         return;
     }
 #ifdef __ANDROID__
-    s_portrait = named(mode, k_orient_name, 2) == 1;
+    s_portrait = strncmp(mode, "portrait", 8) == 0;
+    sf_touch_set_on(strstr(mode, "-notouch") == NULL);
 #endif
     i = named(mode, k_mode_name, MODES);
     if (i >= 0) {
@@ -303,7 +308,7 @@ const char *sf_display_text(int row)
         break;
     case 1:
 #ifdef __ANDROID__
-        snprintf(t, sizeof s_text[0], "DEVICE");
+        snprintf(t, sizeof s_text[0], "%s", sf_touch_on() ? "ON" : "OFF");
         break;
 #endif
         if (s_mode == MODE_BORDERLESS) {
@@ -331,7 +336,9 @@ int sf_display_step(int row, int dir)
         return 1;
     }
     if (row == 1) {
-        return 0; /* the phone's own screen */
+        sf_touch_set_on(!sf_touch_on()); /* TOUCH PAD */
+        save();
+        return 1;
     }
 #endif
     switch (row) {
@@ -381,6 +388,7 @@ void sf_display_default(void)
     s_aspect = ASPECT_4_3;
 #ifdef __ANDROID__
     s_portrait = 0;
+    sf_touch_set_on(1);
 #endif
     save();
     apply();

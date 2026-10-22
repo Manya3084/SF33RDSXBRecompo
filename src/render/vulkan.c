@@ -315,6 +315,9 @@ void sf_vk_destroy(SfRenderer *r)
     sf_scene_destroy(r->scene);
     r->scene = NULL;
     destroy_swapchain(r);
+    if (r->device && r->overlay_pipeline) {
+        vkDestroyPipeline(r->device, r->overlay_pipeline, NULL);
+    }
     if (r->device && r->pipeline) {
         vkDestroyPipeline(r->device, r->pipeline, NULL);
     }
@@ -714,6 +717,17 @@ int sf_vk_create(SfRenderer **out, SDL_Window *window, char *err, size_t err_n)
         sf_set_err(err, err_n, "Vulkan pipeline failed");
         sf_vk_destroy(r);
         return -1;
+    }
+    /* the same, blended over what is drawn (straight alpha) */
+    blend.blendEnable = VK_TRUE;
+    blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend.colorBlendOp = VK_BLEND_OP_ADD;
+    blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend.alphaBlendOp = VK_BLEND_OP_ADD;
+    if (vkCreateGraphicsPipelines(r->device, VK_NULL_HANDLE, 1, &pipe, NULL, &r->overlay_pipeline) != VK_SUCCESS) {
+        r->overlay_pipeline = VK_NULL_HANDLE; /* no controls drawn; the game still is */
     }
     vkDestroyShaderModule(r->device, vert, NULL);
     vkDestroyShaderModule(r->device, frag, NULL);
@@ -1134,6 +1148,84 @@ static int render_scale(const SfRenderer *r)
 
 /* The game's screen: the scene draws the list offscreen, then shows it in
  * the window's pass. The scene is made on the first call. */
+/* The overlay picture into the canvas texture, when it changed: its copy
+ * recorded before the window's pass. */
+static void record_overlay_upload(SfRenderer *r, const SfDrawList *list)
+{
+    SfCanvas c;
+    VkImageMemoryBarrier barrier;
+    VkBufferImageCopy copy;
+    char err[128];
+    if (!list->overlay || !r->overlay_pipeline) {
+        return;
+    }
+    if (r->overlay_ready && r->overlay_version == list->overlay_version && r->tex_w == list->overlay_w &&
+        r->tex_h == list->overlay_h) {
+        return;
+    }
+    c.width = list->overlay_w;
+    c.height = list->overlay_h;
+    c.rgba = (uint8_t *)list->overlay;
+    if (ensure_texture(r, &c, err, sizeof err) != 0) {
+        return;
+    }
+    memset(&barrier, 0, sizeof barrier);
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = r->tex;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(r->cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
+                         NULL, 1, &barrier);
+    memset(&copy, 0, sizeof copy);
+    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.imageSubresource.layerCount = 1;
+    copy.imageExtent.width = (uint32_t)c.width;
+    copy.imageExtent.height = (uint32_t)c.height;
+    copy.imageExtent.depth = 1;
+    vkCmdCopyBufferToImage(r->cmd, r->staging, r->tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(r->cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0,
+                         NULL, 1, &barrier);
+    r->overlay_version = list->overlay_version;
+    r->overlay_ready = 1;
+}
+
+/* The overlay over the whole window, turned with it. */
+static void record_overlay(SfRenderer *r, const SfDrawList *list)
+{
+    VkViewport viewport;
+    VkRect2D scissor;
+    float turn = (float)r->rot;
+    if (!list->overlay || !r->overlay_pipeline || !r->overlay_ready) {
+        return;
+    }
+    vkCmdBindPipeline(r->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->overlay_pipeline);
+    viewport.x = 0.f;
+    viewport.y = 0.f;
+    viewport.width = (float)r->extent.width;
+    viewport.height = (float)r->extent.height;
+    viewport.minDepth = 0.f;
+    viewport.maxDepth = 1.f;
+    scissor.offset.x = 0;
+    scissor.offset.y = 0;
+    scissor.extent = r->extent;
+    vkCmdSetViewport(r->cmd, 0, 1, &viewport);
+    vkCmdSetScissor(r->cmd, 0, 1, &scissor);
+    vkCmdBindDescriptorSets(r->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->layout, 0, 1, &r->set, 0, NULL);
+    vkCmdPushConstants(r->cmd, r->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof turn, &turn);
+    vkCmdDraw(r->cmd, 3, 1, 0, 0);
+}
+
 static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *list)
 {
     VkCommandBufferBeginInfo begin;
@@ -1150,6 +1242,7 @@ static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *li
         sf_scene_read_layer1(r->scene);
     }
     sf_scene_record(r->scene, r->cmd, list);
+    record_overlay_upload(r, list);
     if (r->shot_pending && !(which && which[0] == '1')) {
         sf_scene_record_readback(r->scene, r->cmd, which && which[0] == '2' ? 0 : 1);
     }
@@ -1164,6 +1257,7 @@ static int record_list(SfRenderer *r, uint32_t image_index, const SfDrawList *li
     rp.pClearValues = &clear;
     vkCmdBeginRenderPass(r->cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
     sf_scene_record_show(r->scene, r->cmd, r->extent, r->aspect, list, r->filter, r->rot);
+    record_overlay(r, list);
     vkCmdEndRenderPass(r->cmd);
     return vkEndCommandBuffer(r->cmd) == VK_SUCCESS ? 0 : -1;
 }

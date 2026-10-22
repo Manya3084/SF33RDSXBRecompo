@@ -18,6 +18,7 @@
 #include "host/paths.h"
 #include "host/compat.h"
 #include "port/port.h"
+#include "port/touch.h"
 #include "port/store.h"
 
 #include "types.h"
@@ -408,8 +409,31 @@ static void read_keyboard(XbGamepad *x)
 {
     const bool *k = SDL_GetKeyboardState(NULL);
     size_t i;
+    unsigned touch = sf_touch_read();
     x->connected = 1;
     auto_press(x);
+    /* a phone's on-screen controls press what the keyboard would */
+    x->buttons |= (touch & TOUCH_UP ? XB_DPAD_UP : 0) | (touch & TOUCH_DOWN ? XB_DPAD_DOWN : 0) |
+                  (touch & TOUCH_LEFT ? XB_DPAD_LEFT : 0) | (touch & TOUCH_RIGHT ? XB_DPAD_RIGHT : 0) |
+                  (touch & TOUCH_START ? XB_START : 0) | (touch & TOUCH_BACK ? XB_BACK : 0);
+    if (touch & TOUCH_A) {
+        x->analog[XB_A] = 0xFF;
+    }
+    if (touch & TOUCH_B) {
+        x->analog[XB_B] = 0xFF;
+    }
+    if (touch & TOUCH_X) {
+        x->analog[XB_X] = 0xFF;
+    }
+    if (touch & TOUCH_Y) {
+        x->analog[XB_Y] = 0xFF;
+    }
+    if (touch & TOUCH_BLACK) {
+        x->analog[XB_BLACK] = 0xFF;
+    }
+    if (touch & TOUCH_WHITE) {
+        x->analog[XB_WHITE] = 0xFF;
+    }
     for (i = 0; i < sizeof s_keys / sizeof s_keys[0]; i++) {
         if (!k[s_keys[i].key]) {
             continue;

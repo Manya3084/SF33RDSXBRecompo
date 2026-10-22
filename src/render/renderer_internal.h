@@ -31,6 +31,9 @@ struct SfRenderer {
     VkRenderPass pass;
     VkPipelineLayout layout;
     VkPipeline pipeline;
+    VkPipeline overlay_pipeline; /* the canvas pipeline, blended: a phone's controls over the game */
+    uint32_t overlay_version;    /* the overlay picture in tex */
+    int overlay_ready;
     VkCommandPool pool;
     VkCommandBuffer cmd;
     VkFence fence;

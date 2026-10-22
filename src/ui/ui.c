@@ -92,6 +92,13 @@ void sf_canvas_close(SfCanvas *canvas)
     canvas->rgba = NULL;
 }
 
+/* A character's 8x8 bitmap, a row a byte, the high bit leftmost (the
+ * touch controls' labels, src/port/touch.c). */
+void sf_ui_glyph(char c, uint8_t rows[8])
+{
+    memcpy(rows, k_glyph[glyph_index(c)], 8);
+}
+
 static void put(SfCanvas *canvas, int x, int y, uint8_t r, uint8_t g, uint8_t b)
 {
     uint8_t *p;

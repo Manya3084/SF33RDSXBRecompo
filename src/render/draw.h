@@ -109,6 +109,13 @@ typedef struct SfDrawList {
     int cp3;
     uint32_t cp3_at;
     int cp3_rect[4];
+    /* A picture laid over the whole window, turned with it, after the game
+     * (a phone's on-screen controls, src/port/touch.c); RGBA, straight
+     * alpha. NULL for none. */
+    const uint8_t *overlay;
+    int overlay_w;
+    int overlay_h;
+    uint32_t overlay_version;
 } SfDrawList;
 
 #endif
