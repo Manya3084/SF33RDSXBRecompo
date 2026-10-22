@@ -14,17 +14,29 @@
  * or faster than real time (a headless replay) sees the same statuses on
  * the same frames, so a session recording replays exactly. The status
  * codes are CRI's: ADXT 0 stopped, 3 playing, 5 ended; AIXP 2 playing,
- * 3 ended. Volumes are CRI's tenths of a decibel. */
+ * 3 ended. Volumes are CRI's tenths of a decibel.
+ *
+ * A stream from the archive is read and decoded on a worker thread
+ * (src/port/jobs.c), a part at a time, while it plays: starting one reads
+ * only its header, and a stem the game queues starts decoding when it is
+ * queued. The opening theme is decoded once, when the device opens. The
+ * game's time never waits on the decoder's: a frame takes its samples,
+ * and only if the decoder has not got that far yet does the game thread
+ * wait for it (a track's first frame on a slow disc). The header's length
+ * and loop decide the same as the decoded ones up to any sample already
+ * decoded, so the statuses are those of a whole decode. */
 
 #include "game/adx.h"
 #include "game/aix.h"
 #include "host/paths.h"
+#include "port/jobs.h"
 #include "port/port.h"
 
 #include "types.h"
 
 #include <AL/al.h>
 #include <AL/alc.h>
+#include <SDL3/SDL.h>
 
 #include <math.h>
 #include <stdarg.h>
@@ -36,11 +48,18 @@
 #define PREROLL 3          /* frames queued before the source starts */
 #define FRAME_SAMPLES 1600 /* the most a frame takes: 96 kHz / 60 */
 #define ENTRY_MAX 16
+#define READ_CHUNK 65536 /* the decoder's read, bytes */
+#define HEADER_READ 4096 /* the start's read: the header */
 
 enum { ADXT_STOP = 0, ADXT_PLAYING = 3, ADXT_PLAYEND = 5 };
 enum { AIXP_STOP = 0, AIXP_PLAYING = 2, AIXP_PLAYEND = 3 };
 
-/* Decoded PCM, interleaved s16, with its loop. */
+struct Decode;
+
+/* Decoded PCM, interleaved s16, with its loop. While dec is set it is
+ * still being decoded: total and the loop are the header's (an upper
+ * bound), and pcm_need gives the samples. shared PCM (the opening theme's)
+ * is not freed with the stream. */
 typedef struct Pcm {
     int16_t *pcm;
     int channels;
@@ -49,7 +68,24 @@ typedef struct Pcm {
     int loop;
     int32_t loop_start;
     int32_t loop_end;
+    struct Decode *dec;
+    int shared;
+    int no_loop; /* a stem: the queue is its loop */
 } Pcm;
+
+/* An archive member read and decoded on a worker. */
+typedef struct Decode {
+    SfJob job;
+    u32 offset; /* in the archive */
+    u32 size;
+    uint8_t *file; /* the member, read so far */
+    u32 file_n;
+    SfAdxStream adx;
+    int16_t *pcm;
+    SDL_AtomicInt ready; /* samples decoded */
+    SDL_AtomicInt finished;
+    SDL_AtomicInt cancel;
+} Decode;
 
 /* One OpenAL source fed from a Pcm, and the stems queued after it. */
 typedef struct Voice {
@@ -67,6 +103,7 @@ typedef struct Voice {
     int loop_on; /* AIXP's loop switch; ADX loops follow the file */
     float gain;
     int32_t entries[ENTRY_MAX];
+    Pcm entry_pcm[ENTRY_MAX]; /* each queued stem, decoding already */
     int entry_n;
     int seamless;
     /* what now holds, so a rollback can decode it again: an archive
@@ -90,6 +127,12 @@ typedef struct AdxtHandle {
 } AdxtHandle;
 static AdxtHandle s_adxt[4];
 static Voice s_aixp;
+
+/* the opening theme's decode (see aix_get) */
+static SfJob s_aix_job;
+static Pcm s_aix_cache;
+static void aix_cache_run(void *unused);
+static void entries_clear(Voice *v);
 
 /* SF_SOUND_DEBUG=1 logs each stream call with the frame it came on. */
 static void sdebug(const char *fmt, ...)
@@ -119,7 +162,15 @@ static float gain_of(s32 vol)
 
 static void pcm_free(Pcm *p)
 {
-    free(p->pcm);
+    if (p->dec) {
+        SDL_SetAtomicInt(&p->dec->cancel, 1);
+        sf_job_wait(&p->dec->job);
+        free(p->dec->file);
+        free(p->dec);
+    }
+    if (!p->shared) {
+        free(p->pcm);
+    }
     memset(p, 0, sizeof *p);
 }
 
@@ -141,22 +192,115 @@ static int pcm_from_adx(const uint8_t *data, uint32_t size, Pcm *out)
     return 0;
 }
 
+/* The worker's half: the member in parts, each decoded as it comes. */
+static void decode_run(void *arg)
+{
+    Decode *d = arg;
+    while (!SDL_GetAtomicInt(&d->cancel)) {
+        int final;
+        if (d->file_n < d->size) {
+            u32 n = d->size - d->file_n < READ_CHUNK ? d->size - d->file_n : READ_CHUNK;
+            long r = sf_afs_pread(d->file + d->file_n, n, d->offset + d->file_n);
+            if (r <= 0) {
+                fprintf(stderr, "sound: archive read failed at %u of %u bytes\n", d->file_n, d->size);
+                d->size = d->file_n; /* what was read is the file */
+            } else {
+                d->file_n += (u32)r;
+            }
+        }
+        final = d->file_n >= d->size;
+        sf_adx_step(&d->adx, d->file, d->file_n, final, d->pcm, UINT32_MAX);
+        SDL_SetAtomicInt(&d->ready, (int)d->adx.produced);
+        if (d->adx.finished) {
+            break;
+        }
+        sf_job_progress();
+    }
+    SDL_SetAtomicInt(&d->finished, 1);
+    sf_job_progress();
+}
+
+/* A member as a stream: the header now, the rest on a worker. */
 static int pcm_from_afs(s32 fid, Pcm *out)
 {
-    uint8_t *data;
-    uint32_t size;
-    int r;
-    if (sf_afs_read(fid, &data, &size) != 0) {
+    Decode *d;
+    char err[256];
+    u32 head;
+    memset(out, 0, sizeof *out);
+    d = calloc(1, sizeof *d);
+    if (!d || sf_afs_member(fid, &d->offset, &d->size) != 0 || d->size == 0 || !(d->file = malloc(d->size))) {
         fprintf(stderr, "sound: archive member %d unreadable\n", fid);
+        free(d);
         return -1;
     }
-    r = pcm_from_adx(data, size, out);
-    if (r != 0) {
-        fprintf(stderr, "sound: archive member %d (%u bytes, starts %02X %02X %02X %02X) is not a playable ADX\n", fid,
-                size, data[0], data[1], data[2], data[3]);
+    head = d->size < HEADER_READ ? d->size : HEADER_READ;
+    if (sf_afs_pread(d->file, head, d->offset) != (long)head) {
+        fprintf(stderr, "sound: archive member %d unreadable\n", fid);
+        free(d->file);
+        free(d);
+        return -1;
     }
-    free(data);
-    return r;
+    d->file_n = head;
+    if (sf_adx_open(d->file, d->file_n, &d->adx, err, sizeof err) != 0) {
+        fprintf(stderr, "sound: archive member %d (%u bytes, starts %02X %02X %02X %02X) is not a playable ADX: %s\n",
+                fid, d->size, d->file[0], d->file[1], d->file[2], d->file[3], err);
+        free(d->file);
+        free(d);
+        return -1;
+    }
+    d->pcm = malloc((size_t)d->adx.total * (size_t)d->adx.channels * sizeof(int16_t));
+    if (!d->pcm) {
+        free(d->file);
+        free(d);
+        return -1;
+    }
+    out->pcm = d->pcm;
+    out->channels = d->adx.channels;
+    out->rate = d->adx.rate;
+    out->total = d->adx.total;
+    out->loop = d->adx.loop;
+    out->loop_start = d->adx.loop_start;
+    out->loop_end = d->adx.loop_end;
+    out->dec = d;
+    sf_job_start(&d->job, decode_run, d);
+    return 0;
+}
+
+typedef struct Need {
+    Decode *d;
+    int32_t upto;
+} Need;
+
+static int need_ready(void *arg)
+{
+    const Need *n = arg;
+    return SDL_GetAtomicInt(&n->d->finished) || SDL_GetAtomicInt(&n->d->ready) > n->upto;
+}
+
+/* Samples up to upto may be read: the decoder is past it, or done (and
+ * the PCM's length and loop are then the decoded ones). */
+static void pcm_need(Pcm *p, int32_t upto)
+{
+    Need n;
+    Decode *d = p->dec;
+    if (!d) {
+        return;
+    }
+    n.d = d;
+    n.upto = upto;
+    if (!need_ready(&n)) {
+        sf_job_wait_for(&d->job, need_ready, &n);
+    }
+    if (SDL_GetAtomicInt(&d->finished)) {
+        sf_job_wait(&d->job);
+        sf_adx_final(&d->adx, &p->total, &p->loop, &p->loop_start, &p->loop_end);
+        if (p->no_loop) {
+            p->loop = 0;
+        }
+        free(d->file);
+        free(d);
+        p->dec = NULL;
+    }
 }
 
 /* An ADX in memory: its size from the header (data offset, frames per
@@ -237,14 +381,18 @@ static int voice_next_entry(Voice *v)
         return 0;
     }
     fid = v->entries[0];
-    memmove(v->entries, v->entries + 1, (size_t)(v->entry_n - 1) * sizeof v->entries[0]);
-    v->entry_n--;
     pcm_free(&v->now);
+    v->now = v->entry_pcm[0];
+    memmove(v->entries, v->entries + 1, (size_t)(v->entry_n - 1) * sizeof v->entries[0]);
+    memmove(v->entry_pcm, v->entry_pcm + 1, (size_t)(v->entry_n - 1) * sizeof v->entry_pcm[0]);
+    v->entry_n--;
+    memset(&v->entry_pcm[v->entry_n], 0, sizeof v->entry_pcm[0]);
     v->src = SRC_NONE;
-    if (pcm_from_afs(fid, &v->now) != 0) {
-        return 0;
+    if (!v->now.pcm) {
+        return 0; /* it did not read */
     }
     v->now.loop = 0; /* a stem plays once; the queue is the loop */
+    v->now.no_loop = 1;
     v->pos = 0;
     v->src = SRC_AFS;
     v->src_fid = fid;
@@ -258,8 +406,11 @@ static int32_t voice_read(Voice *v, int16_t *out, int32_t n)
 {
     int32_t done = 0;
     while (done < n && v->now.pcm) {
-        int32_t end = v->now.loop && v->loop_on ? v->now.loop_end : v->now.total;
-        int32_t take = end - v->pos;
+        int32_t end;
+        int32_t take;
+        pcm_need(&v->now, v->pos + (n - done));
+        end = v->now.loop && v->loop_on ? v->now.loop_end : v->now.total;
+        take = end - v->pos;
         if (take > n - done) {
             take = n - done;
         }
@@ -366,6 +517,9 @@ s32 xb_CreateDirectSound(const char *path)
     if (s_ready) {
         return 1;
     }
+    if (!s_aix_job.fn) {
+        sf_job_start(&s_aix_job, aix_cache_run, NULL);
+    }
     s_dev = alcOpenDevice(NULL);
     s_ctx = s_dev ? alcCreateContext(s_dev, NULL) : NULL;
     if (!s_ctx || !alcMakeContextCurrent(s_ctx)) {
@@ -386,8 +540,14 @@ void sf_sound_shutdown(void)
     }
     for (i = 0; i < sizeof s_adxt / sizeof s_adxt[0]; i++) {
         voice_stop(&s_adxt[i].v);
+        entries_clear(&s_adxt[i].v);
     }
     voice_stop(&s_aixp);
+    if (s_aix_job.fn) {
+        sf_job_wait(&s_aix_job);
+        s_aix_cache.shared = 0;
+        pcm_free(&s_aix_cache);
+    }
     sf_se_shutdown();
     alcMakeContextCurrent(NULL);
     alcDestroyContext(s_ctx);
@@ -435,7 +595,7 @@ void ADXT_Destroy(AdxtHandle *a)
         return;
     }
     voice_stop(&a->v);
-    a->v.entry_n = 0;
+    entries_clear(&a->v);
     a->used = 0;
 }
 
@@ -493,14 +653,28 @@ void ADXT_EntryAfs(AdxtHandle *a, s32 patid, s32 fid)
     (void)patid;
     sdebug("ADXT_EntryAfs %p file %d (%d queued)", (void *)(a ? &a->v : NULL), fid, a ? a->v.entry_n : -1);
     if (a && a->v.entry_n < ENTRY_MAX) {
+        /* it starts decoding now, to be ready when its turn comes */
+        if (pcm_from_afs(fid, &a->v.entry_pcm[a->v.entry_n]) != 0) {
+            memset(&a->v.entry_pcm[a->v.entry_n], 0, sizeof a->v.entry_pcm[0]);
+        }
         a->v.entries[a->v.entry_n++] = fid;
     }
+}
+
+/* The queued stems go, with their audio. */
+static void entries_clear(Voice *v)
+{
+    int i;
+    for (i = 0; i < v->entry_n; i++) {
+        pcm_free(&v->entry_pcm[i]);
+    }
+    v->entry_n = 0;
 }
 
 void ADXT_ResetEntry(AdxtHandle *a)
 {
     if (a) {
-        a->v.entry_n = 0;
+        entries_clear(&a->v);
     }
 }
 
@@ -647,13 +821,39 @@ static int aix_load(const char *fname, Pcm *out)
     return 0;
 }
 
+/* The opening theme, the one AIX the game plays, is decoded once on a
+ * worker as soon as the device opens; streams of it share that PCM. */
+#define AIX_OPENING "ST3_3_OP.aix"
+
+static int s_aix_cache_ok;
+
+static void aix_cache_run(void *unused)
+{
+    (void)unused;
+    s_aix_cache_ok = aix_load(AIX_OPENING, &s_aix_cache) == 0;
+}
+
+static int aix_get(const char *fname, Pcm *out)
+{
+    if (strcmp(fname, AIX_OPENING) == 0 && s_aix_job.fn) {
+        sf_job_wait(&s_aix_job);
+        if (!s_aix_cache_ok) {
+            return -1;
+        }
+        *out = s_aix_cache;
+        out->shared = 1;
+        return 0;
+    }
+    return aix_load(fname, out);
+}
+
 void xb_aixp_StartFnameSurround(void *aixp, const char *fname, void *dir)
 {
     (void)aixp;
     (void)dir;
     sdebug("AIXP start %s", fname);
     voice_stop(&s_aixp);
-    if (aix_load(fname, &s_aixp.now) != 0) {
+    if (aix_get(fname, &s_aixp.now) != 0) {
         return;
     }
     snprintf(s_aix_name, sizeof s_aix_name, "%s", fname);
@@ -814,13 +1014,14 @@ void sf_sound_state_restore(const void *buf)
             if (t->src == SRC_AFS && pcm_from_afs(t->src_fid, &v->now) == 0) {
                 if (t->src_stem) {
                     v->now.loop = 0;
+                    v->now.no_loop = 1;
                 }
             } else if (t->src == SRC_MEM && t->src_mem) {
                 uint32_t size = adx_size(t->src_mem);
                 if (!size || pcm_from_adx(t->src_mem, size, &v->now) != 0) {
                     memset(&v->now, 0, sizeof v->now);
                 }
-            } else if (t->src == SRC_AIX && aix_load(ss->aix, &v->now) == 0) {
+            } else if (t->src == SRC_AIX && aix_get(ss->aix, &v->now) == 0) {
                 snprintf(s_aix_name, sizeof s_aix_name, "%s", ss->aix);
             }
         } else if (v->source) {
@@ -845,6 +1046,16 @@ void sf_sound_state_restore(const void *buf)
         v->paused = t->paused;
         v->loop_on = t->loop_on;
         v->gain = t->gain;
+        if (v->entry_n != t->entry_n || memcmp(v->entries, t->entries, (size_t)t->entry_n * sizeof v->entries[0]) != 0) {
+            /* another queue: its stems decode again */
+            int k;
+            entries_clear(v);
+            for (k = 0; k < t->entry_n; k++) {
+                if (pcm_from_afs(t->entries[k], &v->entry_pcm[k]) != 0) {
+                    memset(&v->entry_pcm[k], 0, sizeof v->entry_pcm[k]);
+                }
+            }
+        }
         memcpy(v->entries, t->entries, sizeof v->entries);
         v->entry_n = t->entry_n;
         v->seamless = t->seamless;

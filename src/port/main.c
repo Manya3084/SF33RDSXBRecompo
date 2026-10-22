@@ -1,6 +1,7 @@
 /* The native entry. The game itself starts in sf_game_init. */
 
 #include "host/compat.h"
+#include "port/jobs.h"
 #include "port/port.h"
 
 #include <SDL3/SDL.h>
@@ -94,6 +95,7 @@ int main(int argc, char **argv)
     /* the sound first, so nothing plays on while the window goes */
     sf_sound_shutdown();
     sf_video_shutdown();
+    sf_jobs_shutdown();
     SDL_Quit();
     return 0;
 }

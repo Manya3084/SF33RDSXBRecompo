@@ -23,14 +23,9 @@
 #define lstat stat
 #define S_ISLNK(m) 0
 
-/* pread: a seek and a read, as the callers read one file at a time */
-static inline long sf_pread(int fd, void *buf, size_t n, long long off)
-{
-    if (_lseeki64(fd, off, SEEK_SET) < 0) {
-        return -1;
-    }
-    return _read(fd, buf, (unsigned)n);
-}
+/* pread: a read at an offset that leaves the file's position alone, so
+ * threads can share one descriptor (src/host/compat.c) */
+long sf_pread(int fd, void *buf, size_t n, long long off);
 #define pread(fd, buf, n, off) sf_pread((fd), (buf), (n), (long long)(off))
 
 #include <time.h>

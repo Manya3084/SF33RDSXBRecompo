@@ -184,6 +184,24 @@ int sf_afs_read(s32 fid, u8 **data, u32 *size)
     return 0;
 }
 
+/* An archive member's place, and a read from the archive: for the music
+ * decoder's worker, which reads a member in parts (pread leaves the
+ * descriptor's position alone, so threads can share it). */
+int sf_afs_member(s32 fid, u32 *offset, u32 *size)
+{
+    if (s_fd < 0 || fid < 0 || (u32)fid >= s_count) {
+        return -1;
+    }
+    *offset = s_toc[fid * 2];
+    *size = s_toc[fid * 2 + 1];
+    return 0;
+}
+
+long sf_afs_pread(void *buf, u32 n, u32 offset)
+{
+    return s_fd < 0 ? -1 : (long)pread(s_fd, buf, n, (off_t)offset);
+}
+
 /* the CRI server tick: nothing to run, reads finish when asked for */
 void ADXM_ExecMain(void)
 {

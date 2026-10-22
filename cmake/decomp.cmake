@@ -143,6 +143,7 @@ add_library(sf_port STATIC
     src/port/save.c
     src/port/banks.c
     src/port/math.c
+    src/port/jobs.c
     src/port/sound.c
     src/port/se.c
     src/port/menu_ext.c

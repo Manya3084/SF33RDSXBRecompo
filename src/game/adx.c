@@ -122,35 +122,16 @@ static void read_loop(const uint8_t *file, uint32_t size, int version, int copyr
     *loop = 1;
 }
 
-int sf_adx_decode(const uint8_t *file, uint32_t size, SfAdx *out, char *err, size_t err_n)
+int sf_adx_open(const uint8_t *file, uint32_t size, SfAdxStream *s, char *err, size_t err_n)
 {
     unsigned copyright;
-    unsigned audio_off;
     int encoding;
     int block;
     int bits;
-    int channels;
-    int rate;
-    int version;
-    int flags;
-    int high_pass;
-    int32_t total;
-    int16_t coef1;
-    int16_t coef2;
-    int16_t hist1[2];
-    int16_t hist2[2];
-    int16_t tmp[2][32];
-    int16_t *pcm;
-    int state;
-    int loop;
-    int32_t loop_start;
-    int32_t loop_end;
-    uint32_t produced;
-    uint32_t off;
-    if (out) {
-        memset(out, 0, sizeof *out);
+    if (s) {
+        memset(s, 0, sizeof *s);
     }
-    if (!file || !out || size < 0x14u) {
+    if (!file || !s || size < 0x14u) {
         sf_set_err(err, err_n, "adx header");
         return -1;
     }
@@ -159,107 +140,134 @@ int sf_adx_decode(const uint8_t *file, uint32_t size, SfAdx *out, char *err, siz
         return -1;
     }
     copyright = be16(file + 2);
-    audio_off = copyright + 4u;
+    s->audio_off = copyright + 4u;
     encoding = file[4];
     block = file[5];
     bits = file[6];
-    channels = file[7];
-    rate = (int)be32(file + 8);
-    total = (int32_t)be32(file + 12);
-    if (copyright < 0x10u || audio_off > size || encoding != 3 || block != 18 || bits != 4 || (channels != 1 && channels != 2) || rate <= 0 || total <= 0 || total > SF_ADX_MAX_SAMPLES) {
+    s->channels = file[7];
+    s->rate = (int)be32(file + 8);
+    s->total = (int32_t)be32(file + 12);
+    if (copyright < 0x10u || s->audio_off > size || encoding != 3 || block != 18 || bits != 4 ||
+        (s->channels != 1 && s->channels != 2) || s->rate <= 0 || s->total <= 0 || s->total > SF_ADX_MAX_SAMPLES) {
         sf_set_err(err, err_n, "adx header");
         return -1;
     }
-    version = file[0x12];
-    flags = file[0x13];
-    if (version >= 4 && flags >= 8) {
+    s->version = file[0x12];
+    if (s->version >= 4 && file[0x13] >= 8) {
         sf_set_err(err, err_n, "adx key");
         return -1;
     }
-    if (copyright < 0xEu) {
+    s->high_pass = (int)be16(file + 0x10);
+    if (sf_adx_coef(s->high_pass, s->rate, &s->coef1, &s->coef2) != 0) {
         sf_set_err(err, err_n, "adx header");
         return -1;
     }
-    high_pass = (int)be16(file + 0x10);
-    if (sf_adx_coef(high_pass, rate, &coef1, &coef2) != 0) {
-        sf_set_err(err, err_n, "adx header");
-        return -1;
-    }
-    hist1[0] = 0;
-    hist2[0] = 0;
-    hist1[1] = 0;
-    hist2[1] = 0;
-    if (version >= 4) {
+    if (s->version >= 4) {
         if (size < 0x20u || copyright < 0x1Cu) {
             sf_set_err(err, err_n, "adx header");
             return -1;
         }
-        hist1[0] = (int16_t)be16(file + 0x18);
-        hist2[0] = (int16_t)be16(file + 0x1A);
-        hist1[1] = (int16_t)be16(file + 0x1C);
-        hist2[1] = (int16_t)be16(file + 0x1E);
+        s->hist1[0] = (int16_t)be16(file + 0x18);
+        s->hist2[0] = (int16_t)be16(file + 0x1A);
+        s->hist1[1] = (int16_t)be16(file + 0x1C);
+        s->hist2[1] = (int16_t)be16(file + 0x1E);
     }
-    pcm = sf_alloc((size_t)total * (size_t)channels * sizeof(int16_t));
+    read_loop(file, size, s->version, (int)copyright, &s->loop, &s->loop_start, &s->loop_end);
+    s->off = s->audio_off;
+    return 0;
+}
+
+uint32_t sf_adx_step(SfAdxStream *s, const uint8_t *file, uint32_t size, int size_final, int16_t *pcm, uint32_t max)
+{
+    uint32_t limit = s->produced + max;
+    uint32_t frame = (uint32_t)(18 * s->channels);
+    int16_t tmp[2][32];
+    if (limit > (uint32_t)s->total || limit < s->produced) {
+        limit = (uint32_t)s->total;
+    }
+    while (!s->finished && s->produced < limit) {
+        int n = 32;
+        int c;
+        int i;
+        if (frame > size - s->off || s->off > size) {
+            if (size_final) {
+                s->finished = 1; /* the file ends before the samples do */
+            }
+            break;
+        }
+        for (c = 0; c < s->channels; c++) {
+            if (be16(file + s->off + (uint32_t)(c * 18)) & 0x8000u) {
+                s->finished = 1;
+                return s->produced;
+            }
+        }
+        for (c = 0; c < s->channels; c++) {
+            if (decode_block(file + s->off, s->coef1, s->coef2, &s->hist1[c], &s->hist2[c], &s->state, 0, 0, tmp[c]) != 0) {
+                s->finished = 1;
+                return s->produced;
+            }
+            s->off += 18;
+        }
+        if ((uint32_t)n > (uint32_t)s->total - s->produced) {
+            n = (int)((uint32_t)s->total - s->produced);
+        }
+        for (i = 0; i < n; i++) {
+            for (c = 0; c < s->channels; c++) {
+                pcm[((size_t)s->produced + (size_t)i) * (size_t)s->channels + (size_t)c] = tmp[c][i];
+            }
+        }
+        s->produced += (uint32_t)n;
+    }
+    if (s->produced >= (uint32_t)s->total) {
+        s->finished = 1;
+    }
+    return s->produced;
+}
+
+void sf_adx_final(const SfAdxStream *s, int32_t *total, int *loop, int32_t *loop_start, int32_t *loop_end)
+{
+    int32_t produced = (int32_t)s->produced;
+    *total = produced;
+    *loop = s->loop;
+    *loop_start = s->loop_start;
+    *loop_end = s->loop_end;
+    if (*loop && (*loop_start >= produced || *loop_end <= *loop_start)) {
+        *loop = 0;
+        *loop_start = 0;
+        *loop_end = 0;
+    }
+    if (*loop && *loop_end > produced) {
+        *loop_end = produced;
+    }
+}
+
+int sf_adx_decode(const uint8_t *file, uint32_t size, SfAdx *out, char *err, size_t err_n)
+{
+    SfAdxStream s;
+    int16_t *pcm;
+    if (out) {
+        memset(out, 0, sizeof *out);
+    }
+    if (!out || sf_adx_open(file, size, &s, err, err_n) != 0) {
+        return -1;
+    }
+    pcm = sf_alloc((size_t)s.total * (size_t)s.channels * sizeof(int16_t));
     if (!pcm) {
         sf_set_err(err, err_n, "adx memory");
         return -1;
     }
-    state = 0;
-    produced = 0;
-    off = audio_off;
-    while (produced < (uint32_t)total) {
-        int n = 32;
-        int c;
-        int i;
-        uint32_t frame = (uint32_t)(18 * channels);
-        if (frame > size - off) {
-            break;
-        }
-        for (c = 0; c < channels; c++) {
-            if (be16(file + off + (uint32_t)(c * 18)) & 0x8000u) {
-                goto stop;
-            }
-        }
-        for (c = 0; c < channels; c++) {
-            if (decode_block(file + off, coef1, coef2, &hist1[c], &hist2[c], &state, 0, 0, tmp[c]) != 0) {
-                goto stop;
-            }
-            off += 18;
-        }
-        if ((uint32_t)n > (uint32_t)total - produced) {
-            n = (int)((uint32_t)total - produced);
-        }
-        for (i = 0; i < n; i++) {
-            for (c = 0; c < channels; c++) {
-                pcm[((size_t)produced + (size_t)i) * (size_t)channels + (size_t)c] = tmp[c][i];
-            }
-        }
-        produced += (uint32_t)n;
-    }
-stop:
-    if (produced == 0) {
+    sf_adx_step(&s, file, size, 1, pcm, (uint32_t)s.total);
+    if (s.produced == 0) {
         sf_free(pcm);
         sf_set_err(err, err_n, "adx end");
         return -1;
     }
-    read_loop(file, size, version, (int)copyright, &loop, &loop_start, &loop_end);
-    if (loop && (loop_start >= (int32_t)produced || loop_end <= loop_start)) {
-        loop = 0;
-        loop_start = 0;
-        loop_end = 0;
-    }
-    if (loop && loop_end > (int32_t)produced) {
-        loop_end = (int32_t)produced;
-    }
-    out->channels = channels;
-    out->rate = rate;
-    out->high_pass = high_pass;
-    out->coef1 = coef1;
-    out->coef2 = coef2;
-    out->total = (int32_t)produced;
-    out->loop = loop;
-    out->loop_start = loop_start;
-    out->loop_end = loop_end;
+    out->channels = s.channels;
+    out->rate = s.rate;
+    out->high_pass = s.high_pass;
+    out->coef1 = s.coef1;
+    out->coef2 = s.coef2;
+    sf_adx_final(&s, &out->total, &out->loop, &out->loop_start, &out->loop_end);
     out->pcm = pcm;
     return 0;
 }

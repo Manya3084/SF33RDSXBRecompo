@@ -26,10 +26,15 @@
  * wave is taken as a triangle. SF_SE_LFO=0 leaves it out.
  *
  * Voices end by the frame clock, not by the audio device, so a run plays
- * the same requests the same way with or without sound. */
+ * the same requests the same way with or without sound.
+ *
+ * A wave bank's waves are decoded on a worker (src/port/jobs.c) as soon
+ * as the bank is registered, in order; the first play of a wave takes it
+ * from there, waiting only if the worker has not reached it yet. */
 
 #include "game/xwb.h"
 #include "host/paths.h"
+#include "port/jobs.h"
 #include "port/port.h"
 
 #include "types.h"
@@ -37,6 +42,7 @@
 #include <AL/al.h>
 #include <AL/alc.h>
 #include <AL/alext.h>
+#include <SDL3/SDL.h>
 
 #include <math.h>
 #include <stdint.h>
@@ -143,9 +149,15 @@ typedef struct WaveBank {
     uint32_t size;
     char name[17];
     int count;
-    ALuint *buffers; /* decoded on first use */
+    ALuint *buffers; /* made on first use */
     int32_t *frames;
     int *rates;
+    /* the worker's decode of every wave */
+    SfJob job;
+    SfWave *dec;
+    int *dec_ok;
+    SDL_AtomicInt dec_n; /* waves decoded */
+    SDL_AtomicInt cancel;
 } WaveBank;
 
 static WaveBank s_wb[SE_WAVEBANKS];
@@ -262,6 +274,15 @@ static void wb_drop(WaveBank *wb)
             }
         }
     }
+    if (wb->dec) {
+        SDL_SetAtomicInt(&wb->cancel, 1);
+        sf_job_wait(&wb->job);
+        for (i = 0; i < wb->count; i++) {
+            sf_wave_free(&wb->dec[i]);
+        }
+    }
+    free(wb->dec);
+    free(wb->dec_ok);
     if (wb->buffers) {
         for (i = 0; i < wb->count; i++) {
             if (wb->buffers[i]) {
@@ -273,6 +294,33 @@ static void wb_drop(WaveBank *wb)
     free(wb->frames);
     free(wb->rates);
     memset(wb, 0, sizeof *wb);
+}
+
+/* The worker's half: each wave of the bank, in order. */
+static void wb_decode_run(void *arg)
+{
+    WaveBank *wb = arg;
+    int i;
+    for (i = 0; i < wb->count && !SDL_GetAtomicInt(&wb->cancel); i++) {
+        char err[64];
+        wb->dec_ok[i] = sf_xwb_entry(wb->data, wb->size, i, &wb->dec[i], err, sizeof err) == 0;
+        if (!wb->dec_ok[i]) {
+            fprintf(stderr, "se: %s wave %d: %s\n", wb->name, i, err);
+        }
+        SDL_SetAtomicInt(&wb->dec_n, i + 1);
+        sf_job_progress();
+    }
+}
+
+typedef struct WaveNeed {
+    WaveBank *wb;
+    int idx;
+} WaveNeed;
+
+static int wave_decoded(void *arg)
+{
+    const WaveNeed *n = arg;
+    return SDL_GetAtomicInt(&n->wb->dec_n) > n->idx;
 }
 
 static WaveBank *wb_register(const uint8_t *data, uint32_t size)
@@ -308,6 +356,19 @@ static WaveBank *wb_register(const uint8_t *data, uint32_t size)
     wb->size = size;
     wb->count = count;
     sf_xwb_name(data, size, wb->name);
+    wb->dec = calloc((size_t)count, sizeof *wb->dec);
+    wb->dec_ok = calloc((size_t)count, sizeof *wb->dec_ok);
+    if (wb->dec && wb->dec_ok) {
+        SDL_SetAtomicInt(&wb->dec_n, 0);
+        SDL_SetAtomicInt(&wb->cancel, 0);
+        memset(&wb->job, 0, sizeof wb->job);
+        sf_job_start(&wb->job, wb_decode_run, wb);
+    } else {
+        free(wb->dec);
+        free(wb->dec_ok);
+        wb->dec = NULL;
+        wb->dec_ok = NULL;
+    }
     return wb;
 }
 
@@ -333,7 +394,19 @@ static int wave_prepare(WaveBank *wb, int idx)
     if (wb->rates[idx] != 0) {
         return 0;
     }
-    if (sf_xwb_entry(wb->data, wb->size, idx, &w, err, sizeof err) != 0) {
+    if (wb->dec) {
+        /* the worker's, once it has got this far */
+        WaveNeed n;
+        n.wb = wb;
+        n.idx = idx;
+        sf_job_wait_for(&wb->job, wave_decoded, &n);
+        if (!wave_decoded(&n) || !wb->dec_ok[idx]) {
+            wb->rates[idx] = -1;
+            return -1;
+        }
+        w = wb->dec[idx];
+        memset(&wb->dec[idx], 0, sizeof wb->dec[idx]);
+    } else if (sf_xwb_entry(wb->data, wb->size, idx, &w, err, sizeof err) != 0) {
         fprintf(stderr, "se: %s wave %d: %s\n", wb->name, idx, err);
         wb->rates[idx] = -1;
         return -1;
