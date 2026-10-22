@@ -20,6 +20,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
 
 #ifdef _WIN32
 /* PE has no __start_/__stop_ section bounds: the snapshot is Linux-only
@@ -315,9 +318,62 @@ static uint8_t *page_addr(size_t k)
     return NULL;
 }
 
+/* SF_TRACE=NAME:SIZE,... prints those globals (found by their symbol
+ * names) after each frame, between SF_TRACE_FROM and SF_TRACE_TO: two
+ * builds (another compiler, another processor) run over the same
+ * recording print the same lines until they part. */
+static void trace_frame(void)
+{
+#ifndef _WIN32
+    static const char *spec;
+    static int from = -1;
+    static int to;
+    char name[128];
+    const char *p;
+    if (from < 0) {
+        spec = getenv("SF_TRACE");
+        from = getenv("SF_TRACE_FROM") ? atoi(getenv("SF_TRACE_FROM")) : 0;
+        to = getenv("SF_TRACE_TO") ? atoi(getenv("SF_TRACE_TO")) : 0x7FFFFFFF;
+    }
+    if (!spec || sf_port_frame < from || sf_port_frame > to) {
+        return;
+    }
+    fprintf(stderr, "trace %d:", sf_port_frame);
+    for (p = spec; *p;) {
+        size_t n = strcspn(p, ":,");
+        int size = 4;
+        const uint8_t *at;
+        if (n >= sizeof name) {
+            break;
+        }
+        memcpy(name, p, n);
+        name[n] = 0;
+        p += n;
+        if (*p == ':') {
+            size = atoi(p + 1);
+            p += strcspn(p, ",");
+        }
+        if (*p == ',') {
+            p++;
+        }
+        at = dlsym(RTLD_DEFAULT, name);
+        fprintf(stderr, " %s=", name);
+        if (!at) {
+            fprintf(stderr, "?");
+            continue;
+        }
+        while (size-- > 0) {
+            fprintf(stderr, "%02x", *at++);
+        }
+    }
+    fputc('\n', stderr);
+#endif
+}
+
 /* After each game frame. */
 void sf_state_test_frame(void)
 {
+    trace_frame();
     const char *env;
     uint64_t *now;
     size_t i;

@@ -172,7 +172,8 @@ def main() -> int:
     need = sorted(
         n
         for n in undef - defined - host - linker
-        if not n.startswith(("_GLOBAL_OFFSET_TABLE_", "__start_", "__stop_"))
+        # (and a sanitizer build's runtime: -fsanitize=address, undefined)
+        if not n.startswith(("_GLOBAL_OFFSET_TABLE_", "__start_", "__stop_", "__asan_", "__ubsan_", "__sanitizer_"))
     )
     # a library's own function stubbed means the library was not found:
     # the program would run with it missing
