@@ -76,6 +76,13 @@ int sf_render_read_screen(SfRenderer *renderer, const uint8_t **rgba, int *w, in
     return sf_vk_read_screen(renderer, rgba, w, h);
 }
 
+void sf_render_make_current(SfRenderer *renderer, int current)
+{
+    if (renderer && renderer->kind == SF_RENDER_OPENGL) {
+        SDL_GL_MakeCurrent(renderer->window, current ? renderer->gl : NULL);
+    }
+}
+
 int sf_render_create_headless(SfRenderer **out, char *err, size_t err_n)
 {
     return sf_vk_create_headless(out, err, err_n);

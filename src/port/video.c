@@ -14,6 +14,244 @@
 static SDL_Window *s_window;
 static SfRenderer *s_renderer;
 
+/* ---- the render thread ----
+ *
+ * The game thread builds a frame's draw list; the render thread draws and
+ * presents it (and waits on the display's refresh) while the game thread
+ * runs the next frame. At the hand-off the game thread waits for the
+ * render thread to finish the frame before, then copies the new frame
+ * into the render thread's own list: the vertices and batches, and the
+ * textures and palettes whose version changed. Every other use of the
+ * renderer (the aspect, the first start's screen, a test's screenshot) is
+ * run on the render thread between frames, so the renderer is only ever
+ * used from one thread, as OpenGL's context wants. SF_RENDER_THREAD=0
+ * draws on the game thread, as does a machine with one core. */
+
+typedef struct RtCall {
+    void (*fn)(void *);
+    void *arg;
+} RtCall;
+
+static struct {
+    SDL_Thread *thread;
+    SDL_Mutex *lock;
+    SDL_Condition *cv;
+    int frame; /* list holds a frame to draw */
+    RtCall call;
+    int quit;
+    SfDrawList list;
+    int filter;
+    char err[512];
+    int failed;
+} s_rt;
+
+static int rt_main(void *unused)
+{
+    (void)unused;
+    sf_render_make_current(s_renderer, 1);
+    SDL_LockMutex(s_rt.lock);
+    for (;;) {
+        while (!s_rt.frame && !s_rt.call.fn && !s_rt.quit) {
+            SDL_WaitCondition(s_rt.cv, s_rt.lock);
+        }
+        if (s_rt.call.fn) {
+            RtCall c = s_rt.call;
+            SDL_UnlockMutex(s_rt.lock);
+            c.fn(c.arg);
+            SDL_LockMutex(s_rt.lock);
+            s_rt.call.fn = NULL;
+        } else if (s_rt.frame) {
+            SDL_UnlockMutex(s_rt.lock);
+            sf_render_set_filter(s_renderer, s_rt.filter);
+            if (sf_render_present_list(s_renderer, &s_rt.list, s_rt.err, sizeof s_rt.err) != 0) {
+                s_rt.failed = 1;
+            }
+            SDL_LockMutex(s_rt.lock);
+            s_rt.frame = 0;
+        } else {
+            break;
+        }
+        SDL_BroadcastCondition(s_rt.cv);
+    }
+    SDL_UnlockMutex(s_rt.lock);
+    sf_render_make_current(s_renderer, 0);
+    return 0;
+}
+
+/* Until the render thread has nothing to do. */
+static void rt_idle(void)
+{
+    SDL_LockMutex(s_rt.lock);
+    while (s_rt.frame || s_rt.call.fn) {
+        SDL_WaitCondition(s_rt.cv, s_rt.lock);
+    }
+    SDL_UnlockMutex(s_rt.lock);
+}
+
+/* fn(arg) on the thread that owns the renderer, once it is idle. */
+static void rt_call(void (*fn)(void *), void *arg)
+{
+    if (!s_rt.thread) {
+        fn(arg);
+        return;
+    }
+    SDL_LockMutex(s_rt.lock);
+    while (s_rt.frame || s_rt.call.fn) {
+        SDL_WaitCondition(s_rt.cv, s_rt.lock);
+    }
+    s_rt.call.fn = fn;
+    s_rt.call.arg = arg;
+    SDL_BroadcastCondition(s_rt.cv);
+    while (s_rt.call.fn) {
+        SDL_WaitCondition(s_rt.cv, s_rt.lock);
+    }
+    SDL_UnlockMutex(s_rt.lock);
+}
+
+static void rt_start(void)
+{
+    const char *env = getenv("SF_RENDER_THREAD");
+    if (s_rt.thread || (env && strcmp(env, "0") == 0) || SDL_GetNumLogicalCPUCores() < 2) {
+        return;
+    }
+    s_rt.lock = SDL_CreateMutex();
+    s_rt.cv = SDL_CreateCondition();
+    sf_render_make_current(s_renderer, 0);
+    s_rt.thread = SDL_CreateThread(rt_main, "sf3 render", NULL);
+    if (!s_rt.thread) {
+        sf_render_make_current(s_renderer, 1);
+        fprintf(stderr, "video: no render thread: %s\n", SDL_GetError());
+    }
+}
+
+static void rt_stop(void)
+{
+    int i;
+    if (!s_rt.thread) {
+        return;
+    }
+    rt_idle();
+    SDL_LockMutex(s_rt.lock);
+    s_rt.quit = 1;
+    SDL_BroadcastCondition(s_rt.cv);
+    SDL_UnlockMutex(s_rt.lock);
+    SDL_WaitThread(s_rt.thread, NULL);
+    s_rt.thread = NULL;
+    sf_render_make_current(s_renderer, 1);
+    for (i = 0; i < SF_TEX_MAX; i++) {
+        free(s_rt.list.tex[i].rgba);
+    }
+    free(s_rt.list.v);
+    free(s_rt.list.b);
+    memset(&s_rt.list, 0, sizeof s_rt.list);
+}
+
+/* The game's frame into the render thread's list (it is idle). */
+static void rt_copy(const SfDrawList *l)
+{
+    SfDrawList *o = &s_rt.list;
+    int i;
+    for (i = 0; i < SF_TEX_MAX; i++) {
+        const SfTexture *t = &l->tex[i];
+        SfTexture *d = &o->tex[i];
+        if (d->version == t->version && d->w == t->w && d->h == t->h && d->indexed == t->indexed &&
+            !d->rgba == !t->rgba) {
+            continue;
+        }
+        if (!t->rgba) {
+            free(d->rgba);
+            d->rgba = NULL;
+        } else {
+            size_t n = (size_t)t->w * (size_t)t->h * 4;
+            if (!d->rgba || d->w != t->w || d->h != t->h) {
+                free(d->rgba);
+                d->rgba = malloc(n);
+                if (!d->rgba) {
+                    fprintf(stderr, "video: no memory for a %dx%d texture\n", t->w, t->h);
+                    exit(1);
+                }
+            }
+            memcpy(d->rgba, t->rgba, n);
+        }
+        d->w = t->w;
+        d->h = t->h;
+        d->indexed = t->indexed;
+        d->version = t->version;
+    }
+    for (i = 0; i < SF_PAL_MAX; i++) {
+        if (o->pal[i].version != l->pal[i].version) {
+            o->pal[i] = l->pal[i];
+        }
+    }
+    if (o->v_cap < l->v_n) {
+        o->v_cap = l->v_cap;
+        o->v = realloc(o->v, (size_t)o->v_cap * sizeof *o->v);
+    }
+    if (o->b_cap < l->b_n) {
+        o->b_cap = l->b_cap;
+        o->b = realloc(o->b, (size_t)o->b_cap * sizeof *o->b);
+    }
+    if ((l->v_n && !o->v) || (l->b_n && !o->b)) {
+        fprintf(stderr, "video: no memory for the frame\n");
+        exit(1);
+    }
+    if (l->v_n) {
+        memcpy(o->v, l->v, (size_t)l->v_n * sizeof *o->v);
+    }
+    if (l->b_n) {
+        memcpy(o->b, l->b, (size_t)l->b_n * sizeof *o->b);
+    }
+    o->v_n = l->v_n;
+    o->b_n = l->b_n;
+    o->clear = l->clear;
+    memcpy(o->show, l->show, sizeof o->show);
+    memcpy(o->show_at, l->show_at, sizeof o->show_at);
+    o->cp3 = l->cp3;
+    o->cp3_at = l->cp3_at;
+    memcpy(o->cp3_rect, l->cp3_rect, sizeof o->cp3_rect);
+}
+
+/* The renderer's calls, on its thread. */
+typedef struct CanvasCall {
+    const SfCanvas *canvas;
+} CanvasCall;
+
+static void call_canvas(void *arg)
+{
+    char err[256];
+    sf_render_present(s_renderer, ((CanvasCall *)arg)->canvas, err, sizeof err);
+}
+
+static void call_aspect(void *arg)
+{
+    sf_render_set_aspect(s_renderer, *(float *)arg);
+}
+
+typedef struct ReadCall {
+    const uint8_t **rgba;
+    int *w;
+    int *h;
+    int r;
+} ReadCall;
+
+static void call_read(void *arg)
+{
+    ReadCall *c = arg;
+    c->r = sf_render_read_screen(s_renderer, c->rgba, c->w, c->h);
+}
+
+/* sf_render_read_screen, on the render thread once the frame is drawn. */
+static int read_screen(const uint8_t **rgba, int *w, int *h)
+{
+    ReadCall c;
+    c.rgba = rgba;
+    c.w = w;
+    c.h = h;
+    c.r = -1;
+    rt_call(call_read, &c);
+    return c.r;
+}
+
 /* SF_RENDERER=opengl asks for the OpenGL screen even where Vulkan works. */
 static int want_gl(void)
 {
@@ -87,7 +325,10 @@ void sf_video_init(int w, int h)
 void sf_video_present_canvas(const SfCanvas *canvas)
 {
     char err[256];
-    sf_render_present(s_renderer, canvas, err, sizeof err);
+    CanvasCall c;
+    (void)err;
+    c.canvas = canvas;
+    rt_call(call_canvas, &c);
 }
 
 SDL_Window *sf_video_window(void)
@@ -97,7 +338,7 @@ SDL_Window *sf_video_window(void)
 
 void sf_video_set_aspect(float aspect)
 {
-    sf_render_set_aspect(s_renderer, aspect);
+    rt_call(call_aspect, &aspect);
 }
 
 /* SF_SHOT=FRAME:PATH writes the screen after that frame as a PPM;
@@ -125,8 +366,8 @@ static void screenshot(int frame)
         if ((frame + 1) % n == 0) {
             /* a read asks for the next frame's picture; it comes the frame
              * after. A picture already waiting is an old one: ask again. */
-            if (sf_render_read_screen(s_renderer, &rgba, &w, &h) == 0) {
-                sf_render_read_screen(s_renderer, &rgba, &w, &h);
+            if (read_screen(&rgba, &w, &h) == 0) {
+                read_screen(&rgba, &w, &h);
             }
             return;
         }
@@ -144,7 +385,7 @@ static void screenshot(int frame)
         }
         snprintf(path, sizeof path, "%s", colon + 1);
     }
-    if (sf_render_read_screen(s_renderer, &rgba, &w, &h) != 0) {
+    if (read_screen(&rgba, &w, &h) != 0) {
         return;
     }
     f = fopen(path, "wb");
@@ -185,6 +426,7 @@ static void pace(void)
 
 void sf_video_shutdown(void)
 {
+    rt_stop();
     if (s_renderer) {
         sf_render_destroy(s_renderer);
         s_renderer = NULL;
@@ -200,10 +442,26 @@ void sf_video_present(void)
     static int frame;
     char err[512];
     sf_gfx_frame_ready();
-    sf_render_set_filter(s_renderer, sf_save_screen_filter());
-    if (sf_render_present_list(s_renderer, sf_gfx_list(), err, sizeof err) != 0) {
-        fprintf(stderr, "video: %s\n", err);
-        exit(1);
+    rt_start();
+    if (s_rt.thread) {
+        /* the frame before is drawn; this one goes to the render thread */
+        rt_idle();
+        if (s_rt.failed) {
+            fprintf(stderr, "video: %s\n", s_rt.err);
+            exit(1);
+        }
+        rt_copy(sf_gfx_list());
+        s_rt.filter = sf_save_screen_filter();
+        SDL_LockMutex(s_rt.lock);
+        s_rt.frame = 1;
+        SDL_BroadcastCondition(s_rt.cv);
+        SDL_UnlockMutex(s_rt.lock);
+    } else {
+        sf_render_set_filter(s_renderer, sf_save_screen_filter());
+        if (sf_render_present_list(s_renderer, sf_gfx_list(), err, sizeof err) != 0) {
+            fprintf(stderr, "video: %s\n", err);
+            exit(1);
+        }
     }
     if (getenv("SF_DUMP_QUADS") && atoi(getenv("SF_DUMP_QUADS")) == frame) {
         /* debugging: each quad of the frame, its batch's texture and the

@@ -42,4 +42,9 @@ void sf_render_set_filter(SfRenderer *renderer, int filter);
  * rgba at it and returns 0. -1 when there is none. */
 int sf_render_read_screen(SfRenderer *renderer, const uint8_t **rgba, int *w, int *h);
 
+/* The renderer is used from one thread at a time: this makes the calling
+ * thread the one (1) or lets it go (0), for OpenGL, whose context is
+ * current on one thread; Vulkan needs nothing. */
+void sf_render_make_current(SfRenderer *renderer, int current);
+
 #endif
