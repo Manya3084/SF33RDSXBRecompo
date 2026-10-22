@@ -5,8 +5,10 @@
 #
 # ANDROID_HOME is the SDK (with the NDK in it), SF_DECOMP_DIR the decomp
 # checkout (default ../3s-decomp-ogxb), SF_ANDROID_WORK where the
-# libraries are built (default build-android-work). The APK is in
-# android/app/build/outputs/apk/.
+# libraries are built (default build-android-work), SF_ANDROID_SIGNING
+# the release key's properties file (storeFile, storePassword, keyAlias,
+# keyPassword; without it a release is signed with the debug key). The
+# APK is in android/app/build/outputs/apk/.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 KIND=${1:-debug}
@@ -35,5 +37,7 @@ TASK=assembleDebug
 [ "$KIND" = release ] && TASK=assembleRelease
 # clean first: an APK packed over the last one keeps the old libraries'
 # bytes as dead space
-./gradlew --no-daemon -q clean "$TASK" -PsdlJava="$WORK/src/SDL/android-project/app/src/main/java"
+SIGN=""
+[ "$KIND" = release ] && [ -n "${SF_ANDROID_SIGNING:-}" ] && SIGN="-Psigning=$SF_ANDROID_SIGNING"
+./gradlew --no-daemon -q clean "$TASK" -PsdlJava="$WORK/src/SDL/android-project/app/src/main/java" $SIGN
 ls -l app/build/outputs/apk/*/*.apk

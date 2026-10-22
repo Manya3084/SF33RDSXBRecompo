@@ -1,6 +1,6 @@
 # SF33RDSXBRecompo
 
-Native x86-64 port of Street Fighter III: 3rd Strike, built from the Xbox version, for Linux and Windows.
+Native port of Street Fighter III: 3rd Strike, built from the Xbox version, for Linux and Windows (x86-64) and Android (arm64).
 
 ![The title screen](docs/images/title.png)
 
@@ -27,7 +27,7 @@ Not done yet:
 
 ## Download
 
-The [releases](https://github.com/Manya3084/SF33RDSXBRecompo/releases) have a Windows and a Linux package. Neither has any game data: the game imports your own Xbox disc the first time it starts (see [Running](#running)).
+The [releases](https://github.com/Manya3084/SF33RDSXBRecompo/releases) have a Windows, a Linux and an Android package. None has any game data: the game imports your own Xbox disc the first time it starts (see [Running](#running)).
 
 **Windows** (64-bit Windows 10 or 11):
 
@@ -44,6 +44,14 @@ It needs a graphics driver with Vulkan or OpenGL 3.3. The DLLs it uses are in th
    - Fedora: `sudo dnf install openal-soft libarchive vulkan-loader`
    - Arch: `sudo pacman -S openal libarchive vulkan-icd-loader`
 2. Unpack `sf33rdsxb-linux-x86_64.tar.gz` and run `./sf33rdsxb` in it. SDL3 is included (`lib/`).
+
+**Android** (arm64, Android 8.0 or newer, with Vulkan):
+
+1. Download `sf33rdsxb-android-arm64.apk` on the phone and open it; allow installs from that source when Android asks.
+2. Open **3rd Strike** and tap the screen to pick your Xbox disc: an `.iso`, `.zip` or `.7z` (a folder cannot be picked on Android). The game is imported into the app's own storage (`Android/data/io.github.manya3084.sf33rdsxb/files`).
+3. Play with the on-screen controls (the d-pad left, X Y WH over A B BK right, BACK and START at the top), or a USB or Bluetooth gamepad. OPTION → SCREEN ADJUST has ORIENTATION (landscape or portrait, held whichever way the phone turns) and TOUCH PAD (the on-screen controls on or off).
+
+The game is compiled for arm64 (no emulation). If it ever stops, the next start shows why, and **Copy log** puts the log on the clipboard.
 
 ## Getting the data
 
@@ -171,6 +179,14 @@ cmake --build build-win
 `SF_WIN_SYSROOT` is a MinGW-w64 root with SDL3, OpenAL, libarchive, zlib and the Vulkan loader (the MSYS2 `mingw-w64-x86_64-*` packages, unpacked). The DLLs the exe needs go next to it.
 
 The Linux release package is built by [.github/workflows/linux.yml](.github/workflows/linux.yml) on Ubuntu 24.04.
+
+For Android (arm64), with the Android SDK and NDK r30:
+
+```
+ANDROID_HOME=/path/to/sdk SF_DECOMP_DIR=/path/to/3s-decomp-ogxb android/build.sh [debug|release]
+```
+
+It builds SDL3, OpenAL Soft, liblzma and libarchive for arm64 the first time (`android/build-deps.sh`), the game as `libmain.so` with the same CMake build, and the APK with Gradle. `SF_ANDROID_SIGNING` names a release key's properties file (kept out of the repository); without it a release is signed with the debug key. Vulkan only for now; OpenGL ES is to come.
 
 `SF_DECOMP_DIR` is a checkout of 3s-decomp-ogxb (default `../3s-decomp-ogxb`). Until it is merged, that checkout must be on its `xbox-port-data` branch. The port is 64-bit only, an ordinary position-independent program with ASLR (see [docs/porting.md](docs/porting.md#x86-64)).
 
