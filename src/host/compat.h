@@ -13,6 +13,12 @@
 #define O_BINARY 0 /* POSIX opens are binary already */
 #endif
 
+/* The importer's source: a path, or "/proc/self/fd/N" for a descriptor
+ * the program already holds (src/host/compat.c). sf_open_source gives a
+ * descriptor of its own, at the start. */
+int sf_open_source(const char *path);
+int sf_stat_source(const char *path, struct stat *st);
+
 #ifdef _WIN32
 #include <direct.h>
 #include <io.h>

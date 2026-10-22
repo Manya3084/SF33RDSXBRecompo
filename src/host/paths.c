@@ -10,8 +10,17 @@
 
 int sf_exe_dir(char *out, size_t n)
 {
+#ifdef __ANDROID__
+    /* the app's own storage (Android/data/APP/files, which a computer
+     * sees over USB), or its internal storage: the install is read-only */
+    const char *base = SDL_GetAndroidExternalStoragePath();
+    if (!base) {
+        base = SDL_GetAndroidInternalStoragePath();
+    }
+#else
     /* SDL3 owns and caches this string; it is not freed */
     const char *base = SDL_GetBasePath();
+#endif
     size_t len;
     if (!base || !out || n == 0) {
         return -1;

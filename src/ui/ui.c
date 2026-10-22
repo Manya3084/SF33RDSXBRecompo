@@ -151,11 +151,17 @@ void sf_ui_draw(SfCanvas *canvas, const SfUi *ui)
     text(canvas, 32, 28, "STREET FIGHTER III", 240, 210, 140);
     text(canvas, 32, 52, "3RD STRIKE", 240, 210, 140);
     text(canvas, 32, 100, "XBOX DATA WAS NOT FOUND.", 220, 220, 220);
+#ifdef __ANDROID__
+    text(canvas, 32, 140, "TAP TO CHOOSE THE XBOX ISO / ZIP / 7Z", 180, 190, 210);
+    text(canvas, 32, 180, "XBOX DISC ONLY. NOTHING LEAVES THIS DEVICE.", 180, 190, 210);
+    text(canvas, 32, 204, "BACK: QUIT", 180, 190, 210);
+#else
     text(canvas, 32, 140, "CLICK OR ENTER: XBOX ISO / ZIP / 7Z", 180, 190, 210);
     text(canvas, 32, 164, "F: EXTRACTED XBOX FOLDER", 180, 190, 210);
     text(canvas, 32, 188, "OR DROP THE XBOX DATA HERE", 180, 190, 210);
     text(canvas, 32, 228, "XBOX DISC ONLY. NOTHING LEAVES THIS COMPUTER.", 180, 190, 210);
     text(canvas, 32, 252, "ESC: QUIT", 180, 190, 210);
+#endif
     if (ui->status && ui->status[0]) {
         text(canvas, 32, 430, ui->status, 220, 120, 120);
     }

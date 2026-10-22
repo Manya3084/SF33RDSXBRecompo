@@ -61,6 +61,8 @@ long sf_afs_pread(void *buf, uint32_t n, uint32_t offset);
 
 /* Sound: refills the voices; once per frame. */
 void sf_sound_pump(void);
+/* The app in the background (1) or back (0): the sound device pauses. */
+void sf_sound_pause(int paused);
 /* The sound effects: retail's per-frame XACT work (src/port/se.c). */
 void sf_se_frame(void);
 void sf_se_shutdown(void);

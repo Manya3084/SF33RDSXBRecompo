@@ -24,9 +24,18 @@
 #ifdef _WIN32
 /* PE has no __start_/__stop_ section bounds: the snapshot is Linux-only
  * for now, and on Windows it is empty. */
-static char __data_start[1], _end[1];
 static char __start_sfport_data[1], __stop_sfport_data[1], __start_sfport_bss[1], __stop_sfport_bss[1];
 static char __start_sfkeep[1], __stop_sfkeep[1];
+#elif defined(__ANDROID__)
+/* Android's libc has no __data_start: the game library's writable
+ * segments are read from its program headers instead (data_ranges). */
+#include <link.h>
+extern char __start_sfport_data[];
+extern char __stop_sfport_data[];
+extern char __start_sfport_bss[];
+extern char __stop_sfport_bss[];
+extern char __start_sfkeep[];
+extern char __stop_sfkeep[];
 #else
 extern char __data_start[];
 extern char _end[];
@@ -51,6 +60,73 @@ typedef struct Region {
 static Region s_reg[REGIONS] SF_KEEP;
 static int s_reg_n SF_KEEP;
 
+/* The program's writable data, before the port's sections are cut out:
+ * on Linux .data to the end of .bss; on Android each writable segment of
+ * the game library, less what the loader makes read-only (RELRO). */
+#define BASES 4
+static uint8_t *s_base[BASES][2] SF_KEEP;
+static int s_base_n SF_KEEP;
+
+#ifdef __ANDROID__
+static int phdr_cb(struct dl_phdr_info *info, size_t size, void *data)
+{
+    uintptr_t me = (uintptr_t)data;
+    uintptr_t rlo = 0;
+    uintptr_t rhi = 0;
+    int mine = 0;
+    int i;
+    (void)size;
+    for (i = 0; i < info->dlpi_phnum; i++) {
+        const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+        uintptr_t a = info->dlpi_addr + ph->p_vaddr;
+        if (ph->p_type == PT_LOAD && me >= a && me < a + ph->p_memsz) {
+            mine = 1;
+        }
+        if (ph->p_type == PT_GNU_RELRO) {
+            rlo = a;
+            rhi = a + ph->p_memsz;
+        }
+    }
+    if (!mine) {
+        return 0;
+    }
+    s_base_n = 0;
+    for (i = 0; i < info->dlpi_phnum && s_base_n < BASES; i++) {
+        const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+        uintptr_t a = info->dlpi_addr + ph->p_vaddr;
+        uintptr_t e = a + ph->p_memsz;
+        if (ph->p_type != PT_LOAD || !(ph->p_flags & PF_W)) {
+            continue;
+        }
+        if (rhi > a && rlo <= a) {
+            a = rhi < e ? rhi : e; /* the read-only start of the segment goes */
+        }
+        if (e > a) {
+            s_base[s_base_n][0] = (uint8_t *)a;
+            s_base[s_base_n][1] = (uint8_t *)e;
+            s_base_n++;
+        }
+    }
+    return 1;
+}
+#endif
+
+static void data_ranges(void)
+{
+    if (s_base_n) {
+        return;
+    }
+#if defined(_WIN32)
+    s_base_n = 0;
+#elif defined(__ANDROID__)
+    dl_iterate_phdr(phdr_cb, (void *)&s_reg);
+#else
+    s_base[0][0] = (uint8_t *)__data_start;
+    s_base[0][1] = (uint8_t *)_end;
+    s_base_n = 1;
+#endif
+}
+
 static void add_region(uint8_t *a, uint8_t *b)
 {
     if (b > a && s_reg_n < REGIONS) {
@@ -71,23 +147,22 @@ static void regions(void)
         { (uint8_t *)__start_sfkeep, (uint8_t *)__stop_sfkeep },
     };
     int ncut = 3;
-    uint8_t *at = (uint8_t *)__data_start;
-    uint8_t *end = (uint8_t *)_end;
     uint8_t *arena;
     size_t used;
     int k;
+    int bi;
     s_reg_n = 0;
 #ifdef _WIN32
     (void)cut;
     (void)ncut;
-    (void)at;
-    (void)end;
     (void)arena;
     (void)used;
     (void)k;
+    (void)bi;
     (void)all;
     return;
 #endif
+    data_ranges();
     if (all < 0) {
         all = getenv("SF_ROLLBACK_ALL") != NULL;
     }
@@ -110,13 +185,17 @@ static void regions(void)
             }
         }
     }
-    for (k = 0; k < ncut; k++) {
-        if (cut[k][0] >= at && cut[k][1] <= end) {
-            add_region(at, cut[k][0]);
-            at = cut[k][1];
+    for (bi = 0; bi < s_base_n; bi++) {
+        uint8_t *at = s_base[bi][0];
+        uint8_t *end = s_base[bi][1];
+        for (k = 0; k < ncut; k++) {
+            if (cut[k][0] >= at && cut[k][1] <= end) {
+                add_region(at, cut[k][0]);
+                at = cut[k][1];
+            }
         }
+        add_region(at, end);
     }
-    add_region(at, end);
     {
         /* SF_ROLLBACK_EXTRA=ADDR:LEN,...: port ranges a test takes in too */
         const char *e = getenv("SF_ROLLBACK_EXTRA");

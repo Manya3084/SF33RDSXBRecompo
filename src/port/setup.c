@@ -22,6 +22,9 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_dialog.h>
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,10 +34,12 @@
 #include <windows.h>
 #endif
 
+#ifndef __ANDROID__
 static const SDL_DialogFileFilter k_filters[] = {
     { "Xbox disc or archive", "iso;zip;7z" },
     { "All files", "*" },
 };
+#endif
 
 static struct {
     SfCanvas canvas;
@@ -52,6 +57,40 @@ static struct {
     int ok;
     SfExtractResult result;
 } s;
+
+#ifdef __ANDROID__
+/* The file picker gives a content:// URI, not a path: the activity opens
+ * it (SF3Activity.openDocument) and the import reads the descriptor, as
+ * /proc/self/fd/N (src/host/compat.c). -1 when it cannot be opened. */
+static int open_document(const char *uri)
+{
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    jclass cls;
+    jmethodID m;
+    jstring s;
+    int fd = -1;
+    if (!env || !act) {
+        return -1;
+    }
+    cls = (*env)->GetObjectClass(env, act);
+    m = (*env)->GetMethodID(env, cls, "openDocument", "(Ljava/lang/String;)I");
+    s = (*env)->NewStringUTF(env, uri);
+    if (m && s) {
+        fd = (*env)->CallIntMethod(env, act, m, s);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        fd = -1;
+    }
+    (*env)->DeleteLocalRef(env, s);
+    (*env)->DeleteLocalRef(env, cls);
+    (*env)->DeleteLocalRef(env, act);
+    return fd;
+}
+
+static int s_doc_fd = -1;
+#endif
 
 static void draw(void)
 {
@@ -107,6 +146,15 @@ static void import_start(const char *install, const char *source)
     s.note[0] = 0;
     s.install = install;
     snprintf(s.source, sizeof s.source, "%s", source);
+#ifdef __ANDROID__
+    if (strncmp(source, "content://", 10) == 0) {
+        if (s_doc_fd >= 0) {
+            close(s_doc_fd);
+        }
+        s_doc_fd = open_document(source);
+        snprintf(s.source, sizeof s.source, "/proc/self/fd/%d", s_doc_fd);
+    }
+#endif
     s.ok = 0;
     memset(&s.result, 0, sizeof s.result);
     draw();
@@ -173,13 +221,19 @@ int sf_setup_run(const char *install)
                 continue;
             }
             if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE && !s.dialog_open)) {
+                (ev.type == SDL_EVENT_KEY_DOWN && (ev.key.key == SDLK_ESCAPE || ev.key.key == SDLK_AC_BACK) &&
+                 !s.dialog_open)) {
                 done = -1;
             } else if (!s.dialog_open && ((ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
                                            (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER)) ||
                                           ev.type == SDL_EVENT_MOUSE_BUTTON_UP)) {
                 s.dialog_open = 1;
+#ifdef __ANDROID__
+                /* the picker matches by type, and an .iso or .7z often has none */
+                SDL_ShowOpenFileDialog(on_file, NULL, win, NULL, 0, NULL, false);
+#else
                 SDL_ShowOpenFileDialog(on_file, NULL, win, k_filters, 2, NULL, false);
+#endif
             } else if (!s.dialog_open && ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F) {
                 s.dialog_open = 1;
                 SDL_ShowOpenFolderDialog(on_file, NULL, win, NULL, false);

@@ -17,3 +17,9 @@ config/settings.txt
 *.xpu
 *.spv
 *.xbx
+android/app/src/main/jniLibs/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+build-android-work/

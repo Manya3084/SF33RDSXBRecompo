@@ -36,6 +36,7 @@
 
 #include <AL/al.h>
 #include <AL/alc.h>
+#include <AL/alext.h>
 #include <SDL3/SDL.h>
 
 #include <math.h>
@@ -529,6 +530,24 @@ s32 xb_CreateDirectSound(const char *path)
     }
     s_ready = 1;
     return 1;
+}
+
+/* The app in the background (Android): the device stops playing until it
+ * is back. The game itself is stopped meanwhile (SDL holds its thread). */
+void sf_sound_pause(int paused)
+{
+    LPALCDEVICEPAUSESOFT pause_fn;
+    LPALCDEVICERESUMESOFT resume_fn;
+    if (!s_ready || !alcIsExtensionPresent(s_dev, "ALC_SOFT_pause_device")) {
+        return;
+    }
+    pause_fn = (LPALCDEVICEPAUSESOFT)alcGetProcAddress(s_dev, "alcDevicePauseSOFT");
+    resume_fn = (LPALCDEVICERESUMESOFT)alcGetProcAddress(s_dev, "alcDeviceResumeSOFT");
+    if (paused && pause_fn) {
+        pause_fn(s_dev);
+    } else if (!paused && resume_fn) {
+        resume_fn(s_dev);
+    }
 }
 
 /* At exit: the sources stop and the device closes. */

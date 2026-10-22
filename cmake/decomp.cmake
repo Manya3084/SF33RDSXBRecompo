@@ -169,6 +169,8 @@ set_target_properties(sf_port PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # (src/port/state.c) leaves them out.
 if(WIN32)
     find_program(SF_OBJCOPY NAMES x86_64-w64-mingw32-objcopy REQUIRED)
+elseif(ANDROID)
+    set(SF_OBJCOPY "${CMAKE_OBJCOPY}") # the NDK's llvm-objcopy
 else()
     find_program(SF_OBJCOPY NAMES objcopy REQUIRED)
 endif()
@@ -191,6 +193,17 @@ if(WIN32)
         list(APPEND _stub_win --host "${SF_WIN_SYSROOT}/lib/${_l}")
     endforeach()
 endif()
+# Android: the NDK's tools, the platform's libraries (in the NDK's sysroot,
+# for the API level built for), and the static libarchive and liblzma
+set(_stub_archives "")
+if(ANDROID)
+    set(_stub_win --arch aarch64 --no-system --nm "${CMAKE_NM}" --objdump "${CMAKE_OBJDUMP}")
+    file(GLOB _ndk_libs "${CMAKE_SYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/${ANDROID_PLATFORM_LEVEL}/*.so")
+    foreach(_l ${_ndk_libs})
+        list(APPEND _stub_win --host-so "${_l}")
+    endforeach()
+    list(APPEND _stub_archives "${SF_ANDROID_PREFIX}/lib/libarchive.a" "${SF_ANDROID_PREFIX}/lib/liblzma.a")
+endif()
 # Linux: the shared libraries the program links, where CMake found them
 # (SDL3 built into a prefix, say), as well as the system's own
 if(NOT WIN32)
@@ -208,6 +221,8 @@ endif()
 # port's own archives and the decomp's symbol lists (no Xbox build needed)
 if(WIN32)
     set(_fold_nm --nm x86_64-w64-mingw32-nm)
+elseif(ANDROID)
+    set(_fold_nm --nm "${CMAKE_NM}")
 else()
     set(_fold_nm "")
 endif()
@@ -222,28 +237,37 @@ add_custom_command(OUTPUT "${SF_DECOMP_GEN}/stubs.c"
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" ${_stub_win}
         --aliases "${SF_DECOMP_GEN}/fold.txt" "${SF_DECOMP_GEN}/stubs.c"
         $<TARGET_FILE:sf_decomp> $<TARGET_FILE:sf_port> $<TARGET_FILE:sf_gfx> $<TARGET_FILE:sf_render>
-        $<TARGET_FILE:sf_import> $<TARGET_FILE:sf_sqlite>
+        $<TARGET_FILE:sf_import> $<TARGET_FILE:sf_sqlite> ${_stub_archives}
     DEPENDS sf_decomp sf_port sf_gfx sf_render sf_import sf_sqlite "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py"
         "${SF_DECOMP_GEN}/fold.txt"
     COMMENT "Port stubs")
 
-add_executable(sf33rdsxb_game src/port/main.c src/host/paths.c "${SF_DECOMP_GEN}/stubs.c")
+if(ANDROID)
+    # libmain.so, which SDL's Android activity loads and calls SDL_main in
+    add_library(sf33rdsxb_game SHARED src/port/main.c src/host/paths.c "${SF_DECOMP_GEN}/stubs.c")
+    set_target_properties(sf33rdsxb_game PROPERTIES OUTPUT_NAME main)
+else()
+    add_executable(sf33rdsxb_game src/port/main.c src/host/paths.c "${SF_DECOMP_GEN}/stubs.c")
+    # one program: the game, which imports the disc the first time it starts
+    set_target_properties(sf33rdsxb_game PROPERTIES OUTPUT_NAME sf33rdsxb)
+endif()
 target_include_directories(sf33rdsxb_game PRIVATE src)
-# one program: the game, which imports the disc the first time it starts
-set_target_properties(sf33rdsxb_game PROPERTIES OUTPUT_NAME sf33rdsxb)
 set_target_properties(sf33rdsxb_game PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_source_files_properties("${SF_DECOMP_GEN}/stubs.c" PROPERTIES COMPILE_OPTIONS "-Wno-error;-w;-fno-builtin")
 if(WIN32)
     # A Windows program with no console.
     target_link_options(sf33rdsxb_game PRIVATE -mwindows -static-libgcc -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
     target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB)
+elseif(ANDROID)
+    target_link_options(sf33rdsxb_game PRIVATE -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
+    target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB m log)
 else()
     target_link_options(sf33rdsxb_game PRIVATE -pie -rdynamic -Wl,-Map=${CMAKE_BINARY_DIR}/sf33rdsxb_game.map)
     # the port libraries twice: the decomp calls into them, and they into it
     target_link_libraries(sf33rdsxb_game PRIVATE sf_port sf_gfx sf_decomp sf_port sf_gfx sf_render SDL3::SDL3 ZLIB::ZLIB m)
 endif()
 
-if(NOT WIN32)
+if(NOT WIN32 AND NOT ANDROID)
 add_executable(test_scene tests/test_scene.c)
 target_link_libraries(test_scene PRIVATE sf_gfx sf_render)
 add_test(NAME scene COMMAND test_scene)

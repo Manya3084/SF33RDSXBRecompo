@@ -178,7 +178,13 @@ static int has_cvs(const char *rel)
 
 static int run_convert(const char *tool, const char *src, const char *dst)
 {
-#ifdef _WIN32
+#if defined(__ANDROID__)
+    /* no Python on a phone: the shaders stay as they are */
+    (void)tool;
+    (void)src;
+    (void)dst;
+    return -1;
+#elif defined(_WIN32)
     /* Windows: python, if it is on the PATH */
     const char *argv[6];
     intptr_t rc;
@@ -947,14 +953,14 @@ static int map_one_iso(const char *name, int is_dir, char *dest, size_t dest_n, 
 
 static int is_archive_file(const char *path)
 {
-    FILE *fp = fopen(path, "rb");
+    int fd = sf_open_source(path);
     uint8_t b[8];
-    size_t n;
-    if (!fp) {
+    ssize_t n;
+    if (fd < 0) {
         return 0;
     }
-    n = fread(b, 1, sizeof b, fp);
-    fclose(fp);
+    n = read(fd, b, sizeof b);
+    close(fd);
     if (n >= 2 && b[0] == 'P' && b[1] == 'K') {
         return 1;
     }
@@ -1019,7 +1025,7 @@ static int import_any(const char *source, const char *install, const char *tool,
     struct stat st;
     char root[4096];
     int ps2 = 0;
-    if (stat(source, &st) != 0) {
+    if (sf_stat_source(source, &st) != 0) {
         sf_set_err(result->error, sizeof result->error, "cannot read %s", source);
         return -1;
     }

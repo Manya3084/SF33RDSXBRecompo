@@ -20,6 +20,10 @@ arguments pass through untouched.
 
     gen_stubs.py [--aliases FOLD.txt] OUT.c ARCHIVE...
 
+For Android (an NDK cross build), --arch aarch64 (arm64's calls, and a
+branch for an alias), --no-system and a --host-so for each of the
+platform's libraries.
+
 For Windows (a MinGW-w64 cross build), --coff with --nm and --objdump
 naming that toolchain's tools, and --host for each import library whose
 names the system gives (in place of the Linux shared libraries). COFF
@@ -51,17 +55,21 @@ def syms(path: str, dynamic: bool = False) -> tuple[set[str], set[str]]:
     return d, u
 
 
+# a call's relocation: x86-64's PLT32, arm64's CALL26 (bl) and JUMP26 (b)
+CALLS = {"R_X86_64_PLT32", "R_AARCH64_CALL26", "R_AARCH64_JUMP26"}
+
+
 def call_only(archives: list[str]) -> set[str]:
-    """Names whose every relocation is R_X86_64_PLT32."""
+    """Names whose every relocation is a call's."""
     kinds: dict[str, set[str]] = {}
     for a in archives:
         out = subprocess.run([OBJDUMP, "-r", a], capture_output=True, text=True).stdout
         for line in out.splitlines():
             p = line.split()
-            if len(p) == 3 and p[1].startswith("R_X86_64_"):
+            if len(p) == 3 and p[1].startswith(("R_X86_64_", "R_AARCH64_")):
                 n = re.split(r"[-+]0x", p[2])[0]
                 kinds.setdefault(n, set()).add(p[1])
-    return {n for n, k in kinds.items() if k == {"R_X86_64_PLT32"}}
+    return {n for n, k in kinds.items() if k <= CALLS}
 
 
 def call_only_coff(archives: list[str]) -> set[str]:
@@ -101,6 +109,8 @@ def main() -> int:
     args = sys.argv[1:]
     aliases: dict[str, str] = {}
     coff = False
+    arch = "x86_64"
+    system = True
     hosts: list[str] = []
     host_so: list[str] = []
     while args and args[0].startswith("--"):
@@ -121,6 +131,13 @@ def main() -> int:
             coff = True
             args = args[1:]
             continue
+        elif args[0] == "--no-system":
+            # a cross build: only the --host-so libraries, not this machine's
+            system = False
+            args = args[1:]
+            continue
+        elif args[0] == "--arch":
+            arch = args[1]
         args = args[2:]
     out, archives = args[0], args[1:]
     defined, undef = set(), set()
@@ -137,7 +154,7 @@ def main() -> int:
     else:
         # the libraries the build links (wherever they are installed), then
         # the system's
-        for p in host_so + [q for q in map(host_lib, HOST_LIBS) if q]:
+        for p in host_so + ([q for q in map(host_lib, HOST_LIBS) if q] if system else []):
             host |= syms(p, dynamic=True)[0]
     # names the linker itself provides: the section bounds the game-state
     # snapshot reads (src/port/state.c)
@@ -167,7 +184,8 @@ def main() -> int:
         if n in aliases:
             t = aliases[n]
             kind = "" if coff else f"\\n.type {n}, @function"
-            lines.append(f'__asm__(".text\\n.globl {n}{kind}\\n{n}:\\n    jmp {t}\\n");')
+            jump = "b" if arch == "aarch64" else "jmp"
+            lines.append(f'__asm__(".text\\n.globl {n}{kind}\\n{n}:\\n    {jump} {t}\\n");')
         elif n not in funcs:
             lines.append(f"__attribute__((aligned(16))) unsigned char {n}[65536];")
         else:

@@ -3,8 +3,12 @@
 
 #include "render/renderer.h"
 
+#ifdef SF_NO_GL
+typedef unsigned int GLuint; /* Android: Vulkan only (src/render/gl_none.c) */
+#else
 #include <GL/gl.h>
 #include <GL/glext.h> /* Mesa's gl.h includes it; MinGW's does not */
+#endif
 #include <vulkan/vulkan.h>
 
 typedef struct SfScene SfScene;

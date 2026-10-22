@@ -23,6 +23,14 @@ static uint32_t mem_index(VkPhysicalDevice physical, uint32_t bits, VkMemoryProp
     return UINT32_MAX;
 }
 
+/* On Android a sideways phone's present says suboptimal every frame (the
+ * compositor turns the image): that is kept, not rebuilt each frame. */
+#ifdef __ANDROID__
+#define SF_KEEP_SUBOPTIMAL 1
+#else
+#define SF_KEEP_SUBOPTIMAL 0
+#endif
+
 static void destroy_swapchain(SfRenderer *r)
 {
     uint32_t i;
@@ -113,6 +121,16 @@ static int make_swapchain(SfRenderer *r, char *err, size_t err_n)
     }
     if (caps.currentExtent.width != UINT32_MAX) {
         extent = caps.currentExtent;
+#ifdef __ANDROID__
+        /* a phone held sideways reports its surface turned a quarter (and
+         * its size the native way up): the images are made the way the
+         * window is, and the compositor turns them */
+        if (caps.currentTransform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)) {
+            uint32_t t = extent.width;
+            extent.width = extent.height;
+            extent.height = t;
+        }
+#endif
     } else {
         SDL_GetWindowSizeInPixels(r->window, &w, &h);
         if (w < 1) {
@@ -151,6 +169,13 @@ static int make_swapchain(SfRenderer *r, char *err, size_t err_n)
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = caps.currentTransform;
+#ifdef __ANDROID__
+    if (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
+        info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    }
+    fprintf(stderr, "video: Vulkan swapchain %ux%u, surface transform %u\n", extent.width, extent.height,
+            (unsigned)caps.currentTransform);
+#endif
     info.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
     info.presentMode = mode;
     info.clipped = VK_TRUE;
@@ -197,6 +222,30 @@ static int make_swapchain(SfRenderer *r, char *err, size_t err_n)
         }
     }
     return 0;
+}
+
+/* Android takes the window away when the app goes to the background, and
+ * the surface made from it is lost: a new one, and its swapchain, once
+ * there is a window again (until then nothing is drawn). */
+static int renew_surface(SfRenderer *r, char *err, size_t err_n)
+{
+    VkBool32 ok = VK_FALSE;
+    vkDeviceWaitIdle(r->device);
+    destroy_swapchain(r);
+    if (r->surface) {
+        vkDestroySurfaceKHR(r->instance, r->surface, NULL);
+        r->surface = VK_NULL_HANDLE;
+    }
+    if (!SDL_Vulkan_CreateSurface(r->window, r->instance, NULL, &r->surface)) {
+        r->surface = VK_NULL_HANDLE;
+        return 0;
+    }
+    vkGetPhysicalDeviceSurfaceSupportKHR(r->physical, r->family, r->surface, &ok);
+    if (!ok) {
+        sf_set_err(err, err_n, "the new Vulkan surface cannot be presented to");
+        return -1;
+    }
+    return make_swapchain(r, err, err_n);
 }
 
 static VkShaderModule make_shader(VkDevice device, const uint32_t *code, size_t size)
@@ -906,7 +955,16 @@ int sf_vk_present(SfRenderer *r, const SfCanvas *canvas, char *err, size_t err_n
         sf_set_err(err, err_n, "Vulkan fence wait failed");
         return -1;
     }
+    if (!r->swapchain && renew_surface(r, err, err_n) != 0) {
+        return -1;
+    }
+    if (!r->swapchain) {
+        return 0; /* no window to draw in (the app is in the background) */
+    }
     ar = vkAcquireNextImageKHR(r->device, r->swapchain, UINT64_MAX, r->image_ok, VK_NULL_HANDLE, &image_index);
+    if (ar == VK_ERROR_SURFACE_LOST_KHR) {
+        return renew_surface(r, err, err_n);
+    }
     if (ar == VK_ERROR_OUT_OF_DATE_KHR) {
         vkDeviceWaitIdle(r->device);
         destroy_swapchain(r);
@@ -949,7 +1007,10 @@ int sf_vk_present(SfRenderer *r, const SfCanvas *canvas, char *err, size_t err_n
     present.pSwapchains = &r->swapchain;
     present.pImageIndices = &image_index;
     ar = vkQueuePresentKHR(r->queue, &present);
-    if (ar == VK_ERROR_OUT_OF_DATE_KHR || ar == VK_SUBOPTIMAL_KHR) {
+    if (ar == VK_ERROR_SURFACE_LOST_KHR) {
+        return renew_surface(r, err, err_n);
+    }
+    if (ar == VK_ERROR_OUT_OF_DATE_KHR || (ar == VK_SUBOPTIMAL_KHR && !SF_KEEP_SUBOPTIMAL)) {
         vkDeviceWaitIdle(r->device);
         destroy_swapchain(r);
         if (make_swapchain(r, err, err_n) != 0) {
@@ -1080,7 +1141,7 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
         int w = 0;
         int h = 0;
         SDL_GetWindowSizeInPixels(r->window, &w, &h);
-        if (w > 0 && h > 0 && (w != r->sized_w || h != r->sized_h)) {
+        if (r->surface && w > 0 && h > 0 && (w != r->sized_w || h != r->sized_h)) {
             r->sized_w = w;
             r->sized_h = h;
             if ((uint32_t)w != r->extent.width || (uint32_t)h != r->extent.height) {
@@ -1092,7 +1153,16 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
             }
         }
     }
+    if (!r->swapchain && renew_surface(r, err, err_n) != 0) {
+        return -1;
+    }
+    if (!r->swapchain) {
+        return 0; /* no window to draw in (the app is in the background) */
+    }
     ar = vkAcquireNextImageKHR(r->device, r->swapchain, UINT64_MAX, r->image_ok, VK_NULL_HANDLE, &image_index);
+    if (ar == VK_ERROR_SURFACE_LOST_KHR) {
+        return renew_surface(r, err, err_n);
+    }
     if (ar == VK_ERROR_OUT_OF_DATE_KHR) {
         vkDeviceWaitIdle(r->device);
         destroy_swapchain(r);
@@ -1129,7 +1199,10 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
     present.pSwapchains = &r->swapchain;
     present.pImageIndices = &image_index;
     ar = vkQueuePresentKHR(r->queue, &present);
-    if (ar == VK_ERROR_OUT_OF_DATE_KHR || ar == VK_SUBOPTIMAL_KHR) {
+    if (ar == VK_ERROR_SURFACE_LOST_KHR) {
+        return renew_surface(r, err, err_n);
+    }
+    if (ar == VK_ERROR_OUT_OF_DATE_KHR || (ar == VK_SUBOPTIMAL_KHR && !SF_KEEP_SUBOPTIMAL)) {
         vkDeviceWaitIdle(r->device);
         destroy_swapchain(r);
         return make_swapchain(r, err, err_n);

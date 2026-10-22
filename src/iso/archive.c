@@ -1,4 +1,5 @@
 #include "iso/archive.h"
+#include "host/compat.h"
 
 #include "common.h"
 
@@ -174,16 +175,78 @@ static int mkdir_parent(const char *file, char *err, size_t err_n)
 
 #ifdef SF_HAVE_LIBARCHIVE
 
+/* The archive read through a descriptor (sf_open_source: a path, or one
+ * Android's file picker gave), which the archive closes when it is freed. */
+typedef struct Source {
+    int fd;
+    char buf[65536];
+} Source;
+
+#ifdef _WIN32
+#define src_lseek _lseeki64 /* past 2 GB */
+#else
+#define src_lseek lseek
+#endif
+
+static la_ssize_t src_read(struct archive *a, void *user, const void **buf)
+{
+    Source *s = user;
+    ssize_t n = read(s->fd, s->buf, sizeof s->buf);
+    *buf = s->buf;
+    if (n < 0) {
+        archive_set_error(a, errno, "read failed");
+        return -1;
+    }
+    return n;
+}
+
+static la_int64_t src_seek(struct archive *a, void *user, la_int64_t offset, int whence)
+{
+    Source *s = user;
+    la_int64_t at = (la_int64_t)src_lseek(s->fd, offset, whence);
+    (void)a;
+    return at < 0 ? ARCHIVE_FATAL : at;
+}
+
+static la_int64_t src_skip(struct archive *a, void *user, la_int64_t n)
+{
+    Source *s = user;
+    (void)a;
+    return src_lseek(s->fd, n, SEEK_CUR) < 0 ? 0 : n;
+}
+
+static int src_close(struct archive *a, void *user)
+{
+    Source *s = user;
+    (void)a;
+    close(s->fd);
+    free(s);
+    return ARCHIVE_OK;
+}
+
 static int open_archive(const char *archive, struct archive **out, char *err, size_t err_n)
 {
     struct archive *a = archive_read_new();
+    Source *s;
     if (!a) {
         sf_set_err(err, err_n, "out of memory");
         return -1;
     }
     archive_read_support_filter_all(a);
     archive_read_support_format_all(a);
-    if (archive_read_open_filename(a, archive, 65536) != ARCHIVE_OK) {
+    s = malloc(sizeof *s);
+    if (!s || (s->fd = sf_open_source(archive)) < 0) {
+        free(s);
+        sf_set_err(err, err_n, "cannot open %s", archive);
+        archive_read_free(a);
+        return -1;
+    }
+    archive_read_set_read_callback(a, src_read);
+    archive_read_set_seek_callback(a, src_seek);
+    archive_read_set_skip_callback(a, src_skip);
+    archive_read_set_close_callback(a, src_close);
+    archive_read_set_callback_data(a, s);
+    if (archive_read_open1(a) != ARCHIVE_OK) {
         sf_set_err(err, err_n, "cannot read archive (%s)", archive_error_string(a));
         archive_read_free(a);
         return -1;

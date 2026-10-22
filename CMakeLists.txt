@@ -11,15 +11,36 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 add_compile_options(-Wall -Wextra -Werror)
+# The same arithmetic on every target: char is signed (as on x86, not as
+# on arm64), and no multiply and add is fused into one rounding (clang
+# fuses them on arm64), so the game's floats come out the same.
+add_compile_options(-fsigned-char -ffp-contract=off)
+if(ANDROID)
+    # one .data and .bss per file (not the NDK's section per variable), so
+    # the port's can be renamed out of the game's state (cmake/decomp.cmake)
+    add_compile_options(-fno-data-sections)
+endif()
 add_compile_definitions(_GNU_SOURCE)
 
 find_package(SDL3 REQUIRED)
 find_package(OpenAL REQUIRED)
 find_package(Vulkan REQUIRED)
-find_package(OpenGL REQUIRED)
+if(NOT ANDROID)
+    find_package(OpenGL REQUIRED)
+endif()
 find_package(ZLIB REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBARCHIVE IMPORTED_TARGET libarchive)
+if(ANDROID)
+    # android/build-deps.sh's static libarchive and liblzma, in SF_ANDROID_PREFIX
+    set(SF_ANDROID_PREFIX "" CACHE PATH "android/build-deps.sh's prefix")
+    add_library(PkgConfig::LIBARCHIVE INTERFACE IMPORTED)
+    set_target_properties(PkgConfig::LIBARCHIVE PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${SF_ANDROID_PREFIX}/include"
+        INTERFACE_LINK_LIBRARIES "${SF_ANDROID_PREFIX}/lib/libarchive.a;${SF_ANDROID_PREFIX}/lib/liblzma.a;ZLIB::ZLIB")
+    set(LIBARCHIVE_FOUND TRUE)
+else()
+    pkg_check_modules(LIBARCHIVE IMPORTED_TARGET libarchive)
+endif()
 
 option(SF_USE_MIMALLOC "Use mimalloc for sf_alloc" OFF)
 
@@ -40,16 +61,25 @@ foreach(sh scene.vert scene.frag show.vert show.frag copy.frag)
     list(APPEND SF_SHADER_HEADERS "${SF_GEN}/render/${n}_spv.h")
 endforeach()
 
+if(ANDROID)
+    set(SF_GL_SOURCES src/render/gl_none.c)
+else()
+    set(SF_GL_SOURCES src/render/gl.c src/render/glscene.c)
+endif()
 add_library(sf_render STATIC
     src/render/renderer.c
     src/render/vulkan.c
-    src/render/gl.c
-    src/render/glscene.c
+    ${SF_GL_SOURCES}
     src/render/scene.c
     ${SF_SHADER_HEADERS}
 )
 target_include_directories(sf_render PUBLIC src "${SF_GEN}")
-target_link_libraries(sf_render PUBLIC SDL3::SDL3 Vulkan::Vulkan OpenGL::GL)
+target_link_libraries(sf_render PUBLIC SDL3::SDL3 Vulkan::Vulkan)
+if(ANDROID)
+    target_compile_definitions(sf_render PUBLIC SF_NO_GL)
+else()
+    target_link_libraries(sf_render PUBLIC OpenGL::GL)
+endif()
 
 add_library(sf_import STATIC
     src/iso/xdvdfs.c
@@ -67,8 +97,8 @@ endif()
 
 
 # The tests run where they are built (they spawn tools and write temp
-# trees the POSIX way); a cross build for Windows leaves them out.
-if(NOT WIN32)
+# trees the POSIX way); a cross build for Windows or Android leaves them out.
+if(NOT WIN32 AND NOT ANDROID)
 add_executable(test_import tests/test_import.c)
 target_include_directories(test_import PRIVATE src)
 target_link_libraries(test_import PRIVATE sf_import)
