@@ -62,6 +62,7 @@ int sf_net_waiting(void);
 int sf_net_resim(void);
 const char *sf_net_status(void);
 uint64_t sf_afs_identity(void);
+int sf_retail_image_ok(void); /* src/port/retail.c */
 void sf_video_wait_frame(void);
 void sf_frame(void);
 void sf_arena_free(void *p);

@@ -134,6 +134,13 @@ int sf_data_ready(const char *install_dir)
     if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
         return 0;
     }
+    /* the retail image (from 1.2): the tables the game reads past their
+     * ends read it, so every machine plays the same game; an import from
+     * before it is made again */
+    if (sf_join(path, sizeof path, install_dir, "data/xbe/image.bin") != 0 || stat(path, &st) != 0 ||
+        st.st_size <= 0) {
+        return 0;
+    }
     return sf_sound_banks_ready(install_dir);
 }
 

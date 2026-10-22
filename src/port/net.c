@@ -475,6 +475,10 @@ int sf_net_host(int port)
     memset(&s_n, 0, sizeof s_n);
     s_n.s = SOCK_NONE;
     env_tests();
+    if (!sf_retail_image_ok()) {
+        say("Import the disc again first.");
+        return -1;
+    }
     if (sock_open(port) != 0) {
         say("port %d could not be opened", port);
         return -1;
@@ -534,6 +538,10 @@ int sf_net_join(const char *address)
     memset(&s_n, 0, sizeof s_n);
     s_n.s = SOCK_NONE;
     env_tests();
+    if (!sf_retail_image_ok()) {
+        say("Import the disc again first.");
+        return -1;
+    }
     if (sock_open(0) != 0 || resolve(address, SF_NET_PORT) != 0) {
         say("%s could not be found", address);
         if (s_n.s != SOCK_NONE) {
