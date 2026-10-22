@@ -20,6 +20,7 @@
 #include <unwind.h>
 #endif
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -190,7 +191,9 @@ static void read_system_log(void)
     FILE *f = popen("logcat -d -v brief -t 800 '*:W' 2>/dev/null", "r");
     char line[512];
     size_t at = strlen(s_report_full);
-    int fatal = 0;
+    static char fatal[3][512]; /* the newest three */
+    int nf = 0;
+    int k;
     if (!f) {
         return;
     }
@@ -202,14 +205,20 @@ static void read_system_log(void)
                 at = sizeof s_report_full - 1;
             }
         }
-        if (fatal < 6 && (strncmp(line, "F/", 2) == 0 || strstr(line, "FORTIFY") || strstr(line, "fdsan") ||
-                          strstr(line, "Abort message") || strstr(line, "terminating"))) {
+        if (strncmp(line, "F/", 2) == 0 || strstr(line, "FORTIFY") || strstr(line, "fdsan") ||
+            strstr(line, "Abort message") || strstr(line, "terminating")) {
             line[strcspn(line, "\n")] = 0;
-            report_add(line);
-            fatal++;
+            if (nf == 3) {
+                memmove(fatal[0], fatal[1], sizeof fatal - sizeof fatal[0]);
+                nf--;
+            }
+            snprintf(fatal[nf++], sizeof fatal[0], "%s", line);
         }
     }
     pclose(f);
+    for (k = nf - 1; k >= 0; k--) {
+        report_add(fatal[k]);
+    }
 }
 
 static void run_report_begin(void)

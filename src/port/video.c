@@ -167,8 +167,7 @@ static void rt_copy(const SfDrawList *l)
                 free(d->rgba);
                 d->rgba = malloc(n);
                 if (!d->rgba) {
-                    fprintf(stderr, "video: no memory for a %dx%d texture\n", t->w, t->h);
-                    exit(1);
+                    sf_fatal("video: no memory for a %dx%d texture", t->w, t->h);
                 }
             }
             memcpy(d->rgba, t->rgba, n);
@@ -192,8 +191,7 @@ static void rt_copy(const SfDrawList *l)
         o->b = realloc(o->b, (size_t)o->b_cap * sizeof *o->b);
     }
     if ((l->v_n && !o->v) || (l->b_n && !o->b)) {
-        fprintf(stderr, "video: no memory for the frame\n");
-        exit(1);
+        sf_fatal("video: no memory for the frame");
     }
     if (l->v_n) {
         memcpy(o->v, l->v, (size_t)l->v_n * sizeof *o->v);
@@ -271,12 +269,10 @@ static void open_gl(int w)
     s_window = SDL_CreateWindow("Street Fighter III: 3rd Strike", w * 2, 480 * 2,
                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_OPENGL);
     if (!s_window) {
-        fprintf(stderr, "video: window: %s\n", SDL_GetError());
-        exit(1);
+        sf_fatal("video: window: %s", SDL_GetError());
     }
     if (sf_render_create(&s_renderer, s_window, SF_RENDER_OPENGL, err, sizeof err) != 0) {
-        fprintf(stderr, "video: OpenGL: %s\n", err);
-        exit(1);
+        sf_fatal("video: OpenGL: %s", err);
     }
     fprintf(stderr, "video: OpenGL\n");
 }
@@ -295,8 +291,7 @@ void sf_video_init(int w, int h)
     if (getenv("SF_HEADLESS")) {
         /* tests: nothing on the desktop, the screen only read back */
         if (sf_render_create_headless(&s_renderer, err, sizeof err) != 0) {
-            fprintf(stderr, "video: headless Vulkan: %s\n", err);
-            exit(1);
+            sf_fatal("video: headless Vulkan: %s", err);
         }
         sf_gfx_init();
         sf_display_init();
@@ -447,8 +442,7 @@ void sf_video_present(void)
         /* the frame before is drawn; this one goes to the render thread */
         rt_idle();
         if (s_rt.failed) {
-            fprintf(stderr, "video: %s\n", s_rt.err);
-            exit(1);
+            sf_fatal("video: %s", s_rt.err);
         }
         rt_copy(sf_gfx_list());
         s_rt.filter = sf_save_screen_filter();
@@ -459,8 +453,7 @@ void sf_video_present(void)
     } else {
         sf_render_set_filter(s_renderer, sf_save_screen_filter());
         if (sf_render_present_list(s_renderer, sf_gfx_list(), err, sizeof err) != 0) {
-            fprintf(stderr, "video: %s\n", err);
-            exit(1);
+            sf_fatal("video: %s", err);
         }
     }
     if (getenv("SF_DUMP_QUADS") && atoi(getenv("SF_DUMP_QUADS")) == frame) {

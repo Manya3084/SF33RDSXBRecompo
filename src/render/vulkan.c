@@ -173,15 +173,41 @@ static int make_swapchain(SfRenderer *r, char *err, size_t err_n)
     if (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
         info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     }
-    fprintf(stderr, "video: Vulkan swapchain %ux%u, surface transform %u\n", extent.width, extent.height,
-            (unsigned)caps.currentTransform);
+    fprintf(stderr,
+            "video: Vulkan swapchain %ux%u; surface %ux%u (allowed %ux%u to %ux%u), transform %u (supported 0x%x)\n",
+            extent.width, extent.height, caps.currentExtent.width, caps.currentExtent.height, caps.minImageExtent.width,
+            caps.minImageExtent.height, caps.maxImageExtent.width, caps.maxImageExtent.height,
+            (unsigned)caps.currentTransform, (unsigned)caps.supportedTransforms);
 #endif
     info.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
     info.presentMode = mode;
     info.clipped = VK_TRUE;
     if (vkCreateSwapchainKHR(r->device, &info, NULL, &r->swapchain) != VK_SUCCESS) {
-        sf_set_err(err, err_n, "Vulkan swapchain failed");
-        return -1;
+        /* the size the surface allows, as it gives it, and the transform it
+         * has: a driver that does not take the size turned a quarter */
+        VkResult vr;
+        extent = caps.currentExtent.width != UINT32_MAX ? caps.currentExtent : extent;
+        if (extent.width < caps.minImageExtent.width) {
+            extent.width = caps.minImageExtent.width;
+        }
+        if (extent.height < caps.minImageExtent.height) {
+            extent.height = caps.minImageExtent.height;
+        }
+        if (caps.maxImageExtent.width && extent.width > caps.maxImageExtent.width) {
+            extent.width = caps.maxImageExtent.width;
+        }
+        if (caps.maxImageExtent.height && extent.height > caps.maxImageExtent.height) {
+            extent.height = caps.maxImageExtent.height;
+        }
+        info.imageExtent = extent;
+        info.preTransform = caps.currentTransform;
+        vr = vkCreateSwapchainKHR(r->device, &info, NULL, &r->swapchain);
+        fprintf(stderr, "video: Vulkan swapchain again at %ux%u, transform %u: %d\n", extent.width, extent.height,
+                (unsigned)caps.currentTransform, (int)vr);
+        if (vr != VK_SUCCESS) {
+            sf_set_err(err, err_n, "Vulkan swapchain failed (%d)", (int)vr);
+            return -1;
+        }
     }
     r->format = chosen;
     r->extent = extent;

@@ -12,6 +12,9 @@
 
 #include "types.h"
 #include "structs.h"
+#include <SDL3/SDL.h>
+#include <stdarg.h>
+#include <unistd.h>
 
 /* Types as the defining files have them. */
 extern MPP mpp_w;
@@ -167,4 +170,25 @@ void sf_game_frame(void)
     sf_se_frame();
     sf_sound_pump();
     sf_state_test_frame();
+}
+
+/* A stop on an error (port.h). */
+void sf_fatal(const char *fmt, ...)
+{
+    char msg[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "%s\n", msg);
+    fflush(stderr);
+    if (!getenv("SF_HEADLESS") && SDL_WasInit(SDL_INIT_VIDEO)) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "3rd Strike stopped", msg, NULL);
+    }
+#ifdef __ANDROID__
+    usleep(200000); /* the log pump's last line */
+    _exit(1);
+#else
+    exit(1);
+#endif
 }

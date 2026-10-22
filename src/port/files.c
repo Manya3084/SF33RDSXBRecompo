@@ -93,11 +93,7 @@ void xb_ShowDiskReadError(void)
 {
     static const char msg[] = "The game data cannot be read (data/afs/SF33RDXB.AFS next to the program).\n"
                               "Delete the data folder and start the game again to import the Xbox disc.";
-    fprintf(stderr, "files: %s\n", msg);
-    if (!getenv("SF_HEADLESS")) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Street Fighter III: 3rd Strike", msg, sf_video_window());
-    }
-    exit(1);
+    sf_fatal("files: %s", msg);
 }
 
 s32 ADXF_GetPtStat(s32 ptid)

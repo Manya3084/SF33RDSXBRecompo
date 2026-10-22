@@ -11,6 +11,12 @@
 /* Reports a call to a name that has no shim yet, once per name. */
 void sf_port_missing(const char *name);
 
+/* A stop on an error: the message to stderr and, with a window, in a
+ * dialog, then the program ends (src/port/main.c). On Android it ends
+ * without running the libraries' exit handlers: OpenAL's mixer thread
+ * would lock the mutexes they destroy, and Android aborts on that. */
+void sf_fatal(const char *fmt, ...);
+
 /* The game frame running, for messages. */
 extern int sf_port_frame;
 
