@@ -18,6 +18,7 @@ Working:
 - the keyboard and SDL3 gamepads, with retail's join-by-Start, and a keyboard page in BUTTON CONFIG for rebinding the keys
 - windowed, borderless or fullscreen, the resolution, the aspect ratio and the picture filter, set in SCREEN ADJUST, paced to 60 frames a second; the 448-line game area fills the window's height
 - Vulkan, or OpenGL 3.3 when Vulkan is missing (`SF_RENDERER=opengl` picks it)
+- the game at a locked 60 on one thread, with the drawing on a render thread and the disc reads and sound decoding on worker threads ([docs/porting.md](docs/porting.md#threads))
 - EXIT GAME in the mode menu (retail's SELECT GAME), which quits cleanly
 
 Not done yet:
