@@ -89,6 +89,7 @@ static void on_crash(int sig)
 #endif
 #ifdef __ANDROID__
     if (s_log_fd >= 0) {
+        /* stderr's pipe may not reach the file before the process ends */
         (void)!write(s_log_fd, head, (size_t)len);
         android_backtrace(s_log_fd);
         fsync(s_log_fd);
@@ -195,7 +196,47 @@ static void run_report_begin(void)
         close(fd);
         crash = strstr(s_report_full, "crash: ");
         if (crash) {
-            snprintf(s_report, sizeof s_report, "%s", crash);
+            /* the lines just before the crash (a message saying why), the
+             * crash, and its stack less the reporter's own frames */
+            static char work[sizeof s_report_full];
+            char *save = NULL;
+            char *before[4];
+            int nb = 0;
+            int frames = 0;
+            int seen = 0;
+            memcpy(work, s_report_full, sizeof work);
+            s_report[0] = 0;
+            for (p = strtok_r(work, "\n", &save); p; p = strtok_r(NULL, "\n", &save)) {
+                size_t at = strlen(s_report);
+                if (!seen && strncmp(p, "crash: ", 7) != 0) {
+                    if (strstr(p, "no shim")) {
+                        continue;
+                    }
+                    if (nb == 4) {
+                        memmove(before, before + 1, sizeof before - sizeof before[0]);
+                        nb--;
+                    }
+                    before[nb++] = p;
+                    continue;
+                }
+                if (!seen) {
+                    int k;
+                    seen = 1;
+                    for (k = 0; k < nb; k++) {
+                        at = strlen(s_report);
+                        snprintf(s_report + at, sizeof s_report - at, "%s\n", before[k]);
+                    }
+                    at = strlen(s_report);
+                    snprintf(s_report + at, sizeof s_report - at, "%s\n", p);
+                    continue;
+                }
+                if (strncmp(p, "  #", 3) != 0 || strstr(p, "android_backtrace") || strstr(p, "on_crash") ||
+                    strstr(p, "sigreturn") || strstr(p, "(abort+") || strstr(p, "raise+") || frames >= 14) {
+                    continue;
+                }
+                frames++;
+                snprintf(s_report + at, sizeof s_report - at, "%s\n", p);
+            }
         } else {
             static char work[sizeof s_report_full];
             memcpy(work, s_report_full, sizeof work);
@@ -224,8 +265,8 @@ static void run_report_begin(void)
     }
 }
 
-/* SF3Activity.shareText: Android's share sheet, with the text. */
-static void share_text(const char *text)
+/* SF3Activity.copyText: the text on the clipboard, to paste anywhere. */
+static void copy_text(const char *text)
 {
     JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
     jobject act = (jobject)SDL_GetAndroidActivity();
@@ -236,7 +277,7 @@ static void share_text(const char *text)
         return;
     }
     cls = (*env)->GetObjectClass(env, act);
-    m = (*env)->GetMethodID(env, cls, "shareText", "(Ljava/lang/String;)V");
+    m = (*env)->GetMethodID(env, cls, "copyText", "(Ljava/lang/String;)V");
     s = (*env)->NewStringUTF(env, text);
     if (m && s) {
         (*env)->CallVoidMethod(env, act, m, s);
@@ -262,15 +303,15 @@ static void run_report_show(void)
     buttons[0].buttonID = 0;
     buttons[0].text = "OK";
     buttons[1].buttonID = 1;
-    buttons[1].text = "Share log";
+    buttons[1].text = "Copy log";
     memset(&box, 0, sizeof box);
     box.flags = SDL_MESSAGEBOX_WARNING;
-    box.title = "The last run stopped (newest first)";
+    box.title = "The last run stopped";
     box.message = s_report;
     box.numbuttons = 2;
     box.buttons = buttons;
     if (SDL_ShowMessageBox(&box, &pressed) && pressed == 1) {
-        share_text(s_report_full);
+        copy_text(s_report_full);
     }
 }
 

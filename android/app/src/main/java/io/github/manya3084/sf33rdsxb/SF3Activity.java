@@ -1,6 +1,7 @@
 package io.github.manya3084.sf33rdsxb;
 
-import android.content.Intent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 
@@ -14,13 +15,19 @@ public class SF3Activity extends SDLActivity {
         return new String[] { "SDL3", "openal", "main" };
     }
 
-    /* The last run's log, to send wherever the player likes (src/port/main.c). */
-    public void shareText(String text) {
-        Intent send = new Intent(Intent.ACTION_SEND);
-        send.setType("text/plain");
-        send.putExtra(Intent.EXTRA_SUBJECT, "3rd Strike log");
-        send.putExtra(Intent.EXTRA_TEXT, text);
-        startActivity(Intent.createChooser(send, "Share the log"));
+    /* The last run's log on the clipboard, to paste into a message
+     * (src/port/main.c). Called from the game's thread: the clipboard is
+     * the UI thread's. */
+    public void copyText(final String text) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                ClipboardManager clip = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (clip != null) {
+                    clip.setPrimaryClip(ClipData.newPlainText("3rd Strike log", text));
+                }
+            }
+        });
     }
 
     /* The file picker's document as a descriptor the game reads the disc
