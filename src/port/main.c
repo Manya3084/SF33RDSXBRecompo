@@ -170,6 +170,31 @@ static void *log_pump(void *arg)
 static char s_report[3072];
 static char s_report_full[65536];
 
+/* data/run.marker holds the running process's id while it runs in the
+ * foreground; going to the background, where Android may end it, or a
+ * clean quit takes it away. */
+static char s_marker[4200];
+static int s_prev_pid;
+static int s_fatal_seen; /* the system log has a fatal line of that run */
+
+static void run_report_mark(int on)
+{
+    if (!s_marker[0]) {
+        return;
+    }
+    if (on) {
+        int fd = open(s_marker, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) {
+            char pid[32];
+            int n = snprintf(pid, sizeof pid, "%d", (int)getpid());
+            (void)!write(fd, pid, (size_t)n);
+            close(fd);
+        }
+    } else {
+        unlink(s_marker);
+    }
+}
+
 /* A line of the report: the stack's frames less the reporter's own. */
 static int keep_frame(const char *p)
 {
@@ -205,14 +230,18 @@ static void read_system_log(void)
                 at = sizeof s_report_full - 1;
             }
         }
-        if (strncmp(line, "F/", 2) == 0 || strstr(line, "FORTIFY") || strstr(line, "fdsan") ||
-            strstr(line, "Abort message") || strstr(line, "terminating")) {
+        char tag[32];
+        snprintf(tag, sizeof tag, "(%5d)", s_prev_pid);
+        if (s_prev_pid && strstr(line, tag) &&
+            (strncmp(line, "F/", 2) == 0 || strstr(line, "FORTIFY") || strstr(line, "fdsan") ||
+             strstr(line, "Abort message") || strstr(line, "terminating"))) {
             line[strcspn(line, "\n")] = 0;
             if (nf == 3) {
                 memmove(fatal[0], fatal[1], sizeof fatal - sizeof fatal[0]);
                 nf--;
             }
             snprintf(fatal[nf++], sizeof fatal[0], "%s", line);
+            s_fatal_seen = 1;
         }
     }
     pclose(f);
@@ -237,7 +266,16 @@ static void run_report_begin(void)
     snprintf(path, sizeof path, "%s/data/last_run.log", base);
     snprintf(prev, sizeof prev, "%s/data/prev_run.log", base);
     snprintf(marker, sizeof marker, "%s/data/run.marker", base);
-    stopped = access(marker, F_OK) == 0;
+    stopped = 0;
+    s_prev_pid = 0;
+    if ((fd = open(marker, O_RDONLY)) >= 0) {
+        char pid[32];
+        ssize_t n = read(fd, pid, sizeof pid - 1);
+        close(fd);
+        pid[n > 0 ? n : 0] = 0;
+        s_prev_pid = atoi(pid);
+        stopped = 1;
+    }
     /* the last run's log moves aside before this run's starts */
     rename(path, prev);
     if (stopped && (fd = open(prev, O_RDONLY)) >= 0) {
@@ -294,15 +332,15 @@ static void run_report_begin(void)
                 report_add(lines[--ln]);
             }
         }
-        if (!s_report[0]) {
-            snprintf(s_report, sizeof s_report, "(nothing was logged)");
+        if (!crash && !strstr(s_report_full, "stopped: ") && !s_fatal_seen) {
+            /* it was closed, or ended by Android in the background: no stop */
+            s_report[0] = 0;
+            s_report_full[0] = 0;
         }
     }
     s_log_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644);
-    fd = open(marker, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd >= 0) {
-        close(fd);
-    }
+    snprintf(s_marker, sizeof s_marker, "%s", marker);
+    run_report_mark(1);
 }
 
 /* SF3Activity.copyText: the text on the clipboard, to paste anywhere. */
@@ -355,16 +393,6 @@ static void run_report_show(void)
     }
 }
 
-/* A clean end: no report next time. */
-static void run_report_end(void)
-{
-    char base[4096];
-    char marker[4200];
-    if (sf_exe_dir(base, sizeof base) == 0) {
-        snprintf(marker, sizeof marker, "%s/data/run.marker", base);
-        unlink(marker);
-    }
-}
 
 static void log_to_logcat(void)
 {
@@ -401,6 +429,10 @@ int main(int argc, char **argv)
         /* a test of the OpenGL screen: nothing on the desktop */
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
     }
+#ifdef __ANDROID__
+    /* landscape only, either way round: SDL would let a resizable window turn */
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -417,8 +449,14 @@ int main(int argc, char **argv)
                 sf_port_quit();
             } else if (ev.type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
                 sf_sound_pause(1); /* Android: SDL holds this thread until the app is back */
+#ifdef __ANDROID__
+                run_report_mark(0); /* Android may end it there: not a stop */
+#endif
             } else if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
                 sf_sound_pause(0);
+#ifdef __ANDROID__
+                run_report_mark(1);
+#endif
             }
         }
         if (!sf_port_quitting()) {
@@ -430,7 +468,7 @@ int main(int argc, char **argv)
     sf_video_shutdown();
     sf_jobs_shutdown();
 #ifdef __ANDROID__
-    run_report_end();
+    run_report_mark(0);
 #endif
     SDL_Quit();
     return 0;

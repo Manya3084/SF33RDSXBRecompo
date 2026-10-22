@@ -180,7 +180,7 @@ void sf_fatal(const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "%s\n", msg);
+    fprintf(stderr, "stopped: %s\n", msg);
     fflush(stderr);
     if (!getenv("SF_HEADLESS") && SDL_WasInit(SDL_INIT_VIDEO)) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "3rd Strike stopped", msg, NULL);
