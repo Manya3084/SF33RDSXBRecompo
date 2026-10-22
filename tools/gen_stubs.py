@@ -7,7 +7,11 @@ library (libc, libm, zlib, SDL3) exports, and writes one definition per
 name:
 
   a function   reports the call once (sf_port_missing) and returns 0
-  data         a zeroed, 16-byte aligned block of 64 KiB
+  data         a zeroed, 16-byte aligned block of 64 KiB, or of twice
+               the retail global's size where that is larger (--sizes: the
+               decomp's config/sf33rd/symbols/data.txt): the game writes
+               a buffer's whole length, and a short block let it run on
+               into the next one
 
 A name is a function when every relocation against it is a call
 (R_X86_64_PLT32 or PC32 from a call instruction is what gcc emits); any
@@ -113,6 +117,7 @@ def main() -> int:
     system = True
     hosts: list[str] = []
     host_so: list[str] = []
+    sizes: dict[str, int] = {}
     while args and args[0].startswith("--"):
         if args[0] == "--aliases":
             for line in open(args[1]):
@@ -127,6 +132,11 @@ def main() -> int:
             hosts.append(args[1])
         elif args[0] == "--host-so":
             host_so.append(args[1])
+        elif args[0] == "--sizes":
+            for line in open(args[1]):
+                m = re.match(r"\s*(\w+)\s*=\s*0x[0-9A-Fa-f]+;.*size:0x([0-9A-Fa-f]+)", line)
+                if m:
+                    sizes[m[1]] = int(m[2], 16)
         elif args[0] == "--coff":
             coff = True
             args = args[1:]
@@ -187,7 +197,11 @@ def main() -> int:
             jump = "b" if arch == "aarch64" else "jmp"
             lines.append(f'__asm__(".text\\n.globl {n}{kind}\\n{n}:\\n    {jump} {t}\\n");')
         elif n not in funcs:
-            lines.append(f"__attribute__((aligned(16))) unsigned char {n}[65536];")
+            # twice the retail size: a global that holds addresses (the
+            # effect pool, frw, is uintptr_t rows) takes twice the bytes
+            # on a 64-bit target
+            size = max(65536, (2 * sizes.get(n, 0) + 15) & ~15)
+            lines.append(f"__attribute__((aligned(16))) unsigned char {n}[{size}];")
         else:
             lines.append(f"long {n}(void) {{ sf_port_missing(\"{n}\"); return 0; }}")
     open(out, "w").write("\n".join(lines) + "\n")

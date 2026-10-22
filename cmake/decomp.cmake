@@ -235,10 +235,12 @@ add_custom_command(OUTPUT "${SF_DECOMP_GEN}/fold.txt"
 
 add_custom_command(OUTPUT "${SF_DECOMP_GEN}/stubs.c"
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py" ${_stub_win}
-        --aliases "${SF_DECOMP_GEN}/fold.txt" "${SF_DECOMP_GEN}/stubs.c"
+        --aliases "${SF_DECOMP_GEN}/fold.txt" --sizes "${SF_DECOMP_DIR}/config/sf33rd/symbols/data.txt"
+        "${SF_DECOMP_GEN}/stubs.c"
         $<TARGET_FILE:sf_decomp> $<TARGET_FILE:sf_port> $<TARGET_FILE:sf_gfx> $<TARGET_FILE:sf_render>
         $<TARGET_FILE:sf_import> $<TARGET_FILE:sf_sqlite> ${_stub_archives}
     DEPENDS sf_decomp sf_port sf_gfx sf_render sf_import sf_sqlite "${CMAKE_SOURCE_DIR}/tools/gen_stubs.py"
+        "${SF_DECOMP_DIR}/config/sf33rd/symbols/data.txt"
         "${SF_DECOMP_GEN}/fold.txt"
     COMMENT "Port stubs")
 

@@ -1,5 +1,6 @@
 package io.github.manya3084.sf33rdsxb;
 
+import android.content.Intent;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 
@@ -11,6 +12,15 @@ public class SF3Activity extends SDLActivity {
     @Override
     protected String[] getLibraries() {
         return new String[] { "SDL3", "openal", "main" };
+    }
+
+    /* The last run's log, to send wherever the player likes (src/port/main.c). */
+    public void shareText(String text) {
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_SUBJECT, "3rd Strike log");
+        send.putExtra(Intent.EXTRA_TEXT, text);
+        startActivity(Intent.createChooser(send, "Share the log"));
     }
 
     /* The file picker's document as a descriptor the game reads the disc

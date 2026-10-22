@@ -14,6 +14,7 @@
 #include <SDL3/SDL_main.h> /* SDL's activity calls SDL_main */
 #include <android/log.h>
 #include <dlfcn.h>
+#include <jni.h>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <unwind.h>
@@ -163,6 +164,7 @@ static void *log_pump(void *arg)
  * stop on an error) is shown, from the end of its log, when the game
  * next starts. data/run.marker is there while a run is. */
 static char s_report[3072];
+static char s_report_full[65536];
 
 static void run_report_begin(void)
 {
@@ -178,14 +180,39 @@ static void run_report_begin(void)
     snprintf(path, sizeof path, "%s/data/last_run.log", base);
     snprintf(marker, sizeof marker, "%s/data/run.marker", base);
     if (access(marker, F_OK) == 0 && (fd = open(path, O_RDONLY)) >= 0) {
-        /* the end of the last run's log */
+        /* the last run's log (its end, if it is long) to share, and for the
+         * dialog its last lines, newest first, a crash's own lines first */
         off_t end = lseek(fd, 0, SEEK_END);
-        off_t from = end > (off_t)sizeof s_report - 1 ? end - (off_t)sizeof s_report + 1 : 0;
+        off_t from = end > (off_t)sizeof s_report_full - 1 ? end - (off_t)sizeof s_report_full + 1 : 0;
         ssize_t n;
+        char *crash;
+        char *lines[16];
+        int ln = 0;
+        char *p;
         lseek(fd, from, SEEK_SET);
-        n = read(fd, s_report, sizeof s_report - 1);
-        s_report[n > 0 ? n : 0] = 0;
+        n = read(fd, s_report_full, sizeof s_report_full - 1);
+        s_report_full[n > 0 ? n : 0] = 0;
         close(fd);
+        crash = strstr(s_report_full, "crash: ");
+        if (crash) {
+            snprintf(s_report, sizeof s_report, "%s", crash);
+        } else {
+            static char work[sizeof s_report_full];
+            memcpy(work, s_report_full, sizeof work);
+            char *save = NULL;
+            for (p = strtok_r(work, "\n", &save); p; p = strtok_r(NULL, "\n", &save)) {
+                if (ln == 16) {
+                    memmove(lines, lines + 1, sizeof lines - sizeof lines[0]);
+                    ln--;
+                }
+                lines[ln++] = p;
+            }
+            s_report[0] = 0;
+            while (ln > 0) {
+                size_t at = strlen(s_report);
+                snprintf(s_report + at, sizeof s_report - at, "%s\n", lines[--ln]);
+            }
+        }
         if (!s_report[0]) {
             snprintf(s_report, sizeof s_report, "(the log was empty)");
         }
@@ -197,10 +224,53 @@ static void run_report_begin(void)
     }
 }
 
+/* SF3Activity.shareText: Android's share sheet, with the text. */
+static void share_text(const char *text)
+{
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    jclass cls;
+    jmethodID m;
+    jstring s;
+    if (!env || !act) {
+        return;
+    }
+    cls = (*env)->GetObjectClass(env, act);
+    m = (*env)->GetMethodID(env, cls, "shareText", "(Ljava/lang/String;)V");
+    s = (*env)->NewStringUTF(env, text);
+    if (m && s) {
+        (*env)->CallVoidMethod(env, act, m, s);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+    (*env)->DeleteLocalRef(env, s);
+    (*env)->DeleteLocalRef(env, cls);
+    (*env)->DeleteLocalRef(env, act);
+}
+
 static void run_report_show(void)
 {
-    if (s_report[0]) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "The last run stopped", s_report, NULL);
+    SDL_MessageBoxButtonData buttons[2];
+    SDL_MessageBoxData box;
+    int pressed = 0;
+    if (!s_report[0]) {
+        return;
+    }
+    memset(buttons, 0, sizeof buttons);
+    buttons[0].flags = SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT;
+    buttons[0].buttonID = 0;
+    buttons[0].text = "OK";
+    buttons[1].buttonID = 1;
+    buttons[1].text = "Share log";
+    memset(&box, 0, sizeof box);
+    box.flags = SDL_MESSAGEBOX_WARNING;
+    box.title = "The last run stopped (newest first)";
+    box.message = s_report;
+    box.numbuttons = 2;
+    box.buttons = buttons;
+    if (SDL_ShowMessageBox(&box, &pressed) && pressed == 1) {
+        share_text(s_report_full);
     }
 }
 
