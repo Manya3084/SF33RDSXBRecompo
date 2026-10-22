@@ -3,7 +3,9 @@
  * picked with a click or Enter, F for a folder, or dropped on the window),
  * imports it into data/ next to the program (src/iso/extract.c: the
  * archive, the opening theme, the fonts and the 21 sound banks out of
- * sf33rd.xbe), and the game then starts in the same window.
+ * sf33rd.xbe), and the game then starts in the same window. The import
+ * runs on a worker thread (src/port/jobs.c), so the window keeps drawing
+ * and answering the system while it reads.
  *
  * The command line can do the same: --extract SOURCE --data DIR, and
  * --sound-banks sf33rd.xbe --data DIR for data imported before the sound
@@ -14,6 +16,7 @@
 #include "iso/archive.h"
 #include "iso/extract.h"
 #include "iso/xbe.h"
+#include "port/jobs.h"
 #include "port/port.h"
 #include "ui/ui.h"
 
@@ -42,11 +45,23 @@ static struct {
     char chosen[4096];
     int chosen_ready;
     int dialog_open;
+    /* the import on a worker */
+    SfJob job;
+    const char *install;
+    char source[4096];
+    int ok;
+    SfExtractResult result;
 } s;
 
 static void draw(void)
 {
+    if (s.lock) {
+        SDL_LockMutex(s.lock); /* the status, which the import writes */
+    }
     sf_ui_draw(&s.canvas, &s.ui);
+    if (s.lock) {
+        SDL_UnlockMutex(s.lock);
+    }
     sf_video_present_canvas(&s.canvas);
 }
 
@@ -69,21 +84,52 @@ static void progress(const char *path, void *user)
     const char *base = path ? strrchr(path, '/') : NULL;
     (void)user;
     base = base ? base + 1 : path;
+    SDL_LockMutex(s.lock);
     snprintf(s.status, sizeof s.status, "READING %s", base ? base : "");
-    draw();
-    SDL_PumpEvents();
+    SDL_UnlockMutex(s.lock);
+    if (sf_jobs_workers() == 0) {
+        /* no worker: the import runs here, and the window is kept up */
+        draw();
+        SDL_PumpEvents();
+    }
 }
 
-static int import(const char *install, const char *source)
+static void import_run(void *unused)
 {
-    SfExtractResult result;
+    (void)unused;
+    s.ok = sf_extract(s.source, s.install, NULL, progress, NULL, &s.result) == 0 && sf_data_ready(s.install);
+}
+
+/* Starts the import; 1 while it runs. */
+static void import_start(const char *install, const char *source)
+{
     snprintf(s.status, sizeof s.status, "READING XBOX DATA");
     s.note[0] = 0;
+    s.install = install;
+    snprintf(s.source, sizeof s.source, "%s", source);
+    s.ok = 0;
+    memset(&s.result, 0, sizeof s.result);
     draw();
-    if (sf_extract(source, install, NULL, progress, NULL, &result) == 0 && sf_data_ready(install)) {
+    sf_job_start(&s.job, import_run, NULL);
+    if (sf_jobs_workers() == 0) {
+        sf_job_wait(&s.job);
+    }
+}
+
+/* 1 once the import ended well, -1 once it failed, 0 while it runs. */
+static int import_poll(void)
+{
+    if (!s.job.fn || !sf_job_done(&s.job)) {
         return 0;
     }
-    snprintf(s.status, sizeof s.status, "%s", result.error[0] ? result.error : "XBOX DATA WAS NOT READ");
+    sf_job_reset(&s.job);
+    s.job.fn = NULL;
+    if (s.ok) {
+        return 1;
+    }
+    SDL_LockMutex(s.lock);
+    snprintf(s.status, sizeof s.status, "%s", s.result.error[0] ? s.result.error : "XBOX DATA WAS NOT READ");
+    SDL_UnlockMutex(s.lock);
     return -1;
 }
 
@@ -109,9 +155,23 @@ int sf_setup_run(const char *install)
             snprintf(s.note, sizeof s.note, "IMPORT THE DISC AGAIN: THE SOUND EFFECTS COME FROM SF33RD.XBE");
         }
     }
+    if (getenv("SF_SETUP_SOURCE")) {
+        /* a test: that source, as if it were dropped on the window */
+        snprintf(s.chosen, sizeof s.chosen, "%s", getenv("SF_SETUP_SOURCE"));
+        s.chosen_ready = 1;
+    }
     while (!done) {
         SDL_Event ev;
+        int busy = s.job.fn != NULL;
         while (SDL_PollEvent(&ev)) {
+            if (busy) {
+                /* importing: a quit waits for the import to end */
+                if (ev.type == SDL_EVENT_QUIT) {
+                    sf_job_wait(&s.job);
+                    done = -1;
+                }
+                continue;
+            }
             if (ev.type == SDL_EVENT_QUIT ||
                 (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE && !s.dialog_open)) {
                 done = -1;
@@ -133,23 +193,31 @@ int sf_setup_run(const char *install)
         if (done) {
             break;
         }
-        SDL_LockMutex(s.lock);
-        if (s.chosen_ready) {
-            char path[4096];
-            snprintf(path, sizeof path, "%s", s.chosen);
-            s.chosen_ready = 0;
-            SDL_UnlockMutex(s.lock);
-            if (import(install, path) == 0) {
+        if (s.job.fn) {
+            if (import_poll() > 0) {
                 done = 1;
             }
         } else {
-            SDL_UnlockMutex(s.lock);
+            SDL_LockMutex(s.lock);
+            if (s.chosen_ready) {
+                char path[4096];
+                snprintf(path, sizeof path, "%s", s.chosen);
+                s.chosen_ready = 0;
+                SDL_UnlockMutex(s.lock);
+                import_start(install, path);
+            } else {
+                SDL_UnlockMutex(s.lock);
+            }
+        }
+        if (done) {
+            break;
         }
         draw();
         SDL_Delay(16);
     }
     sf_canvas_close(&s.canvas);
     SDL_DestroyMutex(s.lock);
+    s.lock = NULL;
     return done > 0 ? 0 : -1;
 }
 
