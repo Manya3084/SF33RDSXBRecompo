@@ -11,6 +11,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* a phone's window is the whole screen, past the status and navigation
+ * bars (Android's immersive mode) */
+#ifdef __ANDROID__
+#define SF_PHONE_FULLSCREEN SDL_WINDOW_FULLSCREEN
+#else
+#define SF_PHONE_FULLSCREEN 0
+#endif
+
 static SDL_Window *s_window;
 static SfRenderer *s_renderer;
 
@@ -299,7 +307,8 @@ void sf_video_init(int w, int h)
     }
     if (!want_gl()) {
         s_window = SDL_CreateWindow("Street Fighter III: 3rd Strike", w * 2, 480 * 2,
-                                    SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_VULKAN);
+                                    SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_VULKAN |
+                                        SF_PHONE_FULLSCREEN);
         if (s_window && sf_render_create(&s_renderer, s_window, SF_RENDER_VULKAN, err, sizeof err) == 0) {
             sf_gfx_init();
             sf_display_init();

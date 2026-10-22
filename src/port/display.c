@@ -241,6 +241,7 @@ static void apply(void)
     }
 #ifdef __ANDROID__
     set_orientation();
+    SDL_SetWindowFullscreen(win, true); /* past the status and navigation bars */
     return;
 #endif
     switch (s_mode) {

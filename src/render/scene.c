@@ -1399,7 +1399,10 @@ static void record_copy(SfScene *s, VkCommandBuffer cmd, int clear_out, uint32_t
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s->show_layout, 0, 1, &s->copy_set, 0, NULL);
-    vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof src, src);
+    /* the range is both stages': a push must name them both (a desktop
+     * driver takes a vertex-only one; a phone's leaves the last src) */
+    vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof src,
+                       src);
     {
         static const float upright[4] = { 0.f, 0.f, 0.f, 0.f }; /* no turn into the screen's own targets */
         vkCmdPushConstants(cmd, s->show_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 16, 16,

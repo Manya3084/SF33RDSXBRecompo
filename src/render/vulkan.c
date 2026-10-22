@@ -29,6 +29,7 @@ static uint32_t mem_index(VkPhysicalDevice physical, uint32_t bits, VkMemoryProp
 #define SF_ANDROID 0
 #endif
 
+
 static void destroy_swapchain(SfRenderer *r)
 {
     uint32_t i;
@@ -212,6 +213,20 @@ static int make_swapchain(SfRenderer *r, char *err, size_t err_n)
     }
     r->format = chosen;
     r->extent = extent;
+    r->built_extent = caps.currentExtent;
+    r->built_transform = caps.currentTransform;
+#ifdef __ANDROID__
+    {
+        char note[256];
+        int ww = 0;
+        int wh = 0;
+        SDL_GetWindowSizeInPixels(r->window, &ww, &wh);
+        snprintf(note, sizeof note, "screen: swapchain %ux%u, surface %ux%u, transform %u, turn %d, window %dx%d",
+                 extent.width, extent.height, caps.currentExtent.width, caps.currentExtent.height,
+                 (unsigned)caps.currentTransform, r->rot, ww, wh);
+        fprintf(stderr, "video: %s\n", note);
+    }
+#endif
     vkGetSwapchainImagesKHR(r->device, r->swapchain, &r->image_count, NULL);
     r->images = calloc(r->image_count, sizeof(*r->images));
     r->views = calloc(r->image_count, sizeof(*r->views));
@@ -998,6 +1013,24 @@ int sf_vk_present(SfRenderer *r, const SfCanvas *canvas, char *err, size_t err_n
         sf_set_err(err, err_n, "Vulkan fence wait failed");
         return -1;
     }
+#ifdef __ANDROID__
+    /* the phone's surface changes size or turn (back from another app, the
+     * orientation set): the swapchain is made again for it, as often as it
+     * takes, before an image is taken */
+    if (r->swapchain) {
+        VkSurfaceCapabilitiesKHR now;
+        if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(r->physical, r->surface, &now) == VK_SUCCESS &&
+            (now.currentExtent.width != r->built_extent.width || now.currentExtent.height != r->built_extent.height ||
+             now.currentTransform != r->built_transform)) {
+            vkDeviceWaitIdle(r->device);
+            destroy_swapchain(r);
+            r->suboptimal = 0;
+            if (make_swapchain(r, err, err_n) != 0) {
+                return -1;
+            }
+        }
+    }
+#endif
     if (!r->swapchain && renew_surface(r, err, err_n) != 0) {
         return -1;
     }
@@ -1209,6 +1242,24 @@ int sf_vk_present_list(SfRenderer *r, const SfDrawList *list, char *err, size_t 
             }
         }
     }
+#ifdef __ANDROID__
+    /* the phone's surface changes size or turn (back from another app, the
+     * orientation set): the swapchain is made again for it, as often as it
+     * takes, before an image is taken */
+    if (r->swapchain) {
+        VkSurfaceCapabilitiesKHR now;
+        if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(r->physical, r->surface, &now) == VK_SUCCESS &&
+            (now.currentExtent.width != r->built_extent.width || now.currentExtent.height != r->built_extent.height ||
+             now.currentTransform != r->built_transform)) {
+            vkDeviceWaitIdle(r->device);
+            destroy_swapchain(r);
+            r->suboptimal = 0;
+            if (make_swapchain(r, err, err_n) != 0) {
+                return -1;
+            }
+        }
+    }
+#endif
     if (!r->swapchain && renew_surface(r, err, err_n) != 0) {
         return -1;
     }
