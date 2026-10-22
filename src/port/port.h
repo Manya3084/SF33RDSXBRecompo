@@ -28,6 +28,16 @@ extern int sf_port_frame;
 
 /* The game's heaps (src/port/arena.c). */
 void *sf_arena_alloc(size_t size, size_t align);
+void sf_arena_extent(uint8_t **base, size_t *used);
+/* The game-visible heap in the arena (src/port/gheap.c). */
+void *sf_gheap_alloc(size_t n);
+void sf_gheap_free(void *p);
+void sf_gfx_state_restored(void);
+/* GAME OPTION's LANGUAGE row (src/port/language.c). */
+void sf_language_init(void);
+const char *sf_language_text(void);
+int sf_language_step(int dir);
+int sf_language_japanese(void);
 void sf_arena_free(void *p);
 
 /* Video: the game's 640x448 frame, shown in the SDL3 window. */
@@ -107,6 +117,7 @@ int sf_input_replaying(void);
  * makes the next reads take them again, off stops. */
 void sf_input_tape_mark(void);
 void sf_input_tape_rewind(void);
+void sf_input_tape_seek(int at);
 void sf_input_tape_off(void);
 
 /* Replays (src/port/save.c): ten slots in data/save/game.sqlite.
@@ -127,6 +138,21 @@ size_t sf_state_size(void);
 void sf_state_save(uint8_t *buf);
 void sf_state_restore(const uint8_t *buf);
 void sf_state_test_frame(void);
+/* The state's memory regions as the last sf_state_size found them. */
+typedef struct SfStateRegion {
+    uint8_t *p;
+    size_t n;
+} SfStateRegion;
+int sf_state_regions(SfStateRegion *out, int max);
+/* Rollback history (src/port/history.c): the last frames' states, kept as
+ * the pages each frame wrote. */
+int sf_hist_start(int frame);
+void sf_hist_save(int frame);
+int sf_hist_load(int frame);
+int sf_hist_oldest(void);
+int sf_hist_on(void);
+void sf_hist_stop(void);
+void sf_hist_touch(void *p, size_t n);
 /* The music streams' place, which the game waits on (src/port/sound.c). */
 size_t sf_sound_state_size(void);
 void sf_sound_state_save(void *buf);

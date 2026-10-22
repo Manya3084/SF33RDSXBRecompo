@@ -27,7 +27,7 @@
 #include <string.h>
 #include <time.h>
 
-extern const s8 *Menu_Letter_Data[2][70]; /* 67 to 69: the port's window rows */
+extern const s8 *Menu_Letter_Data[2][71]; /* 67 to 69: the window rows, 70 LANGUAGE */
 extern struct _TASK task[11];
 extern u8 No_Trans;
 extern const s16 Fade_Pos_tbl[8];

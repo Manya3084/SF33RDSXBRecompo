@@ -1,16 +1,17 @@
 --- a/menu.c
 +++ b/menu.c
-@@ -431,6 +431,9 @@
+@@ -431,6 +431,10 @@
  void Game_Option(struct _TASK* task_ptr);
  void Button_Config(struct _TASK* task_ptr);
  void Screen_Adjust(struct _TASK* task_ptr);
 +int sf_display_step(int row, int dir);
++int sf_language_step(int dir);
 +void sf_display_default(void);
 +void sf_system_commit_screen(void);
  void Sound_Test(struct _TASK* task_ptr);
  void Memory_Card(struct _TASK* task_ptr);
  void Extra_Option(struct _TASK* task_ptr);
-@@ -1000,6 +1003,11 @@
+@@ -1000,6 +1004,11 @@
  
          switch (IO_Result) {
          case 0x100:
@@ -22,7 +23,73 @@
              switch (Menu_Cursor_Y[0]) {
              case 0:
                  G_No[2] += 1;
-@@ -2773,15 +2781,18 @@
+@@ -2376,8 +2385,10 @@
+         Order_Dir[0x6A] = 8;
+         Order_Timer[0x6A] = 1;
+ 
+-        for (ix = 0, unused_s3 = char_index = 0x1A; ix < 0xC; ix++, unused_s2 = char_index++) {
+-            effect_61_init(0, ix + 0x50, 0, 2, char_index, ix, 0x70A7);
++        /* Port: thirteen rows, LANGUAGE (label 70) before DEFAULT SETTING. */
++        for (ix = 0, unused_s3 = char_index = 0x1A; ix < 13; ix++, unused_s2 = char_index++) {
++            static const s16 port_rows[13] = { 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 70, 0x24, 0x25 };
++            effect_61_init(0, ix + 0x50, 0, 2, port_rows[ix], ix, 0x70A7);
+             Order[ix + 0x50] = 1;
+             Order_Dir[ix + 0x50] = 4;
+             Order_Timer[ix + 0x50] = ix + 0x14;
+@@ -2392,6 +2403,12 @@
+             Order_Timer[ix + 0x5D] = ix + 0x14;
+         }
+ 
++        /* Port: LANGUAGE's value (src/port/language.c, by EFF63.c). */
++        effect_63_init(0x67, 0, 2, 4, 10);
++        Order[0x67] = 1;
++        Order_Dir[0x67] = 4;
++        Order_Timer[0x67] = 10 + 0x14;
++
+         break;
+ 
+     case 1:
+@@ -2426,13 +2443,20 @@
+ 
+     sw = ~plsw_01[PL_id] & plsw_00[PL_id];
+     sw = Check_Menu_Lever(PL_id, 0);
+-    ret = MC_Move_Sub(sw, 0, 0xB, 0xFF);
++    ret = MC_Move_Sub(sw, 0, 0xC, 0xFF); /* Port: thirteen rows */
+     ret |= GO_Move_Sub_LR(sw, 0);
+     ret &= 0x20F;
+     return ret;
+ }
+ 
+ u16 GO_Move_Sub_LR(u16 sw, s16 cursor_id) {
++    /* Port: row 10, LANGUAGE */
++    if (Menu_Cursor_Y[cursor_id] == 10 && (sw == 4 || sw == 8)) {
++        sf_language_step(sw == 4 ? -1 : 1);
++        SE_dir_cursor_move();
++        return sw;
++    }
++
+     if (Menu_Cursor_Y[cursor_id] > 9) {
+         return 0;
+     }
+@@ -2637,7 +2661,7 @@
+ 
+     switch (task_ptr->r_no[1]) {
+     case 9:
+-        if (Menu_Cursor_Y[0] == 11 || IO_Result == 0x200) {
++        if (Menu_Cursor_Y[0] == 12 || IO_Result == 0x200) { /* Port: EXIT is row 12 */
+             SE_selected();
+             Return_Option_Mode_Sub(task_ptr);
+             Order[0x6A] = 4;
+@@ -2645,7 +2669,7 @@
+             return;
+         }
+ 
+-        if (Menu_Cursor_Y[0] == 10) {
++        if (Menu_Cursor_Y[0] == 11) { /* Port: DEFAULT SETTING is row 11 */
+             SE_selected();
+             save_w[1].Difficulty = Game_Default_Data.Difficulty;
+             save_w[1].Time_Limit = Game_Default_Data.Time_Limit;
+@@ -2773,15 +2797,18 @@
          Order_Dir[0x65] = 8;
          Order_Timer[0x65] = 1;
  
@@ -44,9 +111,7 @@
              Order[ix + 0x50] = 1;
              Order_Dir[ix + 0x50] = 4;
              Order_Timer[ix + 0x50] = ix + 0x14;
-@@ -2809,13 +2820,16 @@
-         if (IO_Result == 0) {
-             Screen_Adjust_Sub(1);
+@@ -2811,11 +2838,14 @@
              Screen_Exit_Check(task_ptr, 0);
          }
  
@@ -65,7 +130,7 @@
          break;
      }
  }
-@@ -2825,7 +2839,7 @@
+@@ -2825,7 +2855,7 @@
      u16 sw;
      sw = ~plsw_01[PL_id] & plsw_00[PL_id];
      sw = Check_Menu_Lever(PL_id, 0);
@@ -74,7 +139,7 @@
      Screen_Move_Sub_LR(sw);
  }
  
-@@ -2839,7 +2853,7 @@
+@@ -2839,7 +2869,7 @@
          return;
      }
  
@@ -83,7 +148,7 @@
          SE_selected();
          Menu_Suicide[1] = 0;
          Menu_Suicide[2] = 1;
-@@ -2867,8 +2881,11 @@
+@@ -2867,10 +2897,13 @@
          return;
      }
  
@@ -96,9 +161,11 @@
 +        Convert_Buff[2][0][0] = 0;
 +        Convert_Buff[2][0][1] = 0;
          Disp_Size_H = 100;
-@@ -2936,7 +2953,8 @@
+         Disp_Size_V = 100;
+         Setup_Disp_Size(0);
+@@ -2932,7 +2965,8 @@
              break;
-
+ 
          case 4:
 -            sys_w.screen_mode = (sys_w.screen_mode + 1) & 1;
 +            /* Port: OFF, SMOOTH, CRT CURVED, CRT FLAT. Left steps back. */
@@ -106,17 +173,15 @@
              flag = 1;
              break;
          }
-@@ -2989,7 +3007,8 @@
+@@ -2985,12 +3019,18 @@
              break;
-
+ 
          case 4:
 -            sys_w.screen_mode = (sys_w.screen_mode + 1) & 1;
 +            /* Port: OFF, SMOOTH, CRT CURVED, CRT FLAT. Right steps on. */
 +            sys_w.screen_mode = (u8)((sys_w.screen_mode + 1) % 4);
              flag = 1;
              break;
-         }
-@@ -2991,6 +3010,11 @@
          }
      }
  
@@ -128,7 +193,7 @@
      if (flag) {
          SE_dir_cursor_move();
      }
-@@ -3545,7 +3569,7 @@
+@@ -3545,7 +3585,7 @@
  u16 MC_Move_Sub(u16 sw, s16 cursor_id, s16 menu_max, s16 cansel_menu) {
  #define MC_SKIP_ROW(y)                                                                                             \
      ((D_00796884 == 12 && (y) < 3) || (D_00796884 == 10 && ((y) == 3 || (y) == 7)) || (D_00796884 == 19 && (y) == 1) || \

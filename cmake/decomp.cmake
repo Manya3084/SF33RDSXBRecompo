@@ -112,6 +112,7 @@ target_compile_options(sf_decomp PRIVATE -g
 add_library(sf_gfx STATIC
     src/port/missing.c
     src/port/arena.c
+    src/port/gheap.c
     src/port/gfx.c
 )
 target_include_directories(sf_gfx PUBLIC src "${SF_DECOMP_GEN}/include")
@@ -155,6 +156,8 @@ add_library(sf_port STATIC
     src/port/menu_ext.c
     src/port/display.c
     src/port/state.c
+    src/port/history.c
+    src/port/language.c
     src/port/setup.c
     src/ui/ui.c
     src/port/live.c

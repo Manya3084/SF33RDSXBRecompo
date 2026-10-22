@@ -86,7 +86,9 @@ static const char k_host_sql[] =
     " mode TEXT NOT NULL, width INTEGER NOT NULL,"
     " height INTEGER NOT NULL, aspect TEXT NOT NULL);"
     "CREATE TABLE IF NOT EXISTS key ("
-    " name TEXT PRIMARY KEY, scancode TEXT NOT NULL);";
+    " name TEXT PRIMARY KEY, scancode TEXT NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS setting ("
+    " name TEXT PRIMARY KEY, value TEXT NOT NULL);";
 
 static int file_exists(const char *path)
 {
@@ -1138,5 +1140,67 @@ int sf_store_write_keys(const char *path, const char *const *names, const char *
     if (rc != 0) {
         fprintf(stderr, "save: writing %s failed\n", path);
     }
+    return rc;
+}
+
+/* A setting of the port's (config/host.sqlite's setting table): 0 with
+ * its value, 1 when it has no row. */
+int sf_store_read_setting(const char *path, const char *name, char *value, unsigned value_n)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
+    const unsigned char *text;
+    int rc;
+    if (!path || !name || !value || value_n == 0) {
+        return -1;
+    }
+    rc = open_db(path, &db, 0);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_host_sql) != 0 || prepare(db, "SELECT value FROM setting WHERE name=?", &st) != 0 ||
+        sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return -1;
+    }
+    rc = sqlite3_step(st);
+    if (rc != SQLITE_ROW) {
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+        return rc == SQLITE_DONE ? 1 : -1;
+    }
+    text = sqlite3_column_text(st, 0);
+    snprintf(value, value_n, "%s", text ? (const char *)text : "");
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    return 0;
+}
+
+int sf_store_write_setting(const char *path, const char *name, const char *value)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *st = NULL;
+    int rc;
+    if (!path || !name || !value) {
+        return -1;
+    }
+    rc = open_db(path, &db, 1);
+    if (rc != 0) {
+        return rc;
+    }
+    if (ensure(db, k_host_sql) != 0 || begin(db) != 0 ||
+        prepare(db, "INSERT OR REPLACE INTO setting (name, value) VALUES (?, ?)", &st) != 0 ||
+        sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+        sqlite3_bind_text(st, 2, value, -1, SQLITE_TRANSIENT) != SQLITE_OK || sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        rollback(db);
+        sqlite3_close(db);
+        fprintf(stderr, "save: writing %s failed\n", path);
+        return -1;
+    }
+    sqlite3_finalize(st);
+    rc = commit(db);
+    sqlite3_close(db);
     return rc;
 }

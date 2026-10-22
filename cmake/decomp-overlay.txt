@@ -8,7 +8,8 @@
 # values, and Sel_Data.c places the ten rows closer together. FILTER cycles
 # OFF, SMOOTH, CRT CURVED and CRT FLAT, and that choice and the picture
 # size are written when they change. The window rows write on their own
-# step. The mode
+# step. GAME OPTION has a LANGUAGE row (src/port/language.c) before
+# DEFAULT SETTING, its thirteen rows 12 apart. The mode
 # menu's Xbox Live is greyed and skipped, as VERSUS is without a second
 # player (menu.c's cursor, EFF61.c's label): the port has no online play.
 patch src/sf33rd/Source/Game/menu.c

@@ -16,6 +16,8 @@
 
 #include "port/port.h"
 
+#include <SDL3/SDL.h>
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,10 +27,10 @@
 #endif
 
 #ifdef _WIN32
-/* PE has no __start_/__stop_ section bounds: the snapshot is Linux-only
- * for now, and on Windows it is empty. */
-static char __start_sfport_data[1], __stop_sfport_data[1], __start_sfport_bss[1], __stop_sfport_bss[1];
-static char __start_sfkeep[1], __stop_sfkeep[1];
+/* PE has no __start_/__stop_ section bounds, but the linker keeps the
+ * port's sections apart from .data and .bss: the state is .data, .bss
+ * and sfgame, found in the program's section table (data_ranges). */
+#include <windows.h>
 #elif defined(__ANDROID__)
 /* Android's libc has no __data_start: the game library's writable
  * segments are read from its program headers instead (data_ranges). */
@@ -120,7 +122,22 @@ static void data_ranges(void)
         return;
     }
 #if defined(_WIN32)
-    s_base_n = 0;
+    {
+        uint8_t *image = (uint8_t *)GetModuleHandleW(NULL);
+        const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)(image + ((const IMAGE_DOS_HEADER *)image)->e_lfanew);
+        const IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION(nt);
+        int i;
+        s_base_n = 0;
+        for (i = 0; i < nt->FileHeader.NumberOfSections && s_base_n < BASES; i++) {
+            char name[9] = { 0 };
+            memcpy(name, sec[i].Name, 8);
+            if (strcmp(name, ".data") == 0 || strcmp(name, ".bss") == 0 || strcmp(name, "sfgame") == 0) {
+                s_base[s_base_n][0] = image + sec[i].VirtualAddress;
+                s_base[s_base_n][1] = image + sec[i].VirtualAddress + sec[i].Misc.VirtualSize;
+                s_base_n++;
+            }
+        }
+    }
 #elif defined(__ANDROID__)
     dl_iterate_phdr(phdr_cb, (void *)&s_reg);
 #else
@@ -144,32 +161,27 @@ static void add_region(uint8_t *a, uint8_t *b)
 static void regions(void)
 {
     static int all = -1;
+#ifdef _WIN32
+    uint8_t *cut[4][2] = { { NULL, NULL } }; /* the port's sections are apart already */
+    int ncut = 0;
+#else
     uint8_t *cut[4][2] = {
         { (uint8_t *)__start_sfport_data, (uint8_t *)__stop_sfport_data },
         { (uint8_t *)__start_sfport_bss, (uint8_t *)__stop_sfport_bss },
         { (uint8_t *)__start_sfkeep, (uint8_t *)__stop_sfkeep },
     };
     int ncut = 3;
+#endif
     uint8_t *arena;
     size_t used;
     int k;
     int bi;
     s_reg_n = 0;
-#ifdef _WIN32
-    (void)cut;
-    (void)ncut;
-    (void)arena;
-    (void)used;
-    (void)k;
-    (void)bi;
-    (void)all;
-    return;
-#endif
     data_ranges();
     if (all < 0) {
         all = getenv("SF_ROLLBACK_ALL") != NULL;
     }
-    if (all) {
+    if (all && ncut) {
         cut[0][0] = cut[2][0];
         cut[0][1] = cut[2][1];
         ncut = 1;
@@ -217,6 +229,16 @@ static void regions(void)
     add_region(arena, arena + used);
 }
 
+int sf_state_regions(SfStateRegion *out, int max)
+{
+    int i;
+    for (i = 0; i < s_reg_n && i < max; i++) {
+        out[i].p = s_reg[i].p;
+        out[i].n = s_reg[i].n;
+    }
+    return i;
+}
+
 /* The memory regions, then the port subsystems the game reads back (the
  * music streams' place: sound.c). */
 size_t sf_state_size(void)
@@ -252,6 +274,7 @@ void sf_state_restore(const uint8_t *buf)
         buf += s_reg[i].n;
     }
     sf_sound_state_restore(buf);
+    sf_gfx_state_restored();
 }
 
 static uint64_t hash_bytes(const uint8_t *p, size_t n, uint64_t h)
@@ -370,10 +393,208 @@ static void trace_frame(void)
 #endif
 }
 
+/* The global at an address, for the tests' reports ("?" when unknown). */
+static const char *sym_name(const void *a)
+{
+#ifdef _WIN32
+    (void)a;
+    return "?";
+#else
+    Dl_info di;
+    return dladdr(a, &di) && di.dli_sname ? di.dli_sname : "?";
+#endif
+}
+
+/* SF_STATE_PROFILE=FROM:FRAMES: which pages of the state change, and how
+ * often, over FRAMES frames from FROM (what a rollback has to copy). */
+static void profile_frame(void)
+{
+#ifndef _WIN32
+    static int from = -2;
+    static int frames;
+    static size_t pages;
+    static uint64_t *prev;
+    static uint64_t *now;
+    static uint32_t *count;
+    static int at;
+    size_t i;
+    if (from == -2) {
+        const char *e = getenv("SF_STATE_PROFILE");
+        from = e ? atoi(e) : -1;
+        frames = e && strchr(e, ':') ? atoi(strchr(e, ':') + 1) : 600;
+    }
+    if (from < 0 || sf_port_frame < from) {
+        return;
+    }
+    if (!prev) {
+        regions();
+        pages = 0;
+        for (i = 0; i < (size_t)s_reg_n; i++) {
+            pages += (s_reg[i].n + PAGE - 1) / PAGE;
+            fprintf(stderr, "profile: region %zu at %p, %zu KB\n", i, (void *)s_reg[i].p, s_reg[i].n / 1024);
+        }
+        prev = malloc(pages * 8);
+        now = malloc(pages * 8);
+        count = calloc(pages, 4);
+        page_hashes(prev);
+        return;
+    }
+    page_hashes(now);
+    {
+        size_t changed = 0;
+        for (i = 0; i < pages; i++) {
+            if (now[i] != prev[i]) {
+                count[i]++;
+                changed++;
+            }
+        }
+        if (at % 60 == 0) {
+            fprintf(stderr, "profile: frame %d: %zu pages changed\n", sf_port_frame, changed);
+        }
+    }
+    memcpy(prev, now, pages * 8);
+    if (++at < frames) {
+        return;
+    }
+    {
+        size_t ever = 0;
+        uint64_t sum = 0;
+        for (i = 0; i < pages; i++) {
+            ever += count[i] != 0;
+            sum += count[i];
+        }
+        fprintf(stderr, "profile: %zu pages (%zu KB); %zu changed at all (%zu KB); %.1f a frame\n", pages,
+                pages * 4, ever, ever * 4, (double)sum / frames);
+        for (i = 0; i < pages; i++) {
+            if (count[i]) {
+                uint8_t *a = page_addr(i);
+                fprintf(stderr, "profile: page %p x%u %s\n", (void *)a, count[i], sym_name(a));
+            }
+        }
+    }
+    exit(0);
+#endif
+}
+
+/* SF_HIST_TEST=FROM[:EVERY[:BACK]] tests the rollback history
+ * (src/port/history.c) as netplay uses it: from FROM each frame is kept,
+ * and every EVERY frames the game goes BACK frames back and runs them
+ * again on the same pads; each frame run again must hash as it did the
+ * first time. */
+#define HIST_TEST_FRAMES 900
+static void hist_test_frame(void)
+{
+    static int from = -2;
+    static int every;
+    static int back;
+    static int base;
+    static int known;
+    static int again;
+    static int bad;
+    static int rollbacks;
+    static uint64_t *hash;
+    static uint64_t *pages;
+    static double save_ms;
+    static double load_ms;
+    static int saves;
+    int idx;
+    int fresh;
+    uint64_t h;
+    uint64_t t0;
+    if (from == -2) {
+        const char *e = getenv("SF_HIST_TEST");
+        const char *c;
+        from = e ? atoi(e) : -1;
+        c = e ? strchr(e, ':') : NULL;
+        every = c ? atoi(c + 1) : 7;
+        c = c ? strchr(c + 1, ':') : NULL;
+        back = c ? atoi(c + 1) : 6;
+    }
+    if (from < 0 || sf_port_frame < from) {
+        return;
+    }
+    if (!hash) {
+        regions();
+        s_t.pages = 0;
+        for (idx = 0; idx < s_reg_n; idx++) {
+            s_t.pages += (s_reg[idx].n + PAGE - 1) / PAGE;
+        }
+        pages = malloc(s_t.pages * sizeof *pages * (HIST_TEST_FRAMES + 1));
+        hash = calloc(HIST_TEST_FRAMES + 1, sizeof *hash);
+        if (sf_hist_start(sf_port_frame) != 0) {
+            exit(1);
+        }
+        sf_input_tape_mark();
+        base = sf_port_frame;
+        known = 1;
+        page_hashes(pages);
+        hash[0] = fold(pages);
+        return;
+    }
+    idx = sf_port_frame - base;
+    {
+        uint64_t *now = pages + (size_t)HIST_TEST_FRAMES * s_t.pages;
+        page_hashes(now);
+        h = fold(now);
+        if (idx < known && h != hash[idx] && bad < 4) {
+            size_t i;
+            int shown = 0;
+            for (i = 0; i < s_t.pages && shown < 8; i++) {
+                if (now[i] != pages[(size_t)idx * s_t.pages + i]) {
+                    uint8_t *a = page_addr(i);
+                    fprintf(stderr, "hist test: frame %d page %p (%s) otherwise\n", sf_port_frame, (void *)a,
+                            sym_name(a));
+                    shown++;
+                }
+            }
+        }
+        if (idx >= known) {
+            memcpy(pages + (size_t)idx * s_t.pages, now, s_t.pages * sizeof *now);
+        }
+    }
+    fresh = idx >= known;
+    if (!fresh) {
+        again++;
+        if (h != hash[idx]) {
+            bad++;
+            if (bad <= 10) {
+                fprintf(stderr, "hist test: frame %d came out otherwise the second time\n", sf_port_frame);
+            }
+        }
+    } else {
+        hash[idx] = h;
+        known = idx + 1;
+    }
+    t0 = SDL_GetPerformanceCounter();
+    sf_hist_save(sf_port_frame);
+    save_ms += (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+    saves++;
+    if (idx == HIST_TEST_FRAMES) {
+        fprintf(stderr,
+                "hist test: %s: %d rollbacks of %d frames, %d frames run again, %d otherwise; save %.3f ms, load %.3f ms\n",
+                bad ? "FAILED" : "the same", rollbacks, back, again, bad, save_ms / saves, rollbacks ? load_ms / rollbacks : 0.0);
+        exit(bad ? 2 : 0);
+    }
+    if (fresh && idx % every == 0 && idx >= back) {
+        int target = sf_port_frame - back;
+        t0 = SDL_GetPerformanceCounter();
+        if (sf_hist_load(target) != 0) {
+            fprintf(stderr, "hist test: frame %d is not kept (oldest %d)\n", target, sf_hist_oldest());
+            exit(2);
+        }
+        load_ms += (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+        sf_port_frame = target;
+        sf_input_tape_seek(target - base);
+        rollbacks++;
+    }
+}
+
 /* After each game frame. */
 void sf_state_test_frame(void)
 {
     trace_frame();
+    profile_frame();
+    hist_test_frame();
     const char *env;
     uint64_t *now;
     size_t i;

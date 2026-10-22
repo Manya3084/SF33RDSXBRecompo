@@ -1,16 +1,17 @@
 --- a/EFF61.c
 +++ b/EFF61.c
-@@ -55,7 +55,8 @@
+@@ -55,7 +55,9 @@
  extern uintptr_t frw[EFFECT_MAX][448];
  s16 get_my_trans_mode(s16 curr);
  
 -const s8* Menu_Letter_Data[2][67] = {
-+/* Port: entries 67 to 69 are SCREEN ADJUST's window rows. */
-+const s8* Menu_Letter_Data[2][70] = {
++/* Port: entries 67 to 69 are SCREEN ADJUST's window rows, 70 GAME
++   OPTION's LANGUAGE. */
++const s8* Menu_Letter_Data[2][71] = {
      {
          "ARCADE",
          "VERSUS",
-@@ -123,7 +124,18 @@
+@@ -123,7 +125,19 @@
          "BGM SELECT",
          "DEFAULT SETTING",
          "BGM TEST",
@@ -26,11 +27,12 @@
 +#else
 +        "RESOLUTION^^^",
 +#endif
-+        "ASPECT RATIO^"
++        "ASPECT RATIO^",
++        "LANGUAGE^^^^^^^^"
      },
      {
          "ARCADE",
-@@ -192,7 +204,18 @@
+@@ -192,7 +206,19 @@
          "BGM SELECT",
          "DEFAULT SETTING",
          "BGM TEST",
@@ -46,11 +48,12 @@
 +#else
 +        "RESOLUTION^^^",
 +#endif
-+        "ASPECT RATIO^"
++        "ASPECT RATIO^",
++        "LANGUAGE^^^^^^^^"
      }
  };
  
-@@ -237,7 +260,8 @@
+@@ -237,7 +263,8 @@
          }
      } else if (Menu_Cursor_Y[ewk->master_id] == ewk->wu.type) {
          ewk->wu.my_clear_level = 0;

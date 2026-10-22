@@ -47,6 +47,9 @@ void *sf_arena_alloc(size_t size, size_t align)
         abort();
     }
     s_used = at + size;
+    if (getenv("SF_ARENA_DEBUG")) {
+        fprintf(stderr, "arena: +0x%zx %zu bytes from %p\n", at, size, __builtin_return_address(0));
+    }
     return s_base + at;
 }
 

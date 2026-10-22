@@ -342,6 +342,12 @@ void sf_input_tape_rewind(void)
     s_tape_at = 0;
 }
 
+/* Playing from the pads of the at'th frame taped. */
+void sf_input_tape_seek(int at)
+{
+    s_tape_at = at < s_tape_n ? at : -1;
+}
+
 void sf_input_tape_off(void)
 {
     s_tape_on = 0;

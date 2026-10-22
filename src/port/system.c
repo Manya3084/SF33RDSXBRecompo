@@ -230,6 +230,7 @@ void njUserInit(void)
     mpp_w.ds_v[0] = 100;
     Country = 0;
     setup_region();
+    sf_language_init(); /* GAME OPTION's LANGUAGE: the region and the text */
     Turbo_Timer = 1;
     Screen_Zoom_X = 1.0f;
     Screen_Zoom_Y = 1.0f;

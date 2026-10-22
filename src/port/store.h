@@ -34,4 +34,8 @@ int sf_store_write_window(const char *path, const char *mode, int width, int hei
 int sf_store_read_keys(const char *path, const char *const *names, char values[][64], int n);
 int sf_store_write_keys(const char *path, const char *const *names, const char *const *values, int n);
 
+/* A named setting's value; 1 means it has no row. */
+int sf_store_read_setting(const char *path, const char *name, char *value, unsigned value_n);
+int sf_store_write_setting(const char *path, const char *name, const char *value);
+
 #endif

@@ -1,18 +1,24 @@
 --- a/EFF63.c
 +++ b/EFF63.c
-@@ -54,6 +54,8 @@
+@@ -54,13 +54,16 @@
  extern u8 Disp_Size_V;
  extern struct _SYSTEM_W sys_w;
  void Setup_Letter_63(WORK_Other_CONN* ewk, s16 disp_index);
 +static void Setup_Letter_63_Str(WORK_Other_CONN* ewk, const u8* ptr);
 +const char* sf_display_text(int row);
++const char* sf_language_text(void);
  
  const s8* Letter_Data_63[3][21] = { { "-10", "-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1", "0",
                                        "1",   "2",  "3",  "4",  "5",  "6",  "7",  "8",  "9",  "10" },
-@@ -63,1 +65,1 @@
+                                     /* Xbox: eight sizes from 86%; the PS2 build lists 94% to 100%. */
+                                     { "86%", "88%", "90%", "92%", "94%", "96%", "98%", "100%", NULL, NULL, NULL,
+                                       NULL,  NULL,  NULL,  NULL,   NULL, NULL, NULL, NULL, NULL, NULL },
 -                                    { "OFF", "ON", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 +                                    { "OFF", "SMOOTH", "CRT CURVED", "CRT FLAT", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-@@ -213,6 +215,14 @@
+                                       NULL,  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL } };
+ 
+ void (*const EFF63_Jmp_Tbl[4])() = { EFF63_WAIT, EFF63_SLIDE_IN, EFF63_CHAR_CHANGE, EFF63_SUDDENLY };
+@@ -213,8 +216,36 @@
          disp_index >>= 1;
          break;
  
@@ -23,12 +29,34 @@
 +        Setup_Letter_63_Str(ewk, (const u8*)sf_display_text(ewk->wu.type - 5));
 +        return;
 +
++    case 10:
++        /* Port: GAME OPTION's LANGUAGE (src/port/language.c), in that
++           page's small letters (as EFF64.c draws its values). */
++        {
++            const u8* ptr = (const u8*)sf_language_text();
++            s16 ix = 0;
++
++            while (*ptr != '\0') {
++                ewk->conn[ix].nx = ix * 8;
++                ewk->conn[ix].ny = 0;
++                ewk->conn[ix].col = 0;
++                ewk->conn[ix].chr = *ptr + 0x70A7;
++                ptr++;
++                ix++;
++            }
++
++            ewk->num_of_conn = ix;
++        }
++        return;
++
      default:
 -        disp_index = sys_w.screen_mode;
 +        /* Port: 0 OFF, 1 SMOOTH, 2 CRT CURVED, 3 CRT FLAT. */
 +        disp_index = sys_w.screen_mode > 3 ? 0 : sys_w.screen_mode;
          break;
-@@ -222,7 +231,10 @@
+     }
+ 
+@@ -222,7 +253,10 @@
  }
  
  void Setup_Letter_63(WORK_Other_CONN* ewk, s16 disp_index) {

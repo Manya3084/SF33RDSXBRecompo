@@ -127,7 +127,9 @@ void *ADXF_OpenAfs(s32 ptid, s32 flid)
 static void read_run(void *arg)
 {
     AdxfFile *f = arg;
-    ssize_t got = pread(s_fd, f->buf, f->want, f->at);
+    ssize_t got;
+    sf_hist_touch(f->buf, f->want); /* a read-only page fails a read */
+    got = pread(s_fd, f->buf, f->want, f->at);
     if (got < 0) {
         fprintf(stderr, "files: reading %zu bytes at %lld into %p: %s\n", f->want, (long long)f->at, f->buf,
                 strerror(errno));

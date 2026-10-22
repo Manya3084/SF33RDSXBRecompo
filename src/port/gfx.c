@@ -23,6 +23,7 @@
 
 #include <math.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,6 +116,7 @@ typedef struct TexEntry {
     int locked_rect;
     s16 rect[4];
     s32 mode;
+    uint32_t content; /* which pixels: a number the state gives each publish */
 } TexEntry;
 
 typedef struct PalEntry {
@@ -123,8 +125,15 @@ typedef struct PalEntry {
     u32 colors[SF_PAL_ENTRIES];
 } PalEntry;
 
-static TexEntry s_tex[SF_TEX_MAX];
-static PalEntry s_pal[SF_PAL_MAX];
+/* The handles, their pixels (in the game's heap: src/port/gheap.c) and
+ * the palettes are game state: the game holds the handles and writes the
+ * pixels and colours, and a rollback puts them back with the rest. The
+ * renderer's copies are the port's, brought up to date after a rollback
+ * (sf_gfx_state_restored). */
+static TexEntry s_tex[SF_TEX_MAX] SF_GAME;
+static PalEntry s_pal[SF_PAL_MAX] SF_GAME;
+static uint32_t s_tex_content SF_GAME;
+static uint32_t s_tex_shown[SF_TEX_MAX]; /* the content the renderer has */
 static u32 s_pal_seen[SF_PAL_MAX][SF_PAL_ENTRIES];
 
 /* A channel mask as the description's length, shift and maximum. */
@@ -363,7 +372,7 @@ static int desc_differs(const plContext *a, const plContext *b)
 static uint32_t s_tex_serial;
 
 /* The texture's pixels into its renderer copy. */
-static void tex_publish(u32 h)
+static void tex_upload(u32 h)
 {
     TexEntry *t = &s_tex[h];
     SfTexture *o = &g.list.tex[h];
@@ -397,6 +406,31 @@ static void tex_publish(u32 h)
      * one made on its handle within a frame looks, by size, like the old
      * one, and the renderer would keep showing the old pixels. */
     o->version = ++s_tex_serial;
+    s_tex_shown[h] = t->content;
+}
+
+/* The texture's pixels changed: the renderer's copy, and a new number. */
+static void tex_publish(u32 h)
+{
+    s_tex[h].content = ++s_tex_content;
+    tex_upload(h);
+}
+
+/* After a rollback: the renderer's textures as the state has them. */
+void sf_gfx_state_restored(void)
+{
+    u32 h;
+    for (h = 1; h < SF_TEX_MAX; h++) {
+        if (s_tex[h].used) {
+            if (s_tex_shown[h] != s_tex[h].content) {
+                tex_upload(h);
+            }
+        } else if (g.list.tex[h].rgba) {
+            free(g.list.tex[h].rgba);
+            memset(&g.list.tex[h], 0, sizeof g.list.tex[h]);
+            s_tex_shown[h] = 0;
+        }
+    }
 }
 
 s32 flCreateTextureHandle(void *bits, u32 attribute)
@@ -428,8 +462,10 @@ s32 flCreateTextureHandle(void *bits, u32 attribute)
     t->linear = attribute == 7;
     fill_desc(&t->info, fmt, img->width, img->height);
     t->info.desc = img->desc;
-    t->src = *img;
-    t->pixels = calloc((size_t)t->info.pitch * t->info.height, 1);
+    /* the fields, not the padding after them (stack bytes of the caller's,
+       which would make the state differ from one run to the next) */
+    memcpy(&t->src, img, offsetof(plContext, pixelformat) + sizeof img->pixelformat);
+    t->pixels = sf_gheap_alloc((size_t)t->info.pitch * t->info.height);
     t->info.ptr = t->pixels;
     if (img->ptr) {
         convert(&t->info, img);
@@ -445,9 +481,10 @@ s32 flReleaseTextureHandle(u32 h)
         return 0;
     }
     if (s_tex[h].used) {
-        free(s_tex[h].pixels);
-        free(s_tex[h].conv);
+        sf_gheap_free(s_tex[h].pixels);
+        sf_gheap_free(s_tex[h].conv);
         memset(&s_tex[h], 0, sizeof s_tex[h]);
+        s_tex_shown[h] = 0;
         free(g.list.tex[h].rgba);
         memset(&g.list.tex[h], 0, sizeof g.list.tex[h]);
     }
@@ -487,8 +524,8 @@ s32 flLockTexture(s16 *r, u32 h, plContext *out, s32 mode)
         /* handed out in the layout it was created from */
         size_t n = (size_t)t->src.pitch * t->src.height;
         if (t->conv_size < n) {
-            free(t->conv);
-            t->conv = calloc(n, 1);
+            sf_gheap_free(t->conv);
+            t->conv = sf_gheap_alloc(n);
             t->conv_size = n;
         }
         *out = t->src;
