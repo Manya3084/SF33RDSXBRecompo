@@ -9,7 +9,9 @@
  * The game waits on these streams (a stem ending, the queue running
  * down), so they keep the game's time, not the device's: sf_sound_pump
  * runs once a frame and takes a frame's worth of samples, 1/60 s, from
- * each playing stream. That decides when a stream ends, and the device
+ * each playing stream. That slice stays 1/60 s, not the CPS-3 frame, so
+ * a stem still ends on the frame it always has and a replay stays exact.
+ * That decides when a stream ends, and the device
  * plays those samples a few frames behind. A run with sound, without it,
  * or faster than real time (a headless replay) sees the same statuses on
  * the same frames, so a session recording replays exactly. The status

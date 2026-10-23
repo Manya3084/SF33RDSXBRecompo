@@ -2,8 +2,9 @@
  * decoding, the first start's import. A few worker threads take jobs in
  * the order they were given.
  *
- * The game keeps its own time (one frame each 1/60 s, and every result it
- * reads lands on the frame it lands on with no threads), so a job never
+ * The game keeps its own time (one frame each CPS-3 refresh, 59.599491 Hz,
+ * and every result it reads lands on the frame it lands on with no
+ * threads), so a job never
  * decides when something happens: the game thread asks for a job's result
  * at the point it needs it, and waits there if the job is not done. A job
  * still queued at that point runs on the game thread at once.

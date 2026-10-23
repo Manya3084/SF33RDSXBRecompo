@@ -16,9 +16,9 @@ Working:
 - sound effects and voices: the game's XACT cue banks played on OpenAL (PCM and Xbox ADPCM waves, loops, envelopes, fades, panning, the pitch LFO's vibrato)
 - saves (system settings, button directions, and ten replay slots) in `data/save/game.sqlite`, picked on the game's REPLAY screens
 - the keyboard and SDL3 gamepads, with retail's join-by-Start, and a keyboard page in BUTTON CONFIG for rebinding the keys
-- windowed, borderless or fullscreen, the resolution, the aspect ratio and the picture filter, set in SCREEN ADJUST, paced to 60 frames a second; the 448-line game area fills the window's height
+- windowed, borderless or fullscreen, the resolution, the aspect ratio and the picture filter, set in SCREEN ADJUST, paced to the CPS-3 rate (59.599491 frames a second); the 448-line game area fills the window's height
 - Vulkan, or OpenGL 3.3 when Vulkan is missing (`SF_RENDERER=opengl` picks it)
-- the game at a locked 60 on one thread, with the drawing on a render thread and the disc reads and sound decoding on worker threads ([docs/porting.md](docs/porting.md#threads))
+- the game at the CPS-3 rate (59.599491 Hz) on one thread, with the drawing on a render thread and the disc reads and sound decoding on worker threads ([docs/porting.md](docs/porting.md#threads))
 - EXIT GAME in the mode menu (retail's SELECT GAME), which quits cleanly
 - versus over the network, with rollback, between any of the builds (a phone against a PC too): NETWORK in the mode menu, where Xbox Live was. A game on the same network is listed, or you call an address ([Network](#network))
 - GAME OPTION's LANGUAGE: ENGLISH, or JAPANESE as a Japanese Xbox ran the game (its text, names and CPU). It asks, and restarts into the one you pick

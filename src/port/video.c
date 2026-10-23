@@ -444,16 +444,25 @@ static void screenshot(int frame)
     }
 }
 
-/* The game steps once per frame and was made for 60 of them a second
- * (NTSC Xbox). The window's vsync follows the monitor, which may be
- * faster, so frames are also paced to 1/60 s here. */
+/* The game steps once per frame. CPS-3 3rd Strike's refresh, from MAME's
+ * sfiii3 screen, is a 8590909 Hz pixel clock (42.954545 MHz / 5), 546 dots
+ * by 264 lines: 8590909 / (546 * 264) = 59.599491 Hz. The window's vsync
+ * follows the monitor, which may be faster, so the game thread is paced
+ * to that period here. The fraction left over from the nanosecond step is
+ * kept, so a long run stays on the ratio instead of a truncated step.
+ * An older "59.583 Hz" figure is not this timing. */
 static void pace(void)
 {
     static Uint64 next;
-    const Uint64 step = SDL_NS_PER_SECOND / 60;
+    static Uint64 frac;
+    const Uint64 den = 8590909;
+    const Uint64 num = (Uint64)546 * 264 * SDL_NS_PER_SECOND;
+    const Uint64 step = num / den;
     Uint64 now = SDL_GetTicksNS();
+    Uint64 advance;
     if (next == 0 || now > next + step * 4) {
         next = now; /* first frame, or far behind (a load): start again */
+        frac = 0;
     }
     if (next > now) {
         Uint64 wait = next - now;
@@ -463,7 +472,13 @@ static void pace(void)
         while (SDL_GetTicksNS() < next) {
         }
     }
-    next += step;
+    advance = step;
+    frac += num % den;
+    if (frac >= den) {
+        advance++;
+        frac -= den;
+    }
+    next += advance;
 }
 
 void sf_video_shutdown(void)
